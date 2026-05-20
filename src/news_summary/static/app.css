@@ -311,7 +311,7 @@ h3 {
 .auto-status {
   flex: 1 1 520px;
   min-width: min(100%, 420px);
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid #b9d9d3;
   border-radius: 8px;
   background: #f4fbf9;
@@ -341,19 +341,19 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .auto-status-head h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .crawl-progress {
   display: grid;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 12px;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
   border: 1px solid #cfe3de;
   border-radius: 8px;
   background: #fff;
@@ -367,17 +367,17 @@ h3 {
 }
 
 .crawl-progress-head strong {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .crawl-progress-head span {
   color: var(--accent-strong);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .crawl-progress-track {
-  height: 10px;
+  height: 8px;
   overflow: hidden;
   border-radius: 999px;
   background: #e7ede8;
@@ -395,13 +395,13 @@ h3 {
 .crawl-progress p {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .auto-status-message,
 .auto-status-error {
-  margin: 10px 0 0;
-  font-size: 13px;
+  margin: 6px 0 0;
+  font-size: 12px;
 }
 
 .auto-status-error {
