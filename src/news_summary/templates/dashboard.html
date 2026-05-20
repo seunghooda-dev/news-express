@@ -13,7 +13,7 @@
   <div><b>{{ counts.drafts }}</b><span>기사 초안</span></div>
   <div><b>{{ counts.needs_review }}</b><span>검수 대기</span></div>
   <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
-  <div><b>{{ counts.approved }}</b><span>승인 완료</span></div>
+  <a class="metric-link" href="{{ url_for('drafts', status='approved') }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
   <div><b>{{ model_counts.gemini }}</b><span>Gemini 적용</span></div>
   <div><b>{{ model_counts.rule_based }}</b><span>규칙 기반</span></div>
 </section>

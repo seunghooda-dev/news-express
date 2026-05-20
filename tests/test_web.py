@@ -227,6 +227,10 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     dashboard = client.get("/")
     dashboard_html = dashboard.data.decode("utf-8")
     assert "수동 재수집" in dashboard_html
+    assert "초안 검수" in dashboard_html
+    assert "초안 목록" not in dashboard_html
+    assert "승인 기사</a>" not in dashboard_html
+    assert 'href="/drafts?status=approved"' in dashboard_html
     assert "원문 수집" not in dashboard_html
     assert "초안 생성" not in dashboard_html
     assert "승인 기사 내보내기" not in dashboard_html
