@@ -44,7 +44,7 @@
         <button class="secondary" type="button" data-refine-instruction="제목을 더 짧고 명확하게 다듬고, 본문은 현재 흐름을 유지해줘.">제목 짧게</button>
         <button class="secondary" type="button" data-refine-instruction="80~90% 수준으로 분량을 줄여 간결하게 작성해줘.">내용 80~90%</button>
         <button class="secondary" type="button" data-refine-instruction="1문단은 핵심 소식, 2문단은 주요 내용, 3문단은 신청 방법이나 일정 중심으로 다시 정리해줘.">3문단 재정리</button>
-        <button class="secondary" type="button" data-refine-instruction="현재 원문에서 빠진 핵심 정보가 있으면 보충해서 문장을 조금 더 풍부하게 다듬어줘. 단, 원문에 없는 사실은 추가하지 말고 3문단 형식은 유지해줘.">내용 보충해서 길게</button>
+        <button class="secondary" type="button" data-refine-instruction="현재 원문에서 빠진 핵심 정보가 있으면 보충해서 문장 내용을 110% 로 더 풍부하게 다듬어줘. 단, 원문에 없는 사실은 추가하지 말고 문단 형식은 유지해줘.">내용 110%</button>
         <button class="secondary" type="button" data-refine-instruction="대상, 비용, 모집 인원, 신청 기간, 신청 방법을 마지막 문단에 분명하게 정리해줘.">신청 정보 중심</button>
       </div>
       <button id="refine-submit" type="submit" formaction="{{ url_for('refine_draft', draft_id=draft.id) }}" formmethod="post">Gemini로 다시 다듬기</button>
