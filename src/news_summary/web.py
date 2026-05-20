@@ -52,14 +52,16 @@ def create_app() -> Flask:
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
         attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
+        auto_status = auto_collector.snapshot() if auto_collector else None
         return render_template(
             "dashboard.html",
             counts=store.counts(),
             model_counts=_model_counts(store),
             draft_groups=draft_groups,
             approved_drafts=store.approved_drafts(limit=200),
-            auto_collector_status=auto_collector.snapshot() if auto_collector else None,
+            auto_collector_status=auto_status,
             source_summaries=_source_summaries(store, config_path),
+            gemini_usage=_gemini_usage_summary(store, auto_status),
             duplicate_titles=duplicate_titles,
             attention_count=attention_count,
         )
@@ -88,6 +90,8 @@ def create_app() -> Flask:
             draft_rows = [draft for draft in draft_rows if _row_value(draft, "source_id") == source_filter]
         if review_filter:
             draft_rows = _filter_drafts_by_review(draft_rows, review_filter, duplicate_titles)
+        if source_filter:
+            draft_rows = _sort_drafts_latest_first(draft_rows)
         return render_template(
             "drafts.html",
             drafts=draft_rows,
@@ -502,6 +506,52 @@ def _model_counts(store: Store) -> dict[str, int]:
     }
 
 
+def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
+    today = datetime.now(LOCAL_TZ).date()
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT model, created_at, updated_at
+            FROM article_drafts
+            WHERE model LIKE '%:gemini%'
+               OR model LIKE '%:gemini-refine%'
+            """
+        ).fetchall()
+
+    total_drafts = 0
+    total_refines = 0
+    today_drafts = 0
+    today_refines = 0
+    model_counts: dict[str, int] = {}
+
+    for row in rows:
+        model = str(row["model"] or "")
+        is_refine = ":gemini-refine" in model
+        model_name = model.split(":", 1)[0]
+        model_counts[model_name] = model_counts.get(model_name, 0) + 1
+        event_date = _parse_datetime(row["updated_at"] if is_refine else row["created_at"])
+        if is_refine:
+            total_refines += 1
+            if event_date and event_date.date() == today:
+                today_refines += 1
+        else:
+            total_drafts += 1
+            if event_date and event_date.date() == today:
+                today_drafts += 1
+
+    top_models = sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:3]
+    return {
+        "today_total": today_drafts + today_refines,
+        "today_drafts": today_drafts,
+        "today_refines": today_refines,
+        "total": total_drafts + total_refines,
+        "total_drafts": total_drafts,
+        "total_refines": total_refines,
+        "top_models": top_models,
+        "last_error": getattr(auto_status, "last_error", None) if auto_status else None,
+    }
+
+
 def _duplicate_titles(store: Store) -> set[str]:
     with store.connect() as conn:
         rows = conn.execute(
@@ -574,6 +624,24 @@ def _draft_date(draft) -> date | None:
     return _parse_date(_row_value(draft, "published_at")) or _parse_date(_row_value(draft, "created_at"))
 
 
+def _sort_drafts_latest_first(drafts):
+    return sorted(drafts, key=_draft_sort_key, reverse=True)
+
+
+def _draft_sort_key(draft) -> tuple[datetime, int]:
+    parsed = (
+        _parse_datetime(_row_value(draft, "published_at"))
+        or _parse_datetime(_row_value(draft, "created_at"))
+        or datetime.min.replace(tzinfo=LOCAL_TZ)
+    )
+    draft_id = _row_value(draft, "id") or 0
+    try:
+        parsed_id = int(draft_id)
+    except (TypeError, ValueError):
+        parsed_id = 0
+    return parsed, parsed_id
+
+
 def _parse_date(value: object) -> date | None:
     if not value:
         return None
@@ -597,6 +665,33 @@ def _parse_date(value: object) -> date | None:
     if parsed.tzinfo:
         parsed = parsed.astimezone(LOCAL_TZ)
     return parsed.date()
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            match = DATETIME_RE.search(text)
+            if not match:
+                return None
+            year, month, day, hour, minute = match.groups()
+            parsed = datetime(
+                int(year),
+                int(month),
+                int(day),
+                int(hour or 0),
+                int(minute or 0),
+                tzinfo=LOCAL_TZ,
+            )
+    if parsed.tzinfo:
+        return parsed.astimezone(LOCAL_TZ)
+    return parsed.replace(tzinfo=LOCAL_TZ)
 
 
 def _date_group_label(target_date: date, today: date) -> str:

@@ -11,6 +11,7 @@ from news_summary.web import (
     _filter_drafts_by_date,
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
+    _sort_drafts_latest_first,
     approval_checks,
     format_datetime_label,
     interval_label,
@@ -158,6 +159,18 @@ def test_filter_drafts_by_review_supports_attention_and_topic_filters():
     assert [draft["id"] for draft in _filter_drafts_by_review(drafts, "support", set())] == [1]
     assert [draft["id"] for draft in _filter_drafts_by_review(drafts, "attention", set())] == [1, 2]
     assert _date_warning(drafts[1]) == "게시일 앞 문구 확인"
+
+
+def test_sort_drafts_latest_first_uses_published_date_before_id():
+    drafts = [
+        {"id": 10, "published_at": "2026-05-18", "created_at": "2026-05-20T00:00:00+00:00"},
+        {"id": 11, "published_at": "2026-05-20", "created_at": "2026-05-18T00:00:00+00:00"},
+        {"id": 12, "published_at": "담당자 2026-05-19", "created_at": "2026-05-21T00:00:00+00:00"},
+    ]
+
+    sorted_drafts = _sort_drafts_latest_first(drafts)
+
+    assert [draft["id"] for draft in sorted_drafts] == [11, 12, 10]
 
 
 def test_approval_checks_warn_before_approval():
