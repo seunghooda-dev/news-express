@@ -45,7 +45,10 @@
         <button class="secondary" type="button" data-refine-instruction="90% 수준으로 분량을 줄여 간결하게 작성해줘.">내용 90%</button>
         <button class="secondary" type="button" data-refine-instruction="현재 원문에서 빠진 핵심 정보가 있으면 보충해서 문장 내용을 110% 로 더 풍부하게 다듬어줘. 단, 원문에 없는 사실은 추가하지 말고 문단 형식은 유지해줘.">내용 110%</button>
       </div>
-      <button id="refine-submit" type="submit" formaction="{{ url_for('refine_draft', draft_id=draft.id) }}" formmethod="post">Gemini로 다시 다듬기</button>
+      <div class="refine-submit-row">
+        <button id="refine-submit" type="submit" formaction="{{ url_for('refine_draft', draft_id=draft.id) }}" formmethod="post">Gemini로 다시 다듬기</button>
+        <span id="refine-status" class="refine-status" aria-live="polite" hidden>다듬는 중...</span>
+      </div>
     </div>
 
     <label for="status">상태</label>
@@ -76,19 +79,32 @@
     const form = document.querySelector("#draft-editor");
     const instruction = document.querySelector("#refine_instruction");
     const preset = document.querySelector("#preset_instruction");
+    const refineSubmit = document.querySelector("#refine-submit");
+    const refineStatus = document.querySelector("#refine-status");
     const refineUrl = form?.dataset.refineUrl;
     const initialUrl = form?.dataset.initialUrl;
     if (!form || !instruction || !preset || !refineUrl || !initialUrl) return;
 
-    const submitRefine = (value) => {
-      if (value) {
-        instruction.value = value;
-        preset.value = value;
-      } else {
-        preset.value = "";
-      }
+    const selectRefineInstruction = (button) => {
+      const value = button.dataset.refineInstruction || "";
+      instruction.value = value;
+      preset.value = value;
+      document.querySelectorAll("[data-refine-instruction]").forEach((item) => {
+        item.classList.toggle("selected", item === button);
+      });
+      instruction.focus();
+    };
+
+    const submitRefine = () => {
+      preset.value = instruction.value.trim();
       form.action = refineUrl;
       form.method = "post";
+      if (refineSubmit) {
+        refineSubmit.disabled = true;
+      }
+      if (refineStatus) {
+        refineStatus.hidden = false;
+      }
       if (form.requestSubmit) {
         form.requestSubmit();
       } else {
@@ -111,12 +127,12 @@
     document.querySelector("#restore-initial")?.addEventListener("click", submitRestoreInitial);
 
     document.querySelectorAll("[data-refine-instruction]").forEach((button) => {
-      button.addEventListener("click", () => submitRefine(button.dataset.refineInstruction || ""));
+      button.addEventListener("click", () => selectRefineInstruction(button));
     });
 
     document.querySelector("#refine-submit")?.addEventListener("click", (event) => {
       event.preventDefault();
-      submitRefine("");
+      submitRefine();
     });
   })();
 </script>

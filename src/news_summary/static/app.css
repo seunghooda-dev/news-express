@@ -602,6 +602,24 @@ h3 {
   font-size: 13px;
 }
 
+.quick-refine button.selected {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.refine-submit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.refine-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
