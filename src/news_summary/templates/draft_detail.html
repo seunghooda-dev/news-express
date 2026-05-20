@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <h1>초안 #{{ draft.id }}</h1>
+  <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 열기</a>
+</section>
+
+<section class="detail-status">
+  <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
+  <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+  <span>{{ draft.source_name }}</span>
+  <span>게시 {{ draft.published_at|date_label }}</span>
+  {% if draft.updated_at %}<span>수정 {{ draft.updated_at|date_label }}</span>{% endif %}
+</section>
+
+<section class="editor-grid">
+  <article class="original">
+    <h2>수집 원문</h2>
+    <p class="meta">{{ draft.source_name }} · {{ draft.published_at|date_label }}</p>
+    <p class="meta">원문 검증: {{ draft.validation_status }} · {{ draft.validation_note }}</p>
+    <h3>{{ draft.original_title }}</h3>
+    <p>{{ draft.original_content }}</p>
+  </article>
+
+  <form id="draft-editor" class="editor" method="post" action="{{ url_for('update_draft', draft_id=draft.id) }}" data-refine-url="{{ url_for('refine_draft', draft_id=draft.id) }}" data-initial-url="{{ url_for('restore_initial_draft', draft_id=draft.id) }}">
+    <label for="title">제목</label>
+    <input id="title" name="title" value="{{ draft.title }}">
+
+    <label for="body">본문</label>
+    <textarea id="body" name="body" rows="16">{{ draft.body }}</textarea>
+
+    <label for="review_note">검수 메모</label>
+    <textarea id="review_note" name="review_note" rows="5">{{ draft.review_note }}</textarea>
+
+    <div class="refine-panel">
+      <label for="refine_instruction">Gemini 다듬기 방향</label>
+      <input type="hidden" id="preset_instruction" name="preset_instruction" value="">
+      <textarea id="refine_instruction" name="refine_instruction" rows="5" placeholder="예: 제목을 더 짧게, 1문단은 핵심 사업부터, 3문단은 신청 방법 중심으로 정리"></textarea>
+      <div class="quick-refine">
+        <button class="secondary" type="button" id="restore-initial">처음으로</button>
+        <button class="secondary" type="button" data-refine-instruction="제목을 더 짧고 명확하게 다듬고, 본문은 현재 흐름을 유지해줘.">제목 짧게</button>
+        <button class="secondary" type="button" data-refine-instruction="현재 초안에서 핵심 정보와 3문단 형식은 유지하되, 반복 표현을 줄이고 문장을 조금 더 짧게 압축해줘. 원문에 있는 날짜, 금액, 기관명은 그대로 유지해줘.">내용 조금 짧게</button>
+        <button class="secondary" type="button" data-refine-instruction="1문단은 핵심 소식, 2문단은 주요 내용, 3문단은 신청 방법이나 일정 중심으로 다시 정리해줘.">3문단 재정리</button>
+        <button class="secondary" type="button" data-refine-instruction="현재 원문에서 빠진 핵심 정보가 있으면 보충해서 문장을 조금 더 풍부하게 다듬어줘. 단, 원문에 없는 사실은 추가하지 말고 3문단 형식은 유지해줘.">내용 보충해서 길게</button>
+        <button class="secondary" type="button" data-refine-instruction="대상, 비용, 모집 인원, 신청 기간, 신청 방법을 마지막 문단에 분명하게 정리해줘.">신청 정보 중심</button>
+      </div>
+      <button id="refine-submit" type="submit" formaction="{{ url_for('refine_draft', draft_id=draft.id) }}" formmethod="post">Gemini로 다시 다듬기</button>
+    </div>
+
+    <label for="status">상태</label>
+    <select id="status" name="status">
+      {% for status in statuses %}
+        <option value="{{ status }}" {% if status == draft.status %}selected{% endif %}>{{ status_label(status) }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="actions">
+      <button type="submit">저장</button>
+      <button type="submit" name="action" value="approved">승인</button>
+      <button type="submit" name="action" value="rejected">반려</button>
+    </div>
+  </form>
+</section>
+<script>
+  (() => {
+    const form = document.querySelector("#draft-editor");
+    const instruction = document.querySelector("#refine_instruction");
+    const preset = document.querySelector("#preset_instruction");
+    const refineUrl = form?.dataset.refineUrl;
+    const initialUrl = form?.dataset.initialUrl;
+    if (!form || !instruction || !preset || !refineUrl || !initialUrl) return;
+
+    const submitRefine = (value) => {
+      if (value) {
+        instruction.value = value;
+        preset.value = value;
+      } else {
+        preset.value = "";
+      }
+      form.action = refineUrl;
+      form.method = "post";
+      if (form.requestSubmit) {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    };
+
+    const submitRestoreInitial = () => {
+      instruction.value = "";
+      preset.value = "";
+      form.action = initialUrl;
+      form.method = "post";
+      if (form.requestSubmit) {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    };
+
+    document.querySelector("#restore-initial")?.addEventListener("click", submitRestoreInitial);
+
+    document.querySelectorAll("[data-refine-instruction]").forEach((button) => {
+      button.addEventListener("click", () => submitRefine(button.dataset.refineInstruction || ""));
+    });
+
+    document.querySelector("#refine-submit")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      submitRefine("");
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,33 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Data / temporary files
+*.sqlite
+*.db
+data/*.png
+data/backups/
+data/logs/
+data/tmp/
+data/raw/
+exports/
+.playwright-cli/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

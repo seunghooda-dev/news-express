@@ -1,0 +1,572 @@
+from __future__ import annotations
+
+import re
+from urllib.parse import urljoin, urlsplit, urlunsplit
+from xml.etree import ElementTree
+
+import httpx
+from bs4 import BeautifulSoup, Tag
+
+from .models import PressRelease, Source
+
+
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; NewsSummaryBot/0.1; press-release-monitor)"
+}
+
+
+class CollectionError(RuntimeError):
+    pass
+
+
+DATE_RE = re.compile(r"(20\d{2}[./-]\d{1,2}[./-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)")
+HANGUL_RE = re.compile(r"[가-힣]")
+WORD_RE = re.compile(r"[가-힣A-Za-z0-9]+")
+TITLE_STOPWORDS = {
+    "보도자료",
+    "보도",
+    "자료",
+    "해명",
+    "군청",
+    "시청",
+    "전남",
+    "광주",
+    "대한",
+    "글내용",
+    "글보기",
+}
+NAVIGATION_NOISE_TOKENS = (
+    "본문 바로가기",
+    "주메뉴",
+    "통합검색",
+    "로그인",
+    "회원가입",
+    "사이트맵",
+    "개인정보처리방침",
+    "이메일무단수집거부",
+    "전자민원",
+    "분야별정보",
+    "열린군정",
+    "조직도",
+    "만족도",
+    "저작권",
+    "공공누리",
+)
+LANDING_PAGE_TOKENS = (
+    "대표누리집 바로가기",
+    "관광누리집 바로가기",
+    "문화관광",
+    "누리집 바로가기",
+    "바로가기",
+)
+DEFAULT_CONTENT_SELECTORS = [
+    ".board_view",
+    ".board-view",
+    ".boardView",
+    ".view_cont",
+    ".view-content",
+    ".viewContent",
+    ".board_cont",
+    ".board-content",
+    ".boardContent",
+    ".board_view_contents",
+    ".bbs_view_contnet",
+    ".bbs_view_content",
+    ".bbs_view",
+    ".bbs-view",
+    ".detail_cont",
+    ".detail-content",
+    "article",
+    "main",
+    "#contents",
+    "#content",
+    ".contents",
+    ".content",
+]
+NOISE_SELECTORS = [
+    "script",
+    "style",
+    "noscript",
+    "iframe",
+    "nav",
+    "header",
+    "footer",
+    "button",
+    "input",
+    "select",
+    ".sns",
+    ".btn_set",
+    ".siiruModal",
+    ".satisfaction",
+    ".pagination",
+    ".paging",
+    ".attach",
+    ".file",
+    ".comment",
+]
+
+
+def collect_source(source: Source, limit: int = 10) -> list[PressRelease]:
+    if source.type == "rss":
+        return collect_rss(source, limit=limit)
+    if source.type == "json_board":
+        return collect_json_board(source, limit=limit)
+    if source.type == "html_board":
+        return collect_html_board(source, limit=limit)
+    raise CollectionError(f"지원하지 않는 수집 방식입니다: {source.type}")
+
+
+def collect_rss(source: Source, limit: int = 10) -> list[PressRelease]:
+    if not source.feed_url:
+        raise CollectionError(f"{source.id} 설정에 RSS 주소가 없습니다.")
+
+    with httpx.Client(
+        headers=DEFAULT_HEADERS,
+        timeout=20,
+        follow_redirects=True,
+        verify=source.verify_ssl,
+    ) as client:
+        response = client.get(source.feed_url)
+        response.raise_for_status()
+
+    root = ElementTree.fromstring(response.content)
+    items = root.findall(".//item")[:limit]
+    releases = []
+    for item in items:
+        title = _xml_text(item, "title")
+        link = _xml_text(item, "link")
+        content = _xml_text(item, "description")
+        published_at = _xml_text(item, "pubDate") or None
+        if title and link and content:
+            release = _validated_release(
+                source=source,
+                title=title,
+                url=link,
+                content=_clean_text(BeautifulSoup(content, "html.parser").get_text(" ")),
+                published_at=published_at,
+            )
+            if release:
+                releases.append(release)
+    return releases
+
+
+def collect_json_board(source: Source, limit: int = 10) -> list[PressRelease]:
+    selectors = source.selectors or {}
+    if not source.list_url:
+        raise CollectionError(f"{source.id} 설정에 목록 주소가 없습니다.")
+
+    params = selectors.get("params") or {}
+    if not isinstance(params, dict):
+        raise CollectionError(f"{source.id} 설정의 params는 키-값 형태여야 합니다.")
+
+    with httpx.Client(
+        headers=DEFAULT_HEADERS,
+        timeout=20,
+        follow_redirects=True,
+        verify=source.verify_ssl,
+    ) as client:
+        response = client.get(source.list_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    items = _get_path(data, selectors.get("items_path", "items"))
+    if not isinstance(items, list):
+        return []
+
+    releases = []
+    title_field = selectors.get("title_field", "title")
+    content_field = selectors.get("content_field", "content")
+    date_field = selectors.get("published_at_field", "published_at")
+    url_template = selectors.get("url_template")
+
+    for item in items:
+        if len(releases) >= limit:
+            break
+        if not isinstance(item, dict):
+            continue
+        title = _clean_title(str(item.get(title_field) or ""))
+        raw_content = str(item.get(content_field) or "")
+        content = _clean_text(BeautifulSoup(raw_content, "html.parser").get_text(" "))
+        if not title or not content:
+            continue
+        if url_template:
+            try:
+                detail_url = url_template.format(**item)
+            except KeyError:
+                continue
+        else:
+            detail_url = str(item.get("url") or "")
+        detail_url = _canonical_url(urljoin(source.base_url or source.list_url, detail_url))
+        if not _is_allowed_link(source, detail_url, title):
+            continue
+        release = _validated_release(
+            source=source,
+            title=title,
+            url=detail_url,
+            content=_trim_boilerplate(content),
+            published_at=_clean_text(str(item.get(date_field) or "")) or _extract_date(content),
+        )
+        if release:
+            releases.append(release)
+    return releases
+
+
+def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
+    selectors = source.selectors or {}
+    if not source.list_url:
+        raise CollectionError(f"{source.id} 설정에 목록 주소가 없습니다.")
+
+    with httpx.Client(
+        headers=DEFAULT_HEADERS,
+        timeout=20,
+        follow_redirects=True,
+        verify=source.verify_ssl,
+    ) as client:
+        list_response = client.get(source.list_url)
+        list_response.raise_for_status()
+        soup = BeautifulSoup(list_response.text, "html.parser")
+        rows = _candidate_rows(soup, selectors)
+
+        releases = []
+        seen_urls = set()
+        for row in rows:
+            if len(releases) >= limit:
+                break
+
+            title_node = _select_one(row, selectors.get("title"))
+            link_node = _select_one(row, selectors.get("link", "a[href]"))
+            if isinstance(row, Tag) and row.name == "a" and row.get("href"):
+                link_node = row
+                title_node = title_node or row
+            if not title_node or not link_node:
+                continue
+
+            href = link_node.get("href")
+            if not href:
+                continue
+
+            detail_url = _canonical_url(urljoin(source.base_url or source.list_url, href))
+            title = _node_title(title_node, selectors)
+            if not _is_allowed_link(source, detail_url, title):
+                continue
+            if detail_url in seen_urls:
+                continue
+            seen_urls.add(detail_url)
+
+            detail_response = client.get(detail_url)
+            detail_response.raise_for_status()
+            detail_soup = BeautifulSoup(detail_response.text, "html.parser")
+            content = _extract_detail_content(detail_soup, selectors)
+            if not content:
+                continue
+
+            date_node = row.select_one(selectors.get("published_at", "")) if selectors.get("published_at") else None
+            row_text = _clean_text(row.get_text(" ")) if isinstance(row, Tag) else ""
+            release = _validated_release(
+                source=source,
+                title=title,
+                url=detail_url,
+                content=content,
+                published_at=(
+                    _clean_text(date_node.get_text(" "))
+                    if date_node
+                    else _extract_date(row_text) or _extract_date(content)
+                ),
+            )
+            if release:
+                releases.append(release)
+    return releases
+
+
+def _xml_text(item: ElementTree.Element, tag: str) -> str:
+    node = item.find(tag)
+    return _clean_text(node.text or "") if node is not None else ""
+
+
+def _clean_text(value: str) -> str:
+    text = " ".join(value.split())
+    text = re.sub(r"\s+([.,!?。])", r"\1", text)
+    return text
+
+
+def _candidate_rows(soup: BeautifulSoup, selectors: dict) -> list[Tag]:
+    item_selector = selectors.get("item")
+    if item_selector:
+        return list(soup.select(item_selector))
+    link_selector = selectors.get("link", "a[href]")
+    return list(soup.select(link_selector))
+
+
+def _select_one(node: Tag, selector: str | None) -> Tag | None:
+    if not selector:
+        return None
+    try:
+        return node.select_one(selector)
+    except Exception:
+        return None
+
+
+def _node_title(node: Tag, selectors: dict) -> str:
+    attr_name = selectors.get("title_attr")
+    if attr_name:
+        attr_value = node.get(str(attr_name))
+        if attr_value:
+            return _clean_title(str(attr_value))
+    return _clean_title(node.get_text(" "))
+
+
+def _clean_title(value: str) -> str:
+    title = _clean_text(value)
+    title = re.sub(r"^\d{1,2}:\d{2}\s+", "", title)
+    title = re.sub(r"\s+(?:NEW|새로운글)$", "", title)
+    title = re.sub(r"\s+에 대한 (?:글내용 보기|글보기)\.?$", "", title)
+    title = re.sub(r"\s+20\d{2}[./-]\d{1,2}[./-]\d{1,2}$", "", title)
+    return _clean_text(title)
+
+
+def _is_allowed_link(source: Source, url: str, title: str) -> bool:
+    if len(title) < 4:
+        return False
+    if any(token in title for token in source.exclude_title_contains):
+        return False
+    if source.include_url_contains and not any(token in url for token in source.include_url_contains):
+        return False
+    if any(token in title for token in ("목록", "다음글", "이전글", "첨부파일", "미리보기", "로그인")):
+        return False
+    return url.startswith("http://") or url.startswith("https://")
+
+
+def _canonical_url(url: str) -> str:
+    parts = urlsplit(url)
+    path = re.sub(r";[^/?#]*", "", parts.path)
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def _validated_release(
+    source: Source,
+    title: str,
+    url: str,
+    content: str,
+    published_at: str | None,
+) -> PressRelease | None:
+    title = _clean_title(title)
+    content = _trim_boilerplate(_clean_text(content))
+    passed, note = _validate_original_text(title, content)
+    if not passed:
+        return None
+    return PressRelease(
+        source_id=source.id,
+        source_name=source.name,
+        region=source.region,
+        title=title,
+        url=_canonical_url(url),
+        content=content,
+        published_at=published_at,
+        validation_status="검증 완료",
+        validation_note=note,
+    )
+
+
+def _validate_original_text(title: str, content: str) -> tuple[bool, str]:
+    if len(title) < 4:
+        return False, "원문 검증 실패: 제목이 너무 짧습니다."
+    if len(content) < 80:
+        return False, "원문 검증 실패: 본문이 너무 짧아 보도자료 원문으로 보기 어렵습니다."
+    if _looks_like_attachment_metadata(content):
+        return False, "원문 검증 실패: 첨부파일 목록 또는 게시글 정보만 수집됐습니다."
+
+    hangul_count = len(HANGUL_RE.findall(content))
+    hangul_ratio = hangul_count / max(len(content), 1)
+    if hangul_count < 30 or hangul_ratio < 0.12:
+        return False, "원문 검증 실패: 한글 본문 비율이 낮아 실제 보도자료인지 확인할 수 없습니다."
+
+    first_block = content[:1200]
+    title_in_content = title in content[:2000]
+    keywords = _title_keywords(title)
+    matched_keywords = [keyword for keyword in keywords if keyword in content]
+    required_matches = 1 if len(keywords) <= 2 else 2
+    if keywords and not title_in_content and len(matched_keywords) < required_matches:
+        return False, "원문 검증 실패: 제목 핵심어가 본문과 충분히 일치하지 않습니다."
+
+    navigation_hits = sum(1 for token in NAVIGATION_NOISE_TOKENS if token in first_block)
+    if navigation_hits >= 5 and not title_in_content and len(matched_keywords) < required_matches + 1:
+        return False, "원문 검증 실패: 본문보다 홈페이지 메뉴 문구가 더 많이 감지됐습니다."
+
+    landing_hits = sum(1 for token in LANDING_PAGE_TOKENS if token in first_block)
+    if landing_hits >= 2 and len(content) < 700 and not title_in_content:
+        return False, "원문 검증 실패: 상세 보도자료가 아닌 바로가기 화면으로 보입니다."
+
+    if not _has_sentence_like_text(content):
+        return False, "원문 검증 실패: 보도자료 문장 형태를 확인하지 못했습니다."
+
+    return (
+        True,
+        (
+            f"본문 {len(content)}자, 제목 핵심어 {len(matched_keywords)}개 일치, "
+            f"한글 비율 {hangul_ratio:.0%}를 확인했습니다."
+        ),
+    )
+
+
+def _title_keywords(title: str) -> list[str]:
+    keywords = []
+    for token in WORD_RE.findall(title):
+        token = token.strip()
+        if len(token) < 2:
+            continue
+        if token in TITLE_STOPWORDS:
+            continue
+        if token.isdigit():
+            continue
+        if DATE_RE.fullmatch(token):
+            continue
+        keywords.append(token)
+    return keywords[:8]
+
+
+def _has_sentence_like_text(content: str) -> bool:
+    if re.search(r"(?:다|요|임|함|됨|음|며|고)\.", content):
+        return True
+    if re.search(r"(?:했습니다|밝혔습니다|전했습니다|됩니다|입니다|합니다)", content):
+        return True
+    return len(content) >= 350 and len(re.findall(r"[가-힣]{8,}", content)) >= 4
+
+
+def _extract_detail_content(soup: BeautifulSoup, selectors: dict) -> str:
+    selector_candidates = []
+    for selector in _as_list(selectors.get("content")):
+        for node in soup.select(selector):
+            text = _node_text(node)
+            if len(text) >= 40:
+                selector_candidates.append(text)
+    best_selected = _best_content(selector_candidates)
+    if best_selected:
+        return _trim_boilerplate(best_selected)
+
+    best_text = ""
+    for selector in DEFAULT_CONTENT_SELECTORS:
+        for node in soup.select(selector):
+            text = _node_text(node)
+            if _is_better_content(text, best_text):
+                best_text = text
+
+    if not best_text and soup.body:
+        best_text = _node_text(soup.body)
+
+    return _trim_boilerplate(best_text)
+
+
+def _node_text(node: Tag | None) -> str:
+    if not node:
+        return ""
+    clone = BeautifulSoup(str(node), "html.parser")
+    for noise in clone.select(", ".join(NOISE_SELECTORS)):
+        noise.decompose()
+    return _clean_text(clone.get_text("\n"))
+
+
+def _is_better_content(text: str, current: str) -> bool:
+    if len(text) < 40:
+        return False
+    if len(text) > 20000:
+        return False
+    return _content_score(text) > _content_score(current)
+
+
+def _best_content(candidates: list[str]) -> str:
+    best = ""
+    for text in candidates:
+        if _is_better_content(text, best):
+            best = text
+    return best
+
+
+def _content_score(text: str) -> int:
+    if not text:
+        return 0
+    text = _clean_text(text)
+    sentence_count = _sentence_count(text)
+    navigation_hits = sum(1 for token in NAVIGATION_NOISE_TOKENS if token in text[:1500])
+    attachment_hits = _attachment_noise_count(text)
+    score = min(len(text), 5000)
+    score += sentence_count * 250
+    score -= navigation_hits * 300
+    score -= attachment_hits * 180
+    if _looks_like_attachment_metadata(text):
+        score -= 2000
+    return score
+
+
+def _sentence_count(text: str) -> int:
+    return len(re.findall(r"(?:다|요|임|함|됨|음|했다|한다|있다|이다|밝혔다|말했다|전했다)\.", text))
+
+
+def _attachment_noise_count(text: str) -> int:
+    return sum(text.count(token) for token in ("다운로드", "미리보기", "바로듣기", ".hwp", ".hwpx", ".pdf", ".jpg", ".JPG"))
+
+
+def _looks_like_attachment_metadata(content: str) -> bool:
+    content = _clean_text(content)
+    attachment_hits = _attachment_noise_count(content)
+    has_board_meta = "작성일" in content and "담당부서" in content
+    has_file_actions = "다운로드" in content and ("미리보기" in content or "바로듣기" in content)
+    return (has_board_meta or has_file_actions) and attachment_hits >= 2 and _sentence_count(content) < 2
+
+
+def _trim_boilerplate(text: str) -> str:
+    text = _trim_leading_contact_metadata(_clean_text(text))
+    markers = [
+        "첨부파일",
+        "목록",
+        "개인정보 열람",
+        "자료관리 담당자",
+        "만족도조사",
+        "콘텐츠 관리부서",
+        "Q. 현재 페이지",
+        "공공누리",
+        "본 저작물은",
+        "삭제 수정",
+        "다음글",
+        "이전글",
+    ]
+    cut_at = len(text)
+    for marker in markers:
+        idx = text.find(marker)
+        if idx > 80 and _sentence_count(text[:idx]) >= 2:
+            cut_at = min(cut_at, idx)
+    return _clean_text(text[:cut_at])
+
+
+def _trim_leading_contact_metadata(text: str) -> str:
+    public_notice = re.search(r"공공저작권\s+관련\s+상담센터\s*\d{3,4}-\d{4}", text[:1200])
+    if public_notice:
+        return text[public_notice.end() :].strip()
+    match = re.search(r"〔[^〕]{0,220}(?:☎|\d{2,4}-\d{3,4})[^〕]{0,220}〕", text[:600])
+    if match:
+        return text[match.end() :].strip()
+    return text
+
+
+def _extract_date(text: str) -> str | None:
+    match = DATE_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _as_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _get_path(data: object, path: object) -> object:
+    current = data
+    for part in str(path).split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current

@@ -1,0 +1,322 @@
+# 광주·전남 공식 지자체 보도자료 기본 소스입니다.
+# 전남 군청 보도자료/군정소식 게시판까지 함께 수집합니다.
+
+common_content: &common_content
+  - ".board_view"
+  - ".board-view"
+  - ".boardView"
+  - ".view_cont"
+  - ".view-content"
+  - ".viewContent"
+  - ".view_body"
+  - ".viewBody"
+  - ".board_cont"
+  - ".board-content"
+  - ".boardContent"
+  - ".board_view_contents"
+  - ".bbs_view_contnet"
+  - ".bbs_view_content"
+  - ".bbs_view"
+  - ".bbs-view"
+  - ".detail_cont"
+  - ".detail-content"
+  - ".contents"
+  - "#content"
+  - "#contents"
+  - "article"
+  - "main"
+
+sources:
+  - id: gwangju-city
+    name: 광주광역시청 보도자료
+    region: 광주
+    enabled: true
+    type: html_board
+    list_url: "https://www.gwangju.go.kr/boardList.do?boardId=BD_0000000027&pageId=www789"
+    base_url: "https://www.gwangju.go.kr"
+    include_url_contains:
+      - "boardView.do"
+      - "BD_0000000027"
+    exclude_title_contains:
+      - "이전 보도자료"
+      - "사진뉴스"
+    selectors:
+      link: "a[href*='boardView.do'][href*='BD_0000000027']"
+      content: *common_content
+
+  - id: jeonnam-province
+    name: 전라남도청 보도자료
+    region: 전남
+    enabled: true
+    type: html_board
+    list_url: "https://www.jeonnam.go.kr/M7116/boardList.do?menuId=jeonnam0202000000"
+    base_url: "https://www.jeonnam.go.kr"
+    include_url_contains:
+      - "boardView.do"
+      - "M7116"
+    exclude_title_contains:
+      - "처음 목록"
+      - "다음 목록"
+      - "마지막 목록"
+    selectors:
+      link: "a[href*='boardView.do']"
+      content:
+        - ".bbs_view_contnet"
+
+  - id: damyang-county
+    name: 담양군청 보도자료
+    region: 전남 담양
+    enabled: true
+    type: json_board
+    list_url: "https://www.damyang.go.kr/board/getContentsList"
+    base_url: "https://www.damyang.go.kr"
+    include_url_contains:
+      - "/board/detail"
+      - "BBS_0000007"
+    selectors:
+      params:
+        domainId: "DOM_0000001"
+        boardId: "BBS_0000007"
+        ROW_CNT: "10"
+        BEGIN_ROW_IDX: "1"
+        CUR_PAGE_IDX: "1"
+        searchCondition: "DATA_TITLE"
+        searchKeyword: ""
+        getOfficeNm: "true"
+      items_path: "RSLT_DATA.boardContentsList"
+      title_field: "dataTitle"
+      content_field: "dataContent"
+      published_at_field: "registerDate"
+      url_template: "/board/detail?dataSid={dataSid}&boardId=BBS_0000007&domainId=DOM_0000001&contentsSid=12&menuCd=DOM_000000190001005001"
+
+  - id: gokseong-county
+    name: 곡성군청 보도자료
+    region: 전남 곡성
+    enabled: true
+    type: html_board
+    verify_ssl: false
+    list_url: "https://www.gokseong.go.kr/kr/board/list.do?bbsId=BBS_000000000000151&menuNo=102001002000"
+    include_url_contains:
+      - "view.do"
+      - "BBS_000000000000151"
+    selectors:
+      link: "a[href*='view.do'][href*='BBS_000000000000151']"
+      content: *common_content
+
+  - id: gurye-county
+    name: 구례군청 보도자료
+    region: 전남 구례
+    enabled: true
+    type: html_board
+    list_url: "https://www.gurye.go.kr/board/list.do?bbsId=BBS_0000000000000300&menuNo=115004006000"
+    include_url_contains:
+      - "view.do"
+      - "BBS_0000000000000300"
+    selectors:
+      link: "a[href*='view.do'][href*='BBS_0000000000000300']"
+      content: *common_content
+
+  - id: goheung-county
+    name: 고흥군청 보도자료
+    region: 전남 고흥
+    enabled: true
+    type: html_board
+    list_url: "https://www.goheung.go.kr/boardList.do?boardId=BD_00025&pageId=www102"
+    include_url_contains:
+      - "boardView.do"
+      - "BD_00025"
+    selectors:
+      link: "a[href*='boardView.do'][href*='BD_00025']"
+      content: *common_content
+
+  - id: boseong-county
+    name: 보성군청 보도자료
+    region: 전남 보성
+    enabled: true
+    type: html_board
+    list_url: "https://www.boseong.go.kr/www/open_administration/city_news/press_release"
+    include_url_contains:
+      - "press_release"
+      - "mode=view"
+    selectors:
+      link: "a[href*='mode=view'][href*='idx=']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: hwasun-county
+    name: 화순군청 화순포커스
+    region: 전남 화순
+    enabled: true
+    type: html_board
+    list_url: "https://www.hwasun.go.kr/gallery.do?S=S01&M=020101000000&b_code=0000000001"
+    include_url_contains:
+      - "gallery.do"
+      - "act=view"
+      - "b_code=0000000001"
+    selectors:
+      link: "a[href*='act=view'][href*='b_code=0000000001']"
+      title_attr: "title"
+      content:
+        - ".contents"
+        - ".view_cont"
+        - ".viewForm"
+        - "#content"
+        - "#contents"
+
+  - id: jangheung-county
+    name: 장흥군청 장흥소식
+    region: 전남 장흥
+    enabled: true
+    type: html_board
+    list_url: "https://www.jangheung.go.kr/www/organization/news/jh_news"
+    include_url_contains:
+      - "/jh_news"
+      - "mode=view"
+    selectors:
+      link: "a[href*='mode=view'][href*='idx=']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: gangjin-county
+    name: 강진군청 보도자료
+    region: 전남 강진
+    enabled: true
+    type: html_board
+    list_url: "https://www.gangjin.go.kr/www/government/news/press"
+    include_url_contains:
+      - "/www/government/news/press"
+      - "mode=view"
+    selectors:
+      link: "a[href*='mode=view'][href*='idx=']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: haenam-county
+    name: 해남군청 보도자료
+    region: 전남 해남
+    enabled: true
+    type: html_board
+    verify_ssl: false
+    list_url: "https://www.haenam.go.kr/planweb/board/list.9is?contentUid=18e3368f5d745106015d877ab2850a94&boardUid=18e3368f5fb80fdc015fdc4c2ac203e7&contentUid=18e3368f5d745106015d877ab2850a94"
+    include_url_contains:
+      - "view.9is"
+      - "BBSMSTR_000000000131"
+    selectors:
+      link: "a[href*='view.9is'][href*='BBSMSTR_000000000131']"
+      content:
+        - ".data_cont"
+
+  - id: yeongam-county
+    name: 영암군청 보도/해명자료
+    region: 전남 영암
+    enabled: true
+    type: html_board
+    verify_ssl: false
+    list_url: "https://www.yeongam.go.kr/home/www/open_information/yeongam_news/bodo/yeongam.go"
+    include_url_contains:
+      - "/bodo/show/"
+    selectors:
+      item: "dl.board_photonews"
+      link: "a[href*='/bodo/show/']"
+      title: ".title"
+      published_at: ".date"
+      content: *common_content
+
+  - id: muan-county
+    name: 무안군청 보도자료
+    region: 전남 무안
+    enabled: true
+    type: html_board
+    list_url: "https://www.muan.go.kr/www/openmuan/new/report"
+    include_url_contains:
+      - "/www/openmuan/new/report"
+      - "mode=view"
+    selectors:
+      link: "a[href*='mode=view'][href*='idx=']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: hampyeong-county
+    name: 함평군청 보도/해명
+    region: 전남 함평
+    enabled: true
+    type: html_board
+    list_url: "https://www.hampyeong.go.kr/boardList.do?boardId=NEWS&pageId=www275"
+    include_url_contains:
+      - "boardView.do"
+      - "NEWS"
+    selectors:
+      link: "a[href*='boardView.do'][href*='NEWS']"
+      content: *common_content
+
+  - id: yeonggwang-county
+    name: 영광군청 보도자료
+    region: 전남 영광
+    enabled: true
+    type: html_board
+    list_url: "https://www.yeonggwang.go.kr/bbs/?b_id=news_data&site=headquarter_new&mn=9056"
+    include_url_contains:
+      - "b_id=news_data"
+      - "type=view"
+    selectors:
+      link: "a[href*='type=view'][href*='bs_idx']"
+      content:
+        - ".board_view_contents"
+        - ".board_view"
+        - "#contents"
+
+  - id: jangseong-county
+    name: 장성군청 보도자료
+    region: 전남 장성
+    enabled: true
+    type: html_board
+    list_url: "https://www.jangseong.go.kr/home/www/news/jangseong/bodo"
+    include_url_contains:
+      - "/bodo/show/"
+    selectors:
+      link: "a[href*='/bodo/show/']"
+      content: *common_content
+
+  - id: wando-county
+    name: 완도군청 보도자료
+    region: 전남 완도
+    enabled: true
+    type: html_board
+    list_url: "https://www.wando.go.kr/wando/sub.cs?m=299"
+    include_url_contains:
+      - "nttId="
+      - "BBSMSTR_000000000036"
+    selectors:
+      link: "a[href*='nttId='][href*='BBSMSTR_000000000036']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: jindo-county-atc
+    name: 진도군 농업기술센터 보도자료
+    region: 전남 진도
+    enabled: true
+    type: html_board
+    list_url: "https://www.jindo.go.kr/atc/board/B0148.cs?m=45"
+    include_url_contains:
+      - "B0148.cs"
+      - "act=read"
+    selectors:
+      link: "a[href*='act=read'][href*='articleId=']"
+      content:
+        - ".viewContent"
+        - ".viewContentInner"
+        - "article"
+
+  - id: shinan-county
+    name: 신안군청 보도자료/해명
+    region: 전남 신안
+    enabled: true
+    type: html_board
+    list_url: "https://www.shinan.go.kr/home/www/openinfo/participation_07/participation_07_03"
+    include_url_contains:
+      - "participation_07_03/show"
+    selectors:
+      link: "a[href*='participation_07_03/show']"
+      content:
+        - "td.content"
+        - "#content"

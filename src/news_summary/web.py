@@ -1,0 +1,458 @@
+from __future__ import annotations
+
+import re
+from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
+
+from .exporter import export_approved
+from .service import collect_and_draft_cycle, collect_enabled_sources, draft_pending_releases
+from .settings import env_path, load_environment, load_sources
+from .storage import Store
+from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
+from .writer import GeminiRefineError, refine_draft_with_gemini
+
+
+VALID_STATUSES = {"needs_review", "approved", "rejected"}
+STATUS_ORDER = ("needs_review", "approved", "rejected")
+STATUS_LABELS = {
+    "needs_review": "검수 대기",
+    "approved": "승인",
+    "rejected": "반려",
+}
+LOCAL_TZ = timezone(timedelta(hours=9))
+DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
+DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
+
+
+def create_app() -> Flask:
+    load_environment()
+    app = Flask(__name__)
+    app.secret_key = "local-news-summary-review"
+    app.jinja_env.globals["status_label"] = status_label
+    app.jinja_env.globals["status_badge_class"] = status_badge_class
+    app.jinja_env.globals["model_label"] = model_label
+    app.jinja_env.globals["model_badge_class"] = model_badge_class
+    app.jinja_env.globals["interval_label"] = interval_label
+    app.jinja_env.filters["date_label"] = format_datetime_label
+
+    store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
+    config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
+    export_dir = env_path("NEWS_SUMMARY_EXPORT_DIR", "exports")
+    store.init_db()
+
+    @app.get("/")
+    def dashboard():
+        pending_drafts = store.drafts(status="needs_review", limit=300)
+        draft_groups = _group_drafts_by_recent_dates(pending_drafts)
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        return render_template(
+            "dashboard.html",
+            counts=store.counts(),
+            model_counts=_model_counts(store),
+            draft_groups=draft_groups,
+            approved_drafts=store.approved_drafts(limit=200),
+            auto_collector_status=auto_collector.snapshot() if auto_collector else None,
+        )
+
+    @app.get("/favicon.ico")
+    def favicon():
+        return Response(status=204)
+
+    @app.get("/drafts")
+    def drafts():
+        status = request.args.get("status") or None
+        if status and status not in VALID_STATUSES:
+            status = None
+        target_date = _parse_date(request.args.get("date"))
+        query = (request.args.get("q") or "").strip()
+        draft_rows = store.drafts(status=status, limit=1000 if target_date or query else 80)
+        if target_date:
+            draft_rows = _filter_drafts_by_date(draft_rows, target_date)
+        if query:
+            draft_rows = _filter_drafts_by_query(draft_rows, query)
+        return render_template(
+            "drafts.html",
+            drafts=draft_rows,
+            status=status,
+            date_filter=target_date,
+            query=query,
+            page_title=_drafts_page_title(status, target_date),
+        )
+
+    @app.get("/drafts/<int:draft_id>")
+    def draft_detail(draft_id: int):
+        draft = store.get_draft(draft_id)
+        if not draft:
+            flash("초안을 찾을 수 없습니다.")
+            return redirect(url_for("dashboard"))
+        return render_template("draft_detail.html", draft=draft, statuses=STATUS_ORDER)
+
+    @app.get("/writing-settings")
+    def writing_settings():
+        settings = load_writing_settings()
+        return render_template(
+            "writing_settings.html",
+            settings=settings,
+            prompt_preview=custom_prompt_section(settings),
+        )
+
+    @app.post("/writing-settings")
+    def update_writing_settings():
+        if request.form.get("action") == "reset":
+            save_writing_settings(DEFAULT_WRITING_SETTINGS)
+            flash("기사 설정을 기본값으로 되돌렸습니다.")
+        else:
+            save_writing_settings(request.form)
+            flash("기사 설정을 저장했습니다. 다음 Gemini 초안 생성부터 적용됩니다.")
+        return redirect(url_for("writing_settings"))
+
+    @app.post("/drafts/<int:draft_id>")
+    def update_draft(draft_id: int):
+        status = request.form.get("action") or request.form.get("status", "needs_review")
+        if status not in VALID_STATUSES:
+            status = "needs_review"
+        store.update_draft(
+            draft_id=draft_id,
+            title=request.form.get("title", "").strip(),
+            body=request.form.get("body", "").strip(),
+            review_note=request.form.get("review_note", "").strip(),
+            status=status,
+        )
+        flash("초안을 저장했습니다.")
+        return redirect(url_for("draft_detail", draft_id=draft_id))
+
+    @app.post("/drafts/<int:draft_id>/restore-initial")
+    def restore_initial_draft(draft_id: int):
+        draft = store.get_draft(draft_id)
+        if not draft:
+            flash("초안을 찾을 수 없습니다.")
+            return redirect(url_for("dashboard"))
+
+        status = request.form.get("status") or draft["status"]
+        if status not in VALID_STATUSES:
+            status = draft["status"]
+        store.restore_initial_draft(draft_id, status=status)
+        flash("처음 Gemini가 제시한 초안으로 복구했습니다.")
+        return redirect(url_for("draft_detail", draft_id=draft_id))
+
+    @app.post("/drafts/<int:draft_id>/refine")
+    def refine_draft(draft_id: int):
+        draft = store.get_draft(draft_id)
+        if not draft:
+            flash("초안을 찾을 수 없습니다.")
+            return redirect(url_for("dashboard"))
+
+        instruction = (request.form.get("refine_instruction") or "").strip()
+        if not instruction:
+            instruction = (request.form.get("preset_instruction") or "").strip()
+        if not instruction:
+            flash("Gemini에게 전달할 다듬기 방향을 입력하세요.")
+            return redirect(url_for("draft_detail", draft_id=draft_id))
+
+        status = request.form.get("status") or draft["status"]
+        if status not in VALID_STATUSES:
+            status = draft["status"]
+
+        try:
+            refined = refine_draft_with_gemini(
+                draft,
+                instruction,
+                (request.form.get("title") or draft["title"]).strip(),
+                (request.form.get("body") or draft["body"]).strip(),
+                (request.form.get("review_note") or draft["review_note"]).strip(),
+            )
+        except GeminiRefineError as exc:
+            models = ", ".join(exc.attempted_models)
+            suffix = f" 시도한 모델: {models}" if models else ""
+            flash(f"{exc}{suffix}")
+            return redirect(url_for("draft_detail", draft_id=draft_id))
+        except Exception as exc:  # noqa: BLE001 - UI should report a concise Gemini failure.
+            flash(f"Gemini 다듬기에 실패했습니다. {type(exc).__name__}")
+            return redirect(url_for("draft_detail", draft_id=draft_id))
+
+        store.update_draft(
+            draft_id=draft_id,
+            title=refined.title,
+            body=refined.body,
+            review_note=refined.review_note,
+            status=status,
+            model=refined.model,
+        )
+        flash("Gemini가 요청한 방향으로 초안을 다시 다듬었습니다.")
+        return redirect(url_for("draft_detail", draft_id=draft_id))
+
+    @app.post("/collect")
+    def collect():
+        limit = _positive_int(request.form.get("limit"), default=5)
+        for message in collect_enabled_sources(store, config_path, limit):
+            flash(message)
+        return redirect(url_for("dashboard"))
+
+    @app.post("/recrawl")
+    def recrawl():
+        limit = _positive_int(request.form.get("limit"), default=10)
+        source_count = max(1, len([source for source in load_sources(config_path) if source.enabled]))
+        draft_limit = max(limit * source_count, 250)
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        if auto_collector:
+            started = auto_collector.run_async_once(collect_limit=limit, draft_limit=draft_limit, label="수동 재수집")
+            messages = ["수동 재수집을 시작했습니다."] if started else ["자동 수집이 이미 실행 중입니다."]
+        else:
+            messages = collect_and_draft_cycle(
+                store,
+                config_path,
+                collect_limit=limit,
+                draft_limit=draft_limit,
+                require_gemini=True,
+            )
+        for message in messages:
+            flash(message)
+        return redirect(url_for("dashboard"))
+
+    @app.get("/recrawl/status")
+    def recrawl_status():
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        if not auto_collector:
+            return jsonify(
+                {
+                    "enabled": False,
+                    "running": False,
+                    "progress_current": 0,
+                    "progress_total": 0,
+                    "progress_message": "대기 중",
+                    "progress_source_name": "",
+                    "progress_phase": "idle",
+                    "last_error": None,
+                }
+            )
+        status = auto_collector.snapshot()
+        return jsonify(
+            {
+                "enabled": status.enabled,
+                "running": status.running,
+                "active_label": status.active_label or "",
+                "progress_current": status.progress_current,
+                "progress_total": status.progress_total,
+                "progress_message": status.progress_message,
+                "progress_source_name": status.progress_source_name or "",
+                "progress_phase": status.progress_phase,
+                "last_error": status.last_error,
+                "last_finished_at": status.last_finished_at,
+                "run_count": status.run_count,
+            }
+        )
+
+    @app.post("/draft")
+    def draft():
+        limit = _positive_int(request.form.get("limit"), default=5)
+        for message in draft_pending_releases(store, limit):
+            flash(message)
+        return redirect(url_for("dashboard"))
+
+    @app.post("/export")
+    def export():
+        markdown_path, csv_path, count = export_approved(store, Path(export_dir))
+        flash(f"승인 기사 {count}건을 내보냈습니다.")
+        flash(f"마크다운 파일: {markdown_path}")
+        flash(f"표 파일: {csv_path}")
+        return redirect(url_for("dashboard"))
+
+    return app
+
+
+def _positive_int(value: str | None, default: int) -> int:
+    try:
+        parsed = int(value or default)
+    except ValueError:
+        return default
+    return max(1, min(parsed, 100))
+
+
+def status_label(status: str) -> str:
+    return STATUS_LABELS.get(status, status)
+
+
+def status_badge_class(status: str | None) -> str:
+    if status == "approved":
+        return "badge-approved"
+    if status == "rejected":
+        return "badge-warning"
+    return "badge-neutral"
+
+
+def model_label(model: str | None) -> str:
+    if not model:
+        return "모델 미상"
+    if ":gemini" in model:
+        return "Gemini"
+    if ":rule-based" in model:
+        return "규칙 기반"
+    if "gpt" in model.lower():
+        return "OpenAI"
+    return model.split(":", 1)[0]
+
+
+def model_badge_class(model: str | None) -> str:
+    if model and ":gemini" in model:
+        return "badge-gemini"
+    if model and ":rule-based" in model:
+        return "badge-warning"
+    return "badge-neutral"
+
+
+def interval_label(seconds: int | None) -> str:
+    if not seconds:
+        return "주기 미상"
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return "1시간마다" if hours == 1 else f"{hours}시간마다"
+    if seconds % 60 == 0:
+        minutes = seconds // 60
+        return "1분마다" if minutes == 1 else f"{minutes}분마다"
+    return f"{seconds}초마다"
+
+
+def format_datetime_label(value: object) -> str:
+    if not value:
+        return "일시 미상"
+    text = str(value).strip()
+    date_only = re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text)
+    if date_only:
+        match = DATETIME_RE.search(text)
+        if match:
+            year, month, day, _, _ = match.groups()
+            return f"{int(year)}.{int(month):02d}.{int(day):02d}"
+
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+
+    if parsed:
+        if parsed.tzinfo:
+            parsed = parsed.astimezone(LOCAL_TZ)
+        return f"{parsed.year}.{parsed.month:02d}.{parsed.day:02d} {parsed.hour:02d}:{parsed.minute:02d}"
+
+    match = DATETIME_RE.search(text)
+    if not match:
+        return text
+    year, month, day, hour, minute = match.groups()
+    date_part = f"{int(year)}.{int(month):02d}.{int(day):02d}"
+    if hour and minute:
+        return f"{date_part} {int(hour):02d}:{minute}"
+    return date_part
+
+
+def _group_drafts_by_recent_dates(
+    drafts,
+    today: date | None = None,
+    days: int = 5,
+) -> list[dict[str, object]]:
+    today = today or datetime.now(LOCAL_TZ).date()
+    dates = [today - timedelta(days=offset) for offset in range(days)]
+    buckets = {target_date: [] for target_date in dates}
+
+    for draft in drafts:
+        draft_date = _draft_date(draft)
+        if draft_date in buckets:
+            buckets[draft_date].append(draft)
+
+    return [
+        {
+            "date": target_date,
+            "iso_date": target_date.isoformat(),
+            "label": _date_group_label(target_date, today),
+            "drafts": buckets[target_date],
+        }
+        for target_date in dates
+    ]
+
+
+def _filter_drafts_by_date(drafts, target_date: date):
+    return [draft for draft in drafts if _draft_date(draft) == target_date]
+
+
+def _filter_drafts_by_query(drafts, query: str):
+    terms = [term.casefold() for term in query.split() if term.strip()]
+    if not terms:
+        return list(drafts)
+
+    filtered = []
+    for draft in drafts:
+        haystack = " ".join(
+            str(_row_value(draft, key) or "")
+            for key in ("title", "source_name", "region", "original_title", "original_content", "review_note")
+        ).casefold()
+        if all(term in haystack for term in terms):
+            filtered.append(draft)
+    return filtered
+
+
+def _model_counts(store: Store) -> dict[str, int]:
+    with store.connect() as conn:
+        gemini = conn.execute("SELECT COUNT(*) AS count FROM article_drafts WHERE model LIKE '%:gemini'").fetchone()[
+            "count"
+        ]
+        rule_based = conn.execute(
+            "SELECT COUNT(*) AS count FROM article_drafts WHERE model LIKE '%:rule-based%'"
+        ).fetchone()["count"]
+    return {
+        "gemini": int(gemini),
+        "rule_based": int(rule_based),
+    }
+
+
+def _draft_date(draft) -> date | None:
+    return _parse_date(_row_value(draft, "published_at")) or _parse_date(_row_value(draft, "created_at"))
+
+
+def _parse_date(value: object) -> date | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    match = DATE_RE.search(text)
+    if match:
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+
+    if parsed.tzinfo:
+        parsed = parsed.astimezone(LOCAL_TZ)
+    return parsed.date()
+
+
+def _date_group_label(target_date: date, today: date) -> str:
+    suffix = " (오늘)" if target_date == today else ""
+    return f"{target_date.year}년 {target_date.month}월 {target_date.day}일{suffix}"
+
+
+def _drafts_page_title(status: str | None, target_date: date | None) -> str:
+    if target_date:
+        label = _date_group_label(target_date, datetime.now(LOCAL_TZ).date())
+        status_text = status_label(status) if status else "전체"
+        return f"{label} {status_text} 전체"
+    if status:
+        return f"{status_label(status)} 기사"
+    return "기사 초안"
+
+
+def _row_value(row, key: str):
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None

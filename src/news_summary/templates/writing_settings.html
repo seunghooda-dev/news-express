@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <h1>기사 설정</h1>
+  <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
+</section>
+
+<section class="settings-grid">
+  <form class="settings-form" method="post">
+    <label for="tone">어조</label>
+    <textarea id="tone" name="tone" rows="3">{{ settings.tone }}</textarea>
+
+    <label for="sentence_style">문장 방식</label>
+    <textarea id="sentence_style" name="sentence_style" rows="3">{{ settings.sentence_style }}</textarea>
+
+    <label for="title_style">제목 방식</label>
+    <textarea id="title_style" name="title_style" rows="3">{{ settings.title_style }}</textarea>
+
+    <label for="focus_points">우선 반영할 정보</label>
+    <textarea id="focus_points" name="focus_points" rows="4">{{ settings.focus_points }}</textarea>
+
+    <label for="avoid_phrases">피할 표현</label>
+    <textarea id="avoid_phrases" name="avoid_phrases" rows="4">{{ settings.avoid_phrases }}</textarea>
+
+    <label for="extra_instruction">추가 지시</label>
+    <textarea id="extra_instruction" name="extra_instruction" rows="5">{{ settings.extra_instruction }}</textarea>
+
+    <label for="style_example">참고 기사 예시</label>
+    <textarea id="style_example" name="style_example" rows="10">{{ settings.style_example }}</textarea>
+
+    <div class="actions">
+      <button type="submit">저장</button>
+      <button class="secondary" type="submit" name="action" value="reset">기본값으로 되돌리기</button>
+    </div>
+  </form>
+
+  <aside class="settings-preview">
+    <h2>적용 기준</h2>
+    <div class="rule-chips">
+      <span>원문 없는 사실 금지</span>
+      <span>3문단 단신 유지</span>
+      <span>제목 분류 표시 제외</span>
+    </div>
+    <h3>미리보기</h3>
+    <p>{{ prompt_preview }}</p>
+  </aside>
+</section>
+{% endblock %}

@@ -1,0 +1,50 @@
+# 이 파일을 config/municipalities.yaml로 복사한 뒤 실제 게시판 주소와 선택자를 채웁니다.
+# 지자체가 구독 피드를 제공하면 rss를 우선 사용합니다.
+# 웹 게시판만 있으면 html_board를, 목록이 자료 형태로 내려오면 json_board를 사용합니다.
+sources:
+  - id: html-board-sample
+    name: 광주광역시청 보도자료
+    region: 광주
+    enabled: false
+    type: html_board
+    list_url: "https://www.gwangju.go.kr/boardList.do?boardId=BD_0000000027&pageId=www789"
+    base_url: "https://www.gwangju.go.kr"
+    include_url_contains:
+      - "boardView.do"
+    selectors:
+      link: "a[href*='boardView.do']"
+      content:
+        - ".board_view"
+        - ".board_view_contents"
+        - ".bbs_view_contnet"
+        - ".bbs_view_content"
+        - ".view_cont"
+        - "#contents"
+
+  - id: jeonnam-province-rss-sample
+    name: 전라남도청 보도자료 구독 피드
+    region: 전남
+    enabled: false
+    type: rss
+    feed_url: "https://example.go.kr/rss/press.xml"
+
+  - id: json-board-sample
+    name: 자료 게시판 예시
+    region: 전남
+    enabled: false
+    type: json_board
+    list_url: "https://example.go.kr/board/getContentsList"
+    base_url: "https://example.go.kr"
+    include_url_contains:
+      - "/board/detail"
+    selectors:
+      params:
+        boardId: "BBS_SAMPLE"
+        ROW_CNT: "10"
+        BEGIN_ROW_IDX: "1"
+        CUR_PAGE_IDX: "1"
+      items_path: "RSLT_DATA.boardContentsList"
+      title_field: "dataTitle"
+      content_field: "dataContent"
+      published_at_field: "registerDate"
+      url_template: "/board/detail?dataSid={dataSid}&boardId=BBS_SAMPLE"

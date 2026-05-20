@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>News Express</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('dashboard') }}">Home</a>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">대시보드</a>
+      <a href="{{ url_for('drafts') }}">초안 목록</a>
+      <a href="{{ url_for('drafts', status='approved') }}">승인 기사</a>
+      <a href="{{ url_for('writing_settings') }}">기사 설정</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <section class="notices">
+          {% for message in messages %}
+            <p>{{ message }}</p>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

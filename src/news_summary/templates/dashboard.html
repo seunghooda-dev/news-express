@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <form method="post" action="{{ url_for('collect') }}">
+    <label>수집 건수</label>
+    <input type="number" name="limit" value="5" min="1" max="100">
+    <button type="submit">원문 수집</button>
+  </form>
+  <form method="post" action="{{ url_for('recrawl') }}">
+    <label>재수집 건수</label>
+    <input type="number" name="limit" value="10" min="1" max="100">
+    <button type="submit">수동 재수집</button>
+  </form>
+  <form method="post" action="{{ url_for('draft') }}">
+    <label>초안 생성 건수</label>
+    <input type="number" name="limit" value="5" min="1" max="100">
+    <button type="submit">초안 생성</button>
+  </form>
+  <form method="post" action="{{ url_for('export') }}">
+    <button type="submit">승인 기사 내보내기</button>
+  </form>
+</section>
+
+<section class="metrics">
+  <div><b>{{ counts.press_releases }}</b><span>수집 원문</span></div>
+  <div><b>{{ counts.drafts }}</b><span>기사 초안</span></div>
+  <div><b>{{ counts.needs_review }}</b><span>검수 대기</span></div>
+  <div><b>{{ counts.approved }}</b><span>승인 완료</span></div>
+  <div><b>{{ model_counts.gemini }}</b><span>Gemini 적용</span></div>
+  <div><b>{{ model_counts.rule_based }}</b><span>규칙 기반</span></div>
+</section>
+
+{% if auto_collector_status %}
+  <section class="auto-status">
+    <div class="auto-status-head">
+      <h1>자동 수집</h1>
+      <span class="badge badge-gemini">
+        {% if auto_collector_status.running %}실행 중{% else %}{{ interval_label(auto_collector_status.interval_seconds) }} 실행{% endif %}
+      </span>
+    </div>
+    <div class="auto-status-grid">
+      <span>수집 범위: 전체 기관</span>
+      <span>기관별 {{ auto_collector_status.collect_limit }}건 확인</span>
+      <span>Gemini 필수 적용</span>
+      <span>다음 실행 {{ auto_collector_status.next_run_at|date_label }}</span>
+      {% if auto_collector_status.last_finished_at %}
+        <span>마지막 완료 {{ auto_collector_status.last_finished_at|date_label }}</span>
+      {% endif %}
+      <span>누적 {{ auto_collector_status.run_count }}회</span>
+    </div>
+    <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
+      <div class="crawl-progress-head">
+        <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
+        <span data-progress-count>
+          {% if auto_collector_status.progress_total %}
+            {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
+          {% else %}
+            -/-
+          {% endif %}
+        </span>
+      </div>
+      <div class="crawl-progress-track"><span data-progress-bar></span></div>
+      <p data-progress-source>
+        {% if auto_collector_status.progress_source_name %}
+          현재 기관: {{ auto_collector_status.progress_source_name }}
+        {% else %}
+          대기 중
+        {% endif %}
+      </p>
+    </div>
+    {% if auto_collector_status.last_error %}
+      <p class="auto-status-error">{{ auto_collector_status.last_error }}</p>
+    {% elif auto_collector_status.last_messages %}
+      <p class="auto-status-message">{{ auto_collector_status.last_messages|last }}</p>
+    {% endif %}
+  </section>
+{% endif %}
+
+<section class="split">
+  <div>
+    <h1>검수 대기 초안</h1>
+    <div class="list date-list">
+      {% for group in draft_groups %}
+        <section class="date-group">
+          <div class="date-group-head">
+            <h2>{{ group.label }}</h2>
+            <span>{{ group.drafts|length }}건</span>
+          </div>
+          {% for draft in group.drafts[:10] %}
+            <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
+              <strong>{{ draft.title }}</strong>
+              <span class="row-meta">
+                <span>{{ draft.source_name }}</span>
+                <span>{{ (draft.published_at or draft.created_at)|date_label }}</span>
+                <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+              </span>
+            </a>
+          {% else %}
+            <p class="empty">해당 날짜의 검수 대기 초안이 없습니다.</p>
+          {% endfor %}
+          {% if group.drafts|length > 10 %}
+            <a class="more-summary" href="{{ url_for('drafts', status='needs_review', date=group.iso_date) }}">
+              <span>전체 보기</span>
+            </a>
+          {% endif %}
+        </section>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div>
+    <h1>검수 완료</h1>
+    <div class="list">
+      {% for draft in approved_drafts[:10] %}
+        <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
+          <strong>{{ draft.title }}</strong>
+          <span class="row-meta">
+            <span>{{ draft.source_name }}</span>
+            <span>승인 {{ (draft.approved_time or draft.updated_at or draft.created_at)|date_label }}</span>
+            <span class="badge badge-approved">{{ status_label(draft.status) }}</span>
+          </span>
+        </a>
+      {% else %}
+        <p class="empty">아직 검수 완료된 기사가 없습니다.</p>
+      {% endfor %}
+      {% if approved_drafts|length > 10 %}
+        <details class="more-details">
+          <summary class="more-summary"><span>더 보기</span></summary>
+          {% for draft in approved_drafts[10:] %}
+            <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
+              <strong>{{ draft.title }}</strong>
+              <span class="row-meta">
+                <span>{{ draft.source_name }}</span>
+                <span>승인 {{ (draft.approved_time or draft.updated_at or draft.created_at)|date_label }}</span>
+                <span class="badge badge-approved">{{ status_label(draft.status) }}</span>
+              </span>
+            </a>
+          {% endfor %}
+        </details>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% if auto_collector_status %}
+  <script>
+    (() => {
+      const panel = document.querySelector(".crawl-progress");
+      if (!panel) return;
+      const message = panel.querySelector("[data-progress-message]");
+      const count = panel.querySelector("[data-progress-count]");
+      const bar = panel.querySelector("[data-progress-bar]");
+      const source = panel.querySelector("[data-progress-source]");
+      const statusUrl = panel.dataset.statusUrl;
+      let wasRunning = panel.dataset.initialRunning === "true";
+      let reloadQueued = false;
+
+      const render = (status) => {
+        const total = Number(status.progress_total || 0);
+        const current = Math.min(Number(status.progress_current || 0), total || Number(status.progress_current || 0));
+        const percent = total ? Math.round((current / total) * 100) : 0;
+        const done = !status.running && status.progress_phase === "done";
+
+        message.textContent = status.last_error || (done ? "수집 완료" : status.progress_message || "대기 중");
+        count.textContent = total ? `${current}/${total}` : "-/-";
+        bar.style.width = `${percent}%`;
+        source.textContent = status.progress_source_name ? `현재 기관: ${status.progress_source_name}` : (done ? "수집 완료" : "대기 중");
+
+        if (wasRunning && done && !reloadQueued) {
+          reloadQueued = true;
+          window.setTimeout(() => window.location.reload(), 1400);
+        }
+        wasRunning = Boolean(status.running);
+      };
+
+      const poll = async () => {
+        try {
+          const response = await fetch(statusUrl, { headers: { "Accept": "application/json" } });
+          if (response.ok) render(await response.json());
+        } catch {
+          message.textContent = "진행 상태 확인 중 오류가 발생했습니다.";
+        }
+      };
+
+      poll();
+      window.setInterval(poll, 1500);
+    })();
+  </script>
+{% endif %}
+{% endblock %}
