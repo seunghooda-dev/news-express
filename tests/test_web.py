@@ -360,7 +360,8 @@ def test_refine_route_updates_current_draft_with_gemini(monkeypatch):
     assert 'data-refine-url="' in detail_html
     assert 'data-initial-url="' in detail_html
     assert "처음으로" in detail_html
-    assert "내용 조금 짧게" in detail_html
+    assert "내용 80~90%" in detail_html
+    assert "80~90% 수준으로 분량을 줄여 간결하게 작성해줘." in detail_html
     assert "내용 보충해서 길게" in detail_html
     assert 'data-refine-instruction="대상, 비용' in detail_html
 
