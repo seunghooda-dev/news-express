@@ -434,8 +434,6 @@ def review_flags(draft, duplicate_titles: set[str] | None = None) -> list[str]:
     model = str(_row_value(draft, "model") or "")
     validation_note = str(_row_value(draft, "validation_note") or "")
 
-    if _is_media_like(original_title, original_content):
-        flags.append("사진·카드뉴스")
     if _date_warning(draft):
         flags.append("게시일 확인")
     if duplicate_titles and original_title in duplicate_titles:
@@ -520,12 +518,6 @@ def _filter_drafts_by_review(drafts, review_filter: str, duplicate_titles: set[s
         return [draft for draft in drafts if review_flags(draft, duplicate_titles)]
     if review_filter == "date_issue":
         return [draft for draft in drafts if _date_warning(draft)]
-    if review_filter == "media":
-        return [
-            draft
-            for draft in drafts
-            if _is_media_like(str(_row_value(draft, "original_title") or ""), str(_row_value(draft, "original_content") or ""))
-        ]
     if review_filter == "application":
         return [draft for draft in drafts if _contains_any(draft, ("신청", "모집", "접수", "대상", "무료", "참가비"))]
     if review_filter == "event":
@@ -763,7 +755,6 @@ def _drafts_page_title(
             "application": "신청·모집 기사",
             "event": "행사·교육 기사",
             "support": "지원·예산 기사",
-            "media": "사진·카드뉴스 기사",
         }
         return labels.get(review_filter, "필터 기사")
     if target_date:
@@ -790,11 +781,6 @@ def _contains_any(draft, tokens: tuple[str, ...]) -> bool:
         for key in ("title", "original_title", "original_content", "body", "review_note")
     )
     return any(token in haystack for token in tokens)
-
-
-def _is_media_like(title: str, content: str) -> bool:
-    text = f"{title} {content}"
-    return any(token in text for token in ("사진뉴스", "카드뉴스", "카드 뉴스", "포토뉴스", "〈사진뉴스〉", "[카드뉴스]"))
 
 
 def _date_warning(draft) -> str:

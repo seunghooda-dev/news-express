@@ -122,9 +122,9 @@ def test_review_flags_find_attention_reasons():
 
     flags = review_flags(draft, duplicate_titles={"[카드뉴스] 신안군 행사 안내"})
 
-    assert "사진·카드뉴스" in flags
     assert "게시일 확인" in flags
     assert "중복 제목" in flags
+    assert "사진·카드뉴스" not in flags
     assert "원문 짧음" not in flags
     assert "메모 보강" not in flags
 

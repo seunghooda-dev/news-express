@@ -16,7 +16,6 @@
   <a class="{% if review_filter == 'application' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='application') }}">신청·모집</a>
   <a class="{% if review_filter == 'event' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='event') }}">행사·교육</a>
   <a class="{% if review_filter == 'support' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='support') }}">지원·예산</a>
-  <a class="{% if review_filter == 'media' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='media') }}">사진·카드뉴스</a>
   <a class="{% if review_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='date_issue') }}">게시일 확인</a>
 </section>
 
