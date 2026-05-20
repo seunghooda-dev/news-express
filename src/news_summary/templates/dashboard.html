@@ -1,6 +1,41 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="toolbar">
+  {% if auto_collector_status %}
+    <section class="auto-status">
+      <div class="auto-status-head">
+        <h1>자동 수집</h1>
+        <span class="badge badge-gemini">
+          {% if auto_collector_status.running %}실행 중{% else %}{{ interval_label(auto_collector_status.interval_seconds) }} 실행{% endif %}
+        </span>
+      </div>
+      <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
+        <div class="crawl-progress-head">
+          <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
+          <span data-progress-count>
+            {% if auto_collector_status.progress_total %}
+              {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
+            {% else %}
+              -/-
+            {% endif %}
+          </span>
+        </div>
+        <div class="crawl-progress-track"><span data-progress-bar></span></div>
+        <p data-progress-source>
+          {% if auto_collector_status.progress_source_name %}
+            현재 기관: {{ auto_collector_status.progress_source_name }}
+          {% else %}
+            대기 중
+          {% endif %}
+        </p>
+      </div>
+      {% if auto_collector_status.last_error %}
+        <p class="auto-status-error">{{ auto_collector_status.last_error }}</p>
+      {% elif auto_collector_status.last_messages %}
+        <p class="auto-status-message">{{ auto_collector_status.last_messages|last }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
   <form method="post" action="{{ url_for('recrawl') }}">
     <label>재수집 건수</label>
     <input type="number" name="limit" value="10" min="1" max="100">
@@ -15,54 +50,6 @@
   <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
   <a class="metric-link" href="{{ url_for('drafts', status='approved') }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
 </section>
-
-{% if auto_collector_status %}
-  <section class="auto-status">
-    <div class="auto-status-head">
-      <h1>자동 수집</h1>
-      <span class="badge badge-gemini">
-        {% if auto_collector_status.running %}실행 중{% else %}{{ interval_label(auto_collector_status.interval_seconds) }} 실행{% endif %}
-      </span>
-    </div>
-    <div class="auto-status-grid">
-      <span>수집 범위: 전체 기관</span>
-      <span>기관별 {{ auto_collector_status.collect_limit }}건 확인</span>
-      <span>Gemini 필수 적용</span>
-      <span>다음 실행 {{ auto_collector_status.next_run_at|date_label }}</span>
-      {% if auto_collector_status.last_auto_finished_at %}
-        <span>마지막 자동 수집 {{ auto_collector_status.last_auto_finished_at|date_label }}</span>
-      {% else %}
-        <span>마지막 자동 수집 아직 없음</span>
-      {% endif %}
-      <span>누적 {{ auto_collector_status.run_count }}회</span>
-    </div>
-    <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
-      <div class="crawl-progress-head">
-        <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
-        <span data-progress-count>
-          {% if auto_collector_status.progress_total %}
-            {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
-          {% else %}
-            -/-
-          {% endif %}
-        </span>
-      </div>
-      <div class="crawl-progress-track"><span data-progress-bar></span></div>
-      <p data-progress-source>
-        {% if auto_collector_status.progress_source_name %}
-          현재 기관: {{ auto_collector_status.progress_source_name }}
-        {% else %}
-          대기 중
-        {% endif %}
-      </p>
-    </div>
-    {% if auto_collector_status.last_error %}
-      <p class="auto-status-error">{{ auto_collector_status.last_error }}</p>
-    {% elif auto_collector_status.last_messages %}
-      <p class="auto-status-message">{{ auto_collector_status.last_messages|last }}</p>
-    {% endif %}
-  </section>
-{% endif %}
 
 <section class="source-board">
   <div class="section-head compact">

@@ -79,8 +79,8 @@ a {
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
+  align-items: stretch;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -88,9 +88,14 @@ a {
 .toolbar form {
   display: flex;
   flex-wrap: wrap;
+  align-self: flex-start;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: 0;
+}
+
+.toolbar > form:only-child {
   margin-left: auto;
 }
 
@@ -309,8 +314,9 @@ h3 {
 }
 
 .auto-status {
-  margin: -8px 0 28px;
-  padding: 16px;
+  flex: 1 1 520px;
+  min-width: min(100%, 420px);
+  padding: 12px;
   border: 1px solid #b9d9d3;
   border-radius: 8px;
   background: #f4fbf9;
@@ -329,18 +335,10 @@ h3 {
   font-size: 18px;
 }
 
-.auto-status-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .crawl-progress {
   display: grid;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 10px;
   padding: 12px;
   border: 1px solid #cfe3de;
   border-radius: 8px;

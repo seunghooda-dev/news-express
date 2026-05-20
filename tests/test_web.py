@@ -333,7 +333,9 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
     html = dashboard.data.decode("utf-8")
     assert "2/19" in html
     assert "전라남도청 보도자료" in html
-    assert "마지막 자동 수집 아직 없음" in html
+    assert "수집 범위:" not in html
+    assert "마지막 자동 수집 아직 없음" not in html
+    assert html.index('class="auto-status"') < html.index("수동 재수집")
     assert "/recrawl/status" in html
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
