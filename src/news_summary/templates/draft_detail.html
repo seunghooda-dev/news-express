@@ -11,6 +11,9 @@
   <span>{{ draft.source_name }}</span>
   <span>게시 {{ draft.published_at|date_label }}</span>
   {% if draft.updated_at %}<span>수정 {{ draft.updated_at|date_label }}</span>{% endif %}
+  {% for flag in review_flags(draft, duplicate_titles) %}
+    <span class="badge badge-warning">{{ flag }}</span>
+  {% endfor %}
 </section>
 
 <section class="editor-grid">
@@ -59,6 +62,15 @@
       <button type="submit" name="action" value="approved">승인</button>
       <button type="submit" name="action" value="rejected">반려</button>
     </div>
+
+    <section class="approval-checks">
+      <h2>승인 전 체크</h2>
+      {% for check in checks %}
+        <span class="{% if check.ok %}check-ok{% else %}check-warn{% endif %}">
+          {{ "통과" if check.ok else "확인" }} · {{ check.label }}
+        </span>
+      {% endfor %}
+    </section>
   </form>
 </section>
 <script>

@@ -12,6 +12,7 @@
   <div><b>{{ counts.press_releases }}</b><span>수집 원문</span></div>
   <div><b>{{ counts.drafts }}</b><span>기사 초안</span></div>
   <div><b>{{ counts.needs_review }}</b><span>검수 대기</span></div>
+  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
   <div><b>{{ counts.approved }}</b><span>승인 완료</span></div>
   <div><b>{{ model_counts.gemini }}</b><span>Gemini 적용</span></div>
   <div><b>{{ model_counts.rule_based }}</b><span>규칙 기반</span></div>
@@ -63,6 +64,30 @@
   </section>
 {% endif %}
 
+<section class="source-board">
+  <div class="section-head compact">
+    <h1>기관별 수집 상태</h1>
+    <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}">주의 필요 보기</a>
+  </div>
+  <div class="source-grid">
+    {% for source in source_summaries %}
+      <a class="source-card {% if source.issue %}source-card-warning{% endif %}" href="{{ url_for('drafts', status='needs_review', source=source.id) }}">
+        <strong>{{ source.name }}</strong>
+        <span>{{ source.region }} · 누적 {{ source.releases }}건</span>
+        <span>최근 {{ source.last_collected|date_label }}</span>
+        {% if source.issue %}
+          <em>{{ source.issue }}</em>
+        {% else %}
+          <em>정상</em>
+        {% endif %}
+        {% if source.latest_title %}
+          <small>{{ source.latest_title }}</small>
+        {% endif %}
+      </a>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="split">
   <div>
     <h1>검수 대기 초안</h1>
@@ -80,6 +105,9 @@
                 <span>{{ draft.source_name }}</span>
                 <span>{{ (draft.published_at or draft.created_at)|date_label }}</span>
                 <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+                {% for flag in review_flags(draft, duplicate_titles)[:3] %}
+                  <span class="badge badge-warning">{{ flag }}</span>
+                {% endfor %}
               </span>
             </a>
           {% else %}

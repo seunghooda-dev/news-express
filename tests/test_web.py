@@ -6,12 +6,16 @@ from news_summary.models import ArticleDraft, PressRelease
 from news_summary.scheduler import AutoCollectorStatus
 from news_summary.storage import Store
 from news_summary.web import (
+    _date_warning,
+    _filter_drafts_by_review,
     _filter_drafts_by_date,
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
+    approval_checks,
     format_datetime_label,
     interval_label,
     model_label,
+    review_flags,
 )
 
 
@@ -101,6 +105,78 @@ def test_filter_drafts_by_query_searches_reporter_fields():
     filtered = _filter_drafts_by_query(drafts, "해남 환급")
 
     assert [draft["id"] for draft in filtered] == [1]
+
+
+def test_review_flags_find_attention_reasons():
+    draft = {
+        "title": "신안군 행사 안내",
+        "body": "신안군이 행사를 엽니다.",
+        "review_note": "-",
+        "model": "gemini-test:gemini",
+        "original_title": "[카드뉴스] 신안군 행사 안내",
+        "original_content": "짧은 카드뉴스 본문입니다.",
+        "published_at": "(홍길동 / 2026-05-20)",
+        "validation_note": "본문 90자, 제목 핵심어 1개 일치",
+    }
+
+    flags = review_flags(draft, duplicate_titles={"[카드뉴스] 신안군 행사 안내"})
+
+    assert "원문 짧음" in flags
+    assert "사진·카드뉴스" in flags
+    assert "게시일 확인" in flags
+    assert "중복 제목" in flags
+    assert "메모 보강" in flags
+
+
+def test_filter_drafts_by_review_supports_attention_and_topic_filters():
+    drafts = [
+        {
+            "id": 1,
+            "title": "군민 지원금 신청",
+            "body": "지원합니다.",
+            "review_note": "확인 완료",
+            "model": "gemini-test:gemini",
+            "original_title": "군민 지원금 신청",
+            "original_content": "군민 지원금 신청 접수를 시작한다. 대상자는 신청하면 된다.",
+            "published_at": "2026-05-20",
+            "validation_note": "본문 100자",
+        },
+        {
+            "id": 2,
+            "title": "사진뉴스",
+            "body": "사진뉴스입니다.",
+            "review_note": "-",
+            "model": "gemini-test:gemini",
+            "original_title": "〈사진뉴스〉 행사",
+            "original_content": "짧음",
+            "published_at": "담당자 2026-05-20",
+            "validation_note": "본문 20자",
+        },
+    ]
+
+    assert [draft["id"] for draft in _filter_drafts_by_review(drafts, "application", set())] == [1]
+    assert [draft["id"] for draft in _filter_drafts_by_review(drafts, "support", set())] == [1]
+    assert [draft["id"] for draft in _filter_drafts_by_review(drafts, "attention", set())] == [1, 2]
+    assert _date_warning(drafts[1]) == "게시일 앞 문구 확인"
+
+
+def test_approval_checks_warn_before_approval():
+    draft = {
+        "title": "[뉴스 단신] 제목",
+        "body": "[뉴스 단신] 제목\n\n본문",
+        "review_note": "없음",
+        "model": "gemini-test:gemini",
+        "original_title": "모집 안내",
+        "original_content": "군은 신청 대상자를 모집한다고 밝혔다.",
+        "published_at": "담당자 2026-05-20",
+        "validation_note": "본문 30자",
+    }
+
+    checks = approval_checks(draft, set())
+
+    assert any(check["label"] == "주의 필요 표시 없음" and not check["ok"] for check in checks)
+    assert any(check["label"] == "본문 3~4문단" and not check["ok"] for check in checks)
+    assert any(check["label"] == "신청·모집 정보 반영" and not check["ok"] for check in checks)
 
 
 def test_display_helpers_make_labels_readable():

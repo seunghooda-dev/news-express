@@ -246,7 +246,7 @@ class Store:
 
     def drafts(self, status: str | None = None, limit: int = 50) -> list[sqlite3.Row]:
         query = """
-            SELECT ad.*, pr.source_name, pr.region, pr.url, pr.content AS original_content,
+                SELECT ad.*, pr.source_id, pr.source_name, pr.region, pr.url, pr.content AS original_content,
                    pr.title AS original_title, pr.published_at,
                    pr.validation_status, pr.validation_note
             FROM article_drafts ad

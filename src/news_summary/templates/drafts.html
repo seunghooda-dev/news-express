@@ -10,22 +10,39 @@
   </div>
 </section>
 
+<section class="quick-filters">
+  <a class="{% if review_filter == 'today' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='today') }}">오늘 기사</a>
+  <a class="{% if review_filter == 'attention' %}active{% endif %}" href="{{ url_for('drafts', status=status or 'needs_review', review='attention') }}">주의 필요</a>
+  <a class="{% if review_filter == 'application' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='application') }}">신청·모집</a>
+  <a class="{% if review_filter == 'event' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='event') }}">행사·교육</a>
+  <a class="{% if review_filter == 'support' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='support') }}">지원·예산</a>
+  <a class="{% if review_filter == 'media' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='media') }}">사진·카드뉴스</a>
+  <a class="{% if review_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='date_issue') }}">게시일 확인</a>
+</section>
+
+<form class="source-filter" method="get">
+  {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+  {% if review_filter %}<input type="hidden" name="review" value="{{ review_filter }}">{% endif %}
+  {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+  <label for="source">기관별</label>
+  <select id="source" name="source" onchange="this.form.submit()">
+    <option value="">전체 기관</option>
+    {% for source in source_options %}
+      <option value="{{ source.id }}" {% if source_filter == source.id %}selected{% endif %}>{{ source.name }}</option>
+    {% endfor %}
+  </select>
+</form>
+
 <form class="searchbar" method="get">
   {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
   {% if date_filter %}<input type="hidden" name="date" value="{{ date_filter.isoformat() }}">{% endif %}
+  {% if review_filter %}<input type="hidden" name="review" value="{{ review_filter }}">{% endif %}
+  {% if source_filter %}<input type="hidden" name="source" value="{{ source_filter }}">{% endif %}
   <label for="q">검색</label>
   <input id="q" name="q" value="{{ query }}" placeholder="제목, 지자체, 원문">
   <button type="submit">검색</button>
-  {% if query %}
-    {% if date_filter and status %}
-      <a class="source-link" href="{{ url_for('drafts', status=status, date=date_filter.isoformat()) }}">초기화</a>
-    {% elif date_filter %}
-      <a class="source-link" href="{{ url_for('drafts', date=date_filter.isoformat()) }}">초기화</a>
-    {% elif status %}
-      <a class="source-link" href="{{ url_for('drafts', status=status) }}">초기화</a>
-    {% else %}
-      <a class="source-link" href="{{ url_for('drafts') }}">초기화</a>
-    {% endif %}
+  {% if query or review_filter or source_filter or date_filter %}
+    <a class="source-link" href="{{ url_for('drafts', status=status) if status else url_for('drafts') }}">초기화</a>
   {% endif %}
 </form>
 
@@ -38,6 +55,9 @@
         <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
         <span>{{ (draft.published_at or draft.created_at)|date_label }}</span>
         <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+        {% for flag in review_flags(draft, duplicate_titles)[:4] %}
+          <span class="badge badge-warning">{{ flag }}</span>
+        {% endfor %}
       </span>
     </a>
   {% else %}

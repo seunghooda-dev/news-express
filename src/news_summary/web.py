@@ -36,6 +36,8 @@ def create_app() -> Flask:
     app.jinja_env.globals["model_label"] = model_label
     app.jinja_env.globals["model_badge_class"] = model_badge_class
     app.jinja_env.globals["interval_label"] = interval_label
+    app.jinja_env.globals["review_flags"] = review_flags
+    app.jinja_env.globals["approval_checks"] = approval_checks
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
@@ -48,6 +50,8 @@ def create_app() -> Flask:
         pending_drafts = store.drafts(status="needs_review", limit=300)
         draft_groups = _group_drafts_by_recent_dates(pending_drafts)
         auto_collector = app.config.get("AUTO_COLLECTOR")
+        duplicate_titles = _duplicate_titles(store)
+        attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
         return render_template(
             "dashboard.html",
             counts=store.counts(),
@@ -55,6 +59,9 @@ def create_app() -> Flask:
             draft_groups=draft_groups,
             approved_drafts=store.approved_drafts(limit=200),
             auto_collector_status=auto_collector.snapshot() if auto_collector else None,
+            source_summaries=_source_summaries(store, config_path),
+            duplicate_titles=duplicate_titles,
+            attention_count=attention_count,
         )
 
     @app.get("/favicon.ico")
@@ -68,18 +75,30 @@ def create_app() -> Flask:
             status = None
         target_date = _parse_date(request.args.get("date"))
         query = (request.args.get("q") or "").strip()
-        draft_rows = store.drafts(status=status, limit=1000 if target_date or query else 80)
+        review_filter = (request.args.get("review") or "").strip()
+        source_filter = (request.args.get("source") or "").strip()
+        has_filter = bool(target_date or query or review_filter or source_filter)
+        draft_rows = store.drafts(status=status, limit=1000 if has_filter else 120)
+        duplicate_titles = _duplicate_titles(store)
         if target_date:
             draft_rows = _filter_drafts_by_date(draft_rows, target_date)
         if query:
             draft_rows = _filter_drafts_by_query(draft_rows, query)
+        if source_filter:
+            draft_rows = [draft for draft in draft_rows if _row_value(draft, "source_id") == source_filter]
+        if review_filter:
+            draft_rows = _filter_drafts_by_review(draft_rows, review_filter, duplicate_titles)
         return render_template(
             "drafts.html",
             drafts=draft_rows,
             status=status,
             date_filter=target_date,
             query=query,
-            page_title=_drafts_page_title(status, target_date),
+            review_filter=review_filter,
+            source_filter=source_filter,
+            duplicate_titles=duplicate_titles,
+            source_options=load_sources(config_path),
+            page_title=_drafts_page_title(status, target_date, review_filter, source_filter, config_path),
         )
 
     @app.get("/drafts/<int:draft_id>")
@@ -88,7 +107,14 @@ def create_app() -> Flask:
         if not draft:
             flash("초안을 찾을 수 없습니다.")
             return redirect(url_for("dashboard"))
-        return render_template("draft_detail.html", draft=draft, statuses=STATUS_ORDER)
+        duplicate_titles = _duplicate_titles(store)
+        return render_template(
+            "draft_detail.html",
+            draft=draft,
+            statuses=STATUS_ORDER,
+            duplicate_titles=duplicate_titles,
+            checks=approval_checks(draft, duplicate_titles),
+        )
 
     @app.get("/writing-settings")
     def writing_settings():
@@ -346,6 +372,54 @@ def format_datetime_label(value: object) -> str:
     return date_part
 
 
+def review_flags(draft, duplicate_titles: set[str] | None = None) -> list[str]:
+    flags: list[str] = []
+    title = str(_row_value(draft, "title") or "")
+    original_title = str(_row_value(draft, "original_title") or "")
+    body = str(_row_value(draft, "body") or "")
+    original_content = str(_row_value(draft, "original_content") or "")
+    review_note = str(_row_value(draft, "review_note") or "")
+    model = str(_row_value(draft, "model") or "")
+    validation_note = str(_row_value(draft, "validation_note") or "")
+
+    if len(original_content) < 450:
+        flags.append("원문 짧음")
+    if _is_media_like(original_title, original_content):
+        flags.append("사진·카드뉴스")
+    if _date_warning(draft):
+        flags.append("게시일 확인")
+    if duplicate_titles and original_title in duplicate_titles:
+        flags.append("중복 제목")
+    if ":rule-based" in model or "gemini-error" in model:
+        flags.append("AI 확인")
+    if _weak_review_note(review_note):
+        flags.append("메모 보강")
+    if "제목 핵심어 0개" in validation_note or "기존 수집 원문" in validation_note:
+        flags.append("원문 검증 확인")
+    if title.startswith("[뉴스 단신]") or body.lstrip().startswith(("[뉴스 단신]", title)):
+        flags.append("형식 확인")
+    return flags
+
+
+def approval_checks(draft, duplicate_titles: set[str] | None = None) -> list[dict[str, object]]:
+    flags = set(review_flags(draft, duplicate_titles))
+    body = str(_row_value(draft, "body") or "")
+    original = str(_row_value(draft, "original_content") or "")
+    paragraphs = [part for part in re.split(r"\n\s*\n", body.strip()) if part.strip()]
+    has_application_info = any(token in original for token in ("신청", "모집", "접수", "대상", "무료", "참가비", "지원"))
+    body_has_application_info = any(token in body for token in ("신청", "모집", "접수", "대상", "무료", "참가비", "지원"))
+    checks = [
+        {"label": "주의 필요 표시 없음", "ok": not flags},
+        {"label": "본문 3~4문단", "ok": 3 <= len(paragraphs) <= 4},
+        {"label": "제목/본문 형식 정상", "ok": "형식 확인" not in flags},
+        {"label": "게시일 정상", "ok": "게시일 확인" not in flags},
+        {"label": "원문 길이 충분", "ok": "원문 짧음" not in flags},
+    ]
+    if has_application_info:
+        checks.append({"label": "신청·모집 정보 반영", "ok": body_has_application_info})
+    return checks
+
+
 def _group_drafts_by_recent_dates(
     drafts,
     today: date | None = None,
@@ -391,6 +465,29 @@ def _filter_drafts_by_query(drafts, query: str):
     return filtered
 
 
+def _filter_drafts_by_review(drafts, review_filter: str, duplicate_titles: set[str]):
+    today = datetime.now(LOCAL_TZ).date()
+    if review_filter == "today":
+        return [draft for draft in drafts if _draft_date(draft) == today]
+    if review_filter == "attention":
+        return [draft for draft in drafts if review_flags(draft, duplicate_titles)]
+    if review_filter == "date_issue":
+        return [draft for draft in drafts if _date_warning(draft)]
+    if review_filter == "media":
+        return [
+            draft
+            for draft in drafts
+            if _is_media_like(str(_row_value(draft, "original_title") or ""), str(_row_value(draft, "original_content") or ""))
+        ]
+    if review_filter == "application":
+        return [draft for draft in drafts if _contains_any(draft, ("신청", "모집", "접수", "대상", "무료", "참가비"))]
+    if review_filter == "event":
+        return [draft for draft in drafts if _contains_any(draft, ("행사", "축제", "교육", "프로그램", "전시", "공연"))]
+    if review_filter == "support":
+        return [draft for draft in drafts if _contains_any(draft, ("지원", "예산", "금액", "만원", "보조", "환급", "사업비"))]
+    return list(drafts)
+
+
 def _model_counts(store: Store) -> dict[str, int]:
     with store.connect() as conn:
         gemini = conn.execute("SELECT COUNT(*) AS count FROM article_drafts WHERE model LIKE '%:gemini'").fetchone()[
@@ -403,6 +500,74 @@ def _model_counts(store: Store) -> dict[str, int]:
         "gemini": int(gemini),
         "rule_based": int(rule_based),
     }
+
+
+def _duplicate_titles(store: Store) -> set[str]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT title
+            FROM press_releases
+            GROUP BY title
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+    return {str(row["title"]) for row in rows}
+
+
+def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:
+    sources = [source for source in load_sources(config_path) if source.enabled]
+    with store.connect() as conn:
+        stats = {
+            row["source_id"]: row
+            for row in conn.execute(
+                """
+                SELECT source_id, COUNT(*) AS releases, MAX(collected_at) AS last_collected
+                FROM press_releases
+                GROUP BY source_id
+                """
+            ).fetchall()
+        }
+        latest = {
+            row["source_id"]: row
+            for row in conn.execute(
+                """
+                SELECT pr.source_id, pr.title, pr.published_at
+                FROM press_releases pr
+                JOIN (
+                    SELECT source_id, MAX(id) AS max_id
+                    FROM press_releases
+                    GROUP BY source_id
+                ) latest ON latest.max_id = pr.id
+                """
+            ).fetchall()
+        }
+
+    summaries = []
+    for source in sources:
+        stat = stats.get(source.id)
+        latest_row = latest.get(source.id)
+        releases = int(stat["releases"]) if stat else 0
+        issue = ""
+        if releases == 0:
+            issue = "수집 없음"
+        elif releases < 3:
+            issue = "수집량 적음"
+        elif latest_row and _parse_date(latest_row["published_at"]) is None:
+            issue = "게시일 확인"
+        summaries.append(
+            {
+                "id": source.id,
+                "name": source.name,
+                "region": source.region,
+                "releases": releases,
+                "last_collected": stat["last_collected"] if stat else None,
+                "latest_title": latest_row["title"] if latest_row else "",
+                "latest_published_at": latest_row["published_at"] if latest_row else None,
+                "issue": issue,
+            }
+        )
+    return summaries
 
 
 def _draft_date(draft) -> date | None:
@@ -439,7 +604,28 @@ def _date_group_label(target_date: date, today: date) -> str:
     return f"{target_date.year}년 {target_date.month}월 {target_date.day}일{suffix}"
 
 
-def _drafts_page_title(status: str | None, target_date: date | None) -> str:
+def _drafts_page_title(
+    status: str | None,
+    target_date: date | None,
+    review_filter: str = "",
+    source_filter: str = "",
+    config_path: Path | None = None,
+) -> str:
+    if source_filter and config_path:
+        for source in load_sources(config_path):
+            if source.id == source_filter:
+                return f"{source.name} 기사"
+    if review_filter:
+        labels = {
+            "today": "오늘 기사",
+            "attention": "주의 필요 기사",
+            "date_issue": "게시일 확인 필요",
+            "application": "신청·모집 기사",
+            "event": "행사·교육 기사",
+            "support": "지원·예산 기사",
+            "media": "사진·카드뉴스 기사",
+        }
+        return labels.get(review_filter, "필터 기사")
     if target_date:
         label = _date_group_label(target_date, datetime.now(LOCAL_TZ).date())
         status_text = status_label(status) if status else "전체"
@@ -456,3 +642,32 @@ def _row_value(row, key: str):
         return row[key]
     except (KeyError, IndexError, TypeError):
         return None
+
+
+def _contains_any(draft, tokens: tuple[str, ...]) -> bool:
+    haystack = " ".join(
+        str(_row_value(draft, key) or "")
+        for key in ("title", "original_title", "original_content", "body", "review_note")
+    )
+    return any(token in haystack for token in tokens)
+
+
+def _is_media_like(title: str, content: str) -> bool:
+    text = f"{title} {content}"
+    return any(token in text for token in ("사진뉴스", "카드뉴스", "카드 뉴스", "포토뉴스", "〈사진뉴스〉", "[카드뉴스]"))
+
+
+def _weak_review_note(note: str) -> bool:
+    cleaned = note.strip()
+    return cleaned in {"", "-", "없음", "특이사항 없음"} or len(cleaned) < 8
+
+
+def _date_warning(draft) -> str:
+    raw = str(_row_value(draft, "published_at") or "").strip()
+    if not raw:
+        return "게시일 없음"
+    if _parse_date(raw) is None:
+        return "게시일 파싱 실패"
+    if not re.match(r"^\s*20\d{2}[./-]\d{1,2}[./-]\d{1,2}", raw):
+        return "게시일 앞 문구 확인"
+    return ""
