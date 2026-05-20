@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ from news_summary.web import (
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
     _sort_drafts_latest_first,
+    LOCAL_TZ,
     approval_checks,
     format_datetime_label,
     interval_label,
@@ -245,6 +246,38 @@ def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     releases_html = client.get("/press-releases").data.decode("utf-8")
     assert "테스트 원문" in releases_html
     assert f'href="/drafts/{draft_id}"' in releases_html
+
+
+def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_source_counts_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    today = datetime.now(LOCAL_TZ).date()
+    yesterday = today - timedelta(days=1)
+
+    store = Store(db_path)
+    store.init_db()
+    for title, published_at in (("오늘 보도자료", today), ("어제 보도자료", yesterday)):
+        store.add_press_release(
+            PressRelease(
+                source_id="gwangju-city",
+                source_name="광주광역시청 보도자료",
+                region="광주",
+                title=title,
+                url=f"https://example.com/{title}",
+                content="기관별 수집 상태 테스트 본문입니다.",
+                published_at=published_at.isoformat(),
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/").data.decode("utf-8")
+
+    assert "광주 · 누적 2건 · 오늘 1건" in dashboard_html
 
 
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):

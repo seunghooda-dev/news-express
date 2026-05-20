@@ -606,6 +606,7 @@ def _duplicate_titles(store: Store) -> set[str]:
 
 def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:
     sources = [source for source in load_sources(config_path) if source.enabled]
+    today = datetime.now(LOCAL_TZ).date()
     with store.connect() as conn:
         stats = {
             row["source_id"]: row
@@ -631,6 +632,19 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 """
             ).fetchall()
         }
+        release_dates = conn.execute(
+            """
+            SELECT source_id, published_at, collected_at
+            FROM press_releases
+            """
+        ).fetchall()
+
+    today_counts: dict[str, int] = {}
+    for row in release_dates:
+        release_date = _source_release_date(row["published_at"], row["collected_at"])
+        if release_date == today:
+            source_id = str(row["source_id"])
+            today_counts[source_id] = today_counts.get(source_id, 0) + 1
 
     summaries = []
     for source in sources:
@@ -650,11 +664,23 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "name": source.name,
                 "region": source.region,
                 "releases": releases,
+                "today_releases": today_counts.get(source.id, 0),
                 "last_collected": stat["last_collected"] if stat else None,
                 "issue": issue,
             }
         )
     return summaries
+
+
+def _source_release_date(published_at: object, collected_at: object) -> date | None:
+    published_datetime = _parse_datetime(published_at)
+    if published_datetime:
+        return published_datetime.date()
+    published_date = _parse_date(published_at)
+    if published_date:
+        return published_date
+    collected_datetime = _parse_datetime(collected_at)
+    return collected_datetime.date() if collected_datetime else None
 
 
 def _draft_date(draft) -> date | None:
