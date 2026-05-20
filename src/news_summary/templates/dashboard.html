@@ -37,7 +37,7 @@
     </section>
   {% endif %}
   <form class="manual-recrawl" method="post" action="{{ url_for('recrawl') }}">
-    <button type="submit">수동 재수집</button>
+    <button type="submit" aria-label="수동 재수집"><span>수동</span><span>재수집</span></button>
   </form>
 </section>
 
