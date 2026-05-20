@@ -51,6 +51,22 @@ cd "C:\Users\seung\news summary"
 무료 key의 정확한 남은 요청 수, 분당 제한, 일일 제한은 Google AI Studio의 `Usage and Limits` 화면에서 확인합니다.
 Google 공식 문서상 Gemini API rate limit은 요청/토큰/일일 요청 등 여러 축으로 적용되며, 활성 제한은 AI Studio에서 확인하는 방식입니다.
 
+## 운영 로그
+
+앱은 기본적으로 `data/logs/news_summary.log`에 운영 로그를 남깁니다.
+로그에는 서버 시작, 수동 재수집 요청, 기관별 수집 성공/실패, Gemini 모델 실패, 초안 생성 보류, Gemini 다듬기 실패, 승인 기사 내보내기, 웹 예외가 기록됩니다.
+
+로그 파일은 자동으로 회전됩니다.
+
+```text
+NEWS_SUMMARY_LOG_DIR=data/logs
+NEWS_SUMMARY_LOG_LEVEL=INFO
+NEWS_SUMMARY_LOG_MAX_BYTES=2000000
+NEWS_SUMMARY_LOG_BACKUP_COUNT=5
+```
+
+문제가 발생하면 홈 화면의 `운영 로그` 경로를 확인하고, 가장 최근의 `WARNING` 또는 `ERROR` 줄부터 보면 됩니다.
+
 ## 명령줄 흐름
 
 ```powershell

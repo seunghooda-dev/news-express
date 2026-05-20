@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 
+from .ops_logging import configure_logging, get_logger
 from .settings import env_path, load_environment, load_sources
 from .storage import Store
 
 
 def main() -> None:
     load_environment()
+    configure_logging()
+    logger = get_logger("cli")
     parser = argparse.ArgumentParser(description="광주·전남 지자체 보도자료 수집 및 기사 초안 생성 도구")
     sub = parser.add_subparsers(dest="command", metavar="명령", required=True)
 
@@ -40,6 +43,7 @@ def main() -> None:
 
     if args.command == "init-db":
         store.init_db()
+        logger.info("database initialized path=%s", store.path)
         print(f"데이터베이스 준비 완료: {store.path}")
     elif args.command == "collect":
         store.init_db()
@@ -58,6 +62,7 @@ def main() -> None:
     elif args.command == "export":
         export_command(store, env_path("NEWS_SUMMARY_EXPORT_DIR", args.output_dir))
     elif args.command == "serve":
+        logger.info("serve command host=%s port=%s", args.host, args.port)
         serve_command(args.host, args.port)
 
 
@@ -105,6 +110,7 @@ def serve_command(host: str, port: int) -> None:
     from .web import create_app
 
     load_environment()
+    logger = get_logger("cli")
     store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
     store.init_db()
@@ -113,9 +119,11 @@ def serve_command(host: str, port: int) -> None:
     app.config["AUTO_COLLECTOR"] = auto_collector
     if auto_collector:
         auto_collector.start()
+        logger.info("auto collector started host=%s port=%s", host, port)
         print(
             "자동 수집 시작: 1시간마다 전체 기관 원문 수집 후 Gemini 초안을 검수 대기에 추가합니다."
         )
+    logger.info("flask app starting host=%s port=%s", host, port)
     app.run(host=host, port=port, debug=False)
 
 

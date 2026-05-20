@@ -5,12 +5,14 @@ from pathlib import Path
 
 from .collectors import CollectionError, collect_source
 from .models import PressRelease
+from .ops_logging import get_logger
 from .settings import load_sources
 from .storage import Store
 from .writer import GeminiDraftError, generate_draft
 
 
 ProgressCallback = Callable[[dict[str, object]], None]
+logger = get_logger("service")
 
 
 def collect_enabled_sources(
@@ -23,10 +25,12 @@ def collect_enabled_sources(
     sources = [source for source in load_sources(config_path) if source.enabled]
     if not sources:
         _report_progress(progress_callback, phase="done", current=0, total=0, message="수집 완료")
+        logger.warning("collect skipped no enabled sources config=%s", config_path)
         return ["켜진 수집 소스가 없습니다. config/municipalities.yaml을 확인하세요."]
 
     inserted = 0
     total = len(sources)
+    logger.info("collect started sources=%s limit=%s config=%s", total, limit, config_path)
     _report_progress(progress_callback, phase="collecting", current=0, total=total, message="수집 준비 중")
     for index, source in enumerate(sources, start=1):
         _report_progress(
@@ -41,6 +45,7 @@ def collect_enabled_sources(
             releases = collect_source(source, limit=limit)
         except CollectionError as exc:
             messages.append(f"{source.name} 수집 실패: {exc}")
+            logger.warning("source collection failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
             _report_progress(
                 progress_callback,
                 phase="source_failed",
@@ -52,6 +57,7 @@ def collect_enabled_sources(
             continue
         except Exception as exc:
             messages.append(f"{source.name} 수집 실패: {type(exc).__name__}: {exc}")
+            logger.exception("source collection unexpected failure source_id=%s source_name=%s", source.id, source.name)
             _report_progress(
                 progress_callback,
                 phase="source_failed",
@@ -68,6 +74,13 @@ def collect_enabled_sources(
                 inserted += 1
                 source_inserted += 1
         messages.append(f"{source.name}: 원문 검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건")
+        logger.info(
+            "source collection succeeded source_id=%s source_name=%s releases=%s inserted=%s",
+            source.id,
+            source.name,
+            len(releases),
+            source_inserted,
+        )
         _report_progress(
             progress_callback,
             phase="source_done",
@@ -78,6 +91,7 @@ def collect_enabled_sources(
         )
 
     messages.append(f"새 원문 {inserted}건을 저장했습니다.")
+    logger.info("collect finished sources=%s inserted=%s", total, inserted)
     _report_progress(progress_callback, phase="collected", current=total, total=total, message="수집 완료")
     return messages
 
@@ -92,6 +106,7 @@ def collect_and_draft_cycle(
 ) -> list[str]:
     messages = collect_enabled_sources(store, config_path, collect_limit, progress_callback=progress_callback)
     _report_progress(progress_callback, phase="drafting", message="Gemini 기사화 중")
+    logger.info("draft cycle started draft_limit=%s require_gemini=%s", draft_limit, require_gemini)
     messages.extend(draft_pending_releases(store, draft_limit, require_gemini=require_gemini))
     _report_progress(progress_callback, phase="done", message="수집 완료")
     return messages
@@ -100,9 +115,11 @@ def collect_and_draft_cycle(
 def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = False) -> list[str]:
     rows = store.pending_press_releases(limit)
     if not rows:
+        logger.info("draft skipped no pending releases")
         return ["초안을 만들 새 원문이 없습니다."]
 
     messages = []
+    logger.info("draft pending started rows=%s limit=%s require_gemini=%s", len(rows), limit, require_gemini)
     for row in rows:
         item = PressRelease(
             source_id=row["source_id"],
@@ -120,8 +137,22 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
             models = ", ".join(exc.attempted_models)
             suffix = f" 시도한 모델: {models}" if models else ""
             messages.append(f"{row['source_name']} 초안 보류: {exc}{suffix}")
+            logger.warning(
+                "draft held source_name=%s press_release_id=%s models=%s error=%s",
+                row["source_name"],
+                row["id"],
+                models,
+                exc,
+            )
             continue
         draft_id = store.add_article_draft(draft)
+        logger.info(
+            "draft created draft_id=%s press_release_id=%s source_name=%s model=%s",
+            draft_id,
+            row["id"],
+            row["source_name"],
+            draft.model,
+        )
         messages.append(f"초안 #{draft_id} 생성: {draft.title}")
     return messages
 

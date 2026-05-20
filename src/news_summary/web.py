@@ -6,8 +6,10 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
+from werkzeug.exceptions import HTTPException
 
 from .exporter import export_approved
+from .ops_logging import configure_logging, get_logger
 from .service import collect_and_draft_cycle, collect_enabled_sources, draft_pending_releases
 from .settings import env_path, load_environment, load_sources
 from .storage import Store
@@ -29,6 +31,8 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 
 def create_app() -> Flask:
     load_environment()
+    log_path = configure_logging()
+    logger = get_logger("web")
     app = Flask(__name__)
     app.secret_key = "local-news-summary-review"
     app.jinja_env.globals["status_label"] = status_label
@@ -44,6 +48,13 @@ def create_app() -> Flask:
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
     export_dir = env_path("NEWS_SUMMARY_EXPORT_DIR", "exports")
     store.init_db()
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(exc: Exception):
+        if isinstance(exc, HTTPException):
+            return exc
+        logger.exception("unhandled web error method=%s path=%s", request.method, request.path)
+        return "서버 오류가 발생했습니다. 운영 로그를 확인하세요.", 500
 
     @app.get("/")
     def dashboard():
@@ -62,6 +73,7 @@ def create_app() -> Flask:
             auto_collector_status=auto_status,
             source_summaries=_source_summaries(store, config_path),
             gemini_usage=_gemini_usage_summary(store, auto_status),
+            log_path=log_path,
             duplicate_titles=duplicate_titles,
             attention_count=attention_count,
         )
@@ -151,6 +163,7 @@ def create_app() -> Flask:
             review_note=request.form.get("review_note", "").strip(),
             status=status,
         )
+        logger.info("draft updated draft_id=%s status=%s", draft_id, status)
         flash("초안을 저장했습니다.")
         return redirect(url_for("draft_detail", draft_id=draft_id))
 
@@ -165,6 +178,7 @@ def create_app() -> Flask:
         if status not in VALID_STATUSES:
             status = draft["status"]
         store.restore_initial_draft(draft_id, status=status)
+        logger.info("draft restored draft_id=%s status=%s", draft_id, status)
         flash("처음 Gemini가 제시한 초안으로 복구했습니다.")
         return redirect(url_for("draft_detail", draft_id=draft_id))
 
@@ -197,9 +211,11 @@ def create_app() -> Flask:
         except GeminiRefineError as exc:
             models = ", ".join(exc.attempted_models)
             suffix = f" 시도한 모델: {models}" if models else ""
+            logger.warning("gemini refine failed draft_id=%s models=%s error=%s", draft_id, models, exc)
             flash(f"{exc}{suffix}")
             return redirect(url_for("draft_detail", draft_id=draft_id))
         except Exception as exc:  # noqa: BLE001 - UI should report a concise Gemini failure.
+            logger.exception("gemini refine unexpected failure draft_id=%s", draft_id)
             flash(f"Gemini 다듬기에 실패했습니다. {type(exc).__name__}")
             return redirect(url_for("draft_detail", draft_id=draft_id))
 
@@ -211,6 +227,7 @@ def create_app() -> Flask:
             status=status,
             model=refined.model,
         )
+        logger.info("gemini refine succeeded draft_id=%s model=%s status=%s", draft_id, refined.model, status)
         flash("Gemini가 요청한 방향으로 초안을 다시 다듬었습니다.")
         return redirect(url_for("draft_detail", draft_id=draft_id))
 
@@ -230,7 +247,14 @@ def create_app() -> Flask:
         if auto_collector:
             started = auto_collector.run_async_once(collect_limit=limit, draft_limit=draft_limit, label="수동 재수집")
             messages = ["수동 재수집을 시작했습니다."] if started else ["자동 수집이 이미 실행 중입니다."]
+            logger.info(
+                "manual recrawl requested started=%s collect_limit=%s draft_limit=%s",
+                started,
+                limit,
+                draft_limit,
+            )
         else:
+            logger.info("manual recrawl running inline collect_limit=%s draft_limit=%s", limit, draft_limit)
             messages = collect_and_draft_cycle(
                 store,
                 config_path,
@@ -285,6 +309,7 @@ def create_app() -> Flask:
     @app.post("/export")
     def export():
         markdown_path, csv_path, count = export_approved(store, Path(export_dir))
+        logger.info("approved drafts exported count=%s markdown=%s csv=%s", count, markdown_path, csv_path)
         flash(f"승인 기사 {count}건을 내보냈습니다.")
         flash(f"마크다운 파일: {markdown_path}")
         flash(f"표 파일: {csv_path}")

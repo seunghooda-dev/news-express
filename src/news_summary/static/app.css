@@ -655,6 +655,27 @@ h3 {
   font-weight: 700;
 }
 
+.ops-log {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 28px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ops-log h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.ops-log p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .source-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

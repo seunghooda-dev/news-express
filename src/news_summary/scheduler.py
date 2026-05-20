@@ -7,12 +7,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .ops_logging import get_logger
 from .service import collect_and_draft_cycle
 from .settings import load_sources
 from .storage import Store
 
 
 DEFAULT_AUTO_INTERVAL_SECONDS = 3600
+logger = get_logger("scheduler")
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -88,9 +90,11 @@ class AutoCollector:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, name="news-summary-auto-collector", daemon=True)
         self._thread.start()
+        logger.info("auto collector thread started interval=%s collect_limit=%s", self.interval_seconds, self.collect_limit)
 
     def stop(self) -> None:
         self._stop_event.set()
+        logger.info("auto collector stop requested")
 
     def run_once(
         self,
@@ -99,6 +103,7 @@ class AutoCollector:
         label: str = "자동 수집",
     ) -> list[str]:
         if not self._run_lock.acquire(blocking=False):
+            logger.info("collector run skipped already running label=%s", label)
             return ["자동 수집이 이미 실행 중입니다."]
 
         try:
@@ -113,6 +118,7 @@ class AutoCollector:
         label: str = "수동 재수집",
     ) -> bool:
         if not self._run_lock.acquire(blocking=False):
+            logger.info("async collector run skipped already running label=%s", label)
             return False
 
         thread = threading.Thread(
@@ -140,6 +146,13 @@ class AutoCollector:
         draft_limit = draft_limit or self.draft_limit
         total_sources = self._enabled_source_count()
         started = _now()
+        logger.info(
+            "collector run started label=%s sources=%s collect_limit=%s draft_limit=%s",
+            label,
+            total_sources,
+            collect_limit,
+            draft_limit,
+        )
         with self._state_lock:
             self._status.running = True
             self._status.active_label = label
@@ -163,6 +176,7 @@ class AutoCollector:
         except Exception as exc:  # noqa: BLE001 - background worker must keep the server alive.
             messages = []
             error = f"{type(exc).__name__}: {exc}"
+            logger.exception("collector run failed label=%s", label)
             with self._state_lock:
                 self._status.last_error = error
         else:
@@ -180,6 +194,7 @@ class AutoCollector:
                 self._status.progress_message = "수집 실패" if error else "수집 완료"
                 if error:
                     self._status.last_error = error
+        logger.info("collector run finished label=%s error=%s messages=%s", label, bool(error), len(messages))
 
         return messages
 
@@ -236,6 +251,7 @@ class AutoCollector:
         try:
             return len([source for source in load_sources(self.config_path) if source.enabled])
         except Exception:  # noqa: BLE001 - progress should still render even if config is temporarily invalid.
+            logger.exception("enabled source count failed config=%s", self.config_path)
             return 0
 
 

@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from .models import ArticleDraft, PressRelease
+from .ops_logging import get_logger
 from .writing_settings import custom_prompt_section
 
 
@@ -16,6 +17,7 @@ DEFAULT_GEMINI_MODELS = (
     "gemini-2.0-flash-lite",
     "gemini-flash-lite-latest",
 )
+logger = get_logger("writer")
 
 
 class GeminiRefineError(RuntimeError):
@@ -45,6 +47,13 @@ def generate_draft(
                 return _generate_gemini_draft(item_id, item, gemini_api_key, gemini_model)
             except Exception as exc:  # noqa: BLE001 - try the next configured Gemini model.
                 last_error = exc
+                logger.warning(
+                    "gemini draft model failed press_release_id=%s model=%s error_type=%s error=%s",
+                    item_id,
+                    gemini_model,
+                    type(exc).__name__,
+                    _shorten(str(exc), 240),
+                )
                 continue
         if require_gemini:
             raise GeminiDraftError(_summarize_gemini_error(last_error), gemini_models)
@@ -108,6 +117,13 @@ def refine_draft_with_gemini(
             )
         except Exception as exc:  # noqa: BLE001 - try the next configured Gemini model.
             last_error = exc
+            logger.warning(
+                "gemini refine model failed press_release_id=%s model=%s error_type=%s error=%s",
+                _draft_value(draft, "press_release_id"),
+                gemini_model,
+                type(exc).__name__,
+                _shorten(str(exc), 240),
+            )
             continue
     raise GeminiRefineError(_summarize_gemini_error(last_error), attempted)
 

@@ -231,6 +231,8 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     assert "초안 목록" not in dashboard_html
     assert "승인 기사</a>" not in dashboard_html
     assert 'href="/drafts?status=approved"' in dashboard_html
+    assert "운영 로그" in dashboard_html
+    assert "news_summary.log" in dashboard_html
     assert "원문 수집" not in dashboard_html
     assert "초안 생성" not in dashboard_html
     assert "승인 기사 내보내기" not in dashboard_html
