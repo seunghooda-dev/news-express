@@ -417,8 +417,6 @@ def review_flags(draft, duplicate_titles: set[str] | None = None) -> list[str]:
     model = str(_row_value(draft, "model") or "")
     validation_note = str(_row_value(draft, "validation_note") or "")
 
-    if len(original_content) < 450:
-        flags.append("원문 짧음")
     if _is_media_like(original_title, original_content):
         flags.append("사진·카드뉴스")
     if _date_warning(draft):
@@ -427,8 +425,6 @@ def review_flags(draft, duplicate_titles: set[str] | None = None) -> list[str]:
         flags.append("중복 제목")
     if ":rule-based" in model or "gemini-error" in model:
         flags.append("AI 확인")
-    if _weak_review_note(review_note):
-        flags.append("메모 보강")
     if "제목 핵심어 0개" in validation_note or "기존 수집 원문" in validation_note:
         flags.append("원문 검증 확인")
     if title.startswith("[뉴스 단신]") or body.lstrip().startswith(("[뉴스 단신]", title)):
@@ -448,7 +444,6 @@ def approval_checks(draft, duplicate_titles: set[str] | None = None) -> list[dic
         {"label": "본문 3~4문단", "ok": 3 <= len(paragraphs) <= 4},
         {"label": "제목/본문 형식 정상", "ok": "형식 확인" not in flags},
         {"label": "게시일 정상", "ok": "게시일 확인" not in flags},
-        {"label": "원문 길이 충분", "ok": "원문 짧음" not in flags},
     ]
     if has_application_info:
         checks.append({"label": "신청·모집 정보 반영", "ok": body_has_application_info})
@@ -781,11 +776,6 @@ def _contains_any(draft, tokens: tuple[str, ...]) -> bool:
 def _is_media_like(title: str, content: str) -> bool:
     text = f"{title} {content}"
     return any(token in text for token in ("사진뉴스", "카드뉴스", "카드 뉴스", "포토뉴스", "〈사진뉴스〉", "[카드뉴스]"))
-
-
-def _weak_review_note(note: str) -> bool:
-    cleaned = note.strip()
-    return cleaned in {"", "-", "없음", "특이사항 없음"} or len(cleaned) < 8
 
 
 def _date_warning(draft) -> str:
