@@ -1,23 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="toolbar">
-  <form method="post" action="{{ url_for('collect') }}">
-    <label>수집 건수</label>
-    <input type="number" name="limit" value="5" min="1" max="100">
-    <button type="submit">원문 수집</button>
-  </form>
   <form method="post" action="{{ url_for('recrawl') }}">
     <label>재수집 건수</label>
     <input type="number" name="limit" value="10" min="1" max="100">
     <button type="submit">수동 재수집</button>
-  </form>
-  <form method="post" action="{{ url_for('draft') }}">
-    <label>초안 생성 건수</label>
-    <input type="number" name="limit" value="5" min="1" max="100">
-    <button type="submit">초안 생성</button>
-  </form>
-  <form method="post" action="{{ url_for('export') }}">
-    <button type="submit">승인 기사 내보내기</button>
   </form>
 </section>
 
