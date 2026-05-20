@@ -196,7 +196,7 @@ def test_display_helpers_make_labels_readable():
     assert format_datetime_label("2026-05-20T07:30:00+00:00") == "2026.05.20 16:30"
     assert format_datetime_label("2026-05-20") == "2026.05.20"
     assert format_datetime_label("2026.05.14 13:56") == "2026.05.14 13:56"
-    assert model_label("gemini-3.1-flash-lite:gemini") == "Gemini"
+    assert model_label("gemini-3.5-flash:gemini") == "Gemini"
     assert model_label("gpt-4.1-mini:rule-based") == "규칙 기반"
     assert interval_label(3600) == "1시간마다"
     assert interval_label(7200) == "2시간마다"
@@ -272,7 +272,7 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
             title="Gemini 초안",
             body="본문입니다.",
             review_note="메모",
-            model="gemini-3-flash-preview:gemini",
+            model="gemini-3.5-flash:gemini",
         )
     )
 
