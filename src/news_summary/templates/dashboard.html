@@ -29,8 +29,10 @@
       <span>기관별 {{ auto_collector_status.collect_limit }}건 확인</span>
       <span>Gemini 필수 적용</span>
       <span>다음 실행 {{ auto_collector_status.next_run_at|date_label }}</span>
-      {% if auto_collector_status.last_finished_at %}
-        <span>마지막 완료 {{ auto_collector_status.last_finished_at|date_label }}</span>
+      {% if auto_collector_status.last_auto_finished_at %}
+        <span>마지막 자동 수집 {{ auto_collector_status.last_auto_finished_at|date_label }}</span>
+      {% else %}
+        <span>마지막 자동 수집 아직 없음</span>
       {% endif %}
       <span>누적 {{ auto_collector_status.run_count }}회</span>
     </div>

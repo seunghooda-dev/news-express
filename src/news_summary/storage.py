@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS article_drafts (
     exported_at TEXT,
     FOREIGN KEY (press_release_id) REFERENCES press_releases(id)
 );
+
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -125,6 +131,25 @@ class Store:
                     "UPDATE press_releases SET published_at = ? WHERE id = ?",
                     (normalized, row["id"]),
                 )
+
+    def get_app_metadata(self, key: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM app_metadata WHERE key = ?", (key,)).fetchone()
+            return str(row["value"]) if row else None
+
+    def set_app_metadata(self, key: str, value: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_metadata (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, value, now),
+            )
 
     def add_press_release(self, item: PressRelease) -> int | None:
         with self.connect() as conn:

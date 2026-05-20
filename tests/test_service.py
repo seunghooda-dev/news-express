@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from news_summary.models import PressRelease, Source
+from news_summary.scheduler import AutoCollector
 from news_summary.service import collect_enabled_sources, draft_pending_releases
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
@@ -92,3 +93,25 @@ def test_store_normalizes_existing_published_at_metadata():
     with store.connect() as conn:
         row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
     assert row["published_at"] == "2026-05-20 14:03"
+
+
+def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_metadata_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+    monkeypatch.setattr("news_summary.scheduler.collect_and_draft_cycle", lambda *args, **kwargs: ["수집 완료"])
+
+    collector = AutoCollector(store, Path("unused.yaml"))
+    collector.run_once(label="수동 재수집")
+
+    assert collector.snapshot().last_finished_at is not None
+    assert collector.snapshot().last_auto_finished_at is None
+
+    collector.run_once(label="자동 수집")
+    last_auto_finished_at = collector.snapshot().last_auto_finished_at
+
+    assert last_auto_finished_at is not None
+    restored = AutoCollector(store, Path("unused.yaml"))
+    assert restored.snapshot().last_auto_finished_at == last_auto_finished_at

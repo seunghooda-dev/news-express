@@ -286,6 +286,8 @@ def create_app() -> Flask:
                     "progress_source_name": "",
                     "progress_phase": "idle",
                     "last_error": None,
+                    "last_finished_at": None,
+                    "last_auto_finished_at": None,
                 }
             )
         status = auto_collector.snapshot()
@@ -301,6 +303,7 @@ def create_app() -> Flask:
                 "progress_phase": status.progress_phase,
                 "last_error": status.last_error,
                 "last_finished_at": status.last_finished_at,
+                "last_auto_finished_at": status.last_auto_finished_at,
                 "run_count": status.run_count,
             }
         )

@@ -14,6 +14,7 @@ from .storage import Store
 
 
 DEFAULT_AUTO_INTERVAL_SECONDS = 3600
+LAST_AUTO_COLLECT_FINISHED_AT_KEY = "last_auto_collect_finished_at"
 logger = get_logger("scheduler")
 
 
@@ -43,6 +44,7 @@ class AutoCollectorStatus:
     run_count: int = 0
     last_started_at: str | None = None
     last_finished_at: str | None = None
+    last_auto_finished_at: str | None = None
     next_run_at: str | None = None
     last_error: str | None = None
     last_messages: list[str] = field(default_factory=list)
@@ -82,6 +84,7 @@ class AutoCollector:
             draft_limit=draft_limit,
             require_gemini=require_gemini,
             progress_total=source_count,
+            last_auto_finished_at=self.store.get_app_metadata(LAST_AUTO_COLLECT_FINISHED_AT_KEY),
         )
 
     def start(self) -> None:
@@ -183,10 +186,14 @@ class AutoCollector:
             error = None
         finally:
             finished = _now()
+            if label == "자동 수집" and not error:
+                self.store.set_app_metadata(LAST_AUTO_COLLECT_FINISHED_AT_KEY, finished)
             with self._state_lock:
                 self._status.running = False
                 self._status.run_count += 1
                 self._status.last_finished_at = finished
+                if label == "자동 수집" and not error:
+                    self._status.last_auto_finished_at = finished
                 self._status.last_messages = messages[-12:]
                 self._status.progress_phase = "error" if error else "done"
                 if self._status.progress_total:
@@ -210,6 +217,7 @@ class AutoCollector:
                 run_count=self._status.run_count,
                 last_started_at=self._status.last_started_at,
                 last_finished_at=self._status.last_finished_at,
+                last_auto_finished_at=self._status.last_auto_finished_at,
                 next_run_at=self._status.next_run_at,
                 last_error=self._status.last_error,
                 last_messages=list(self._status.last_messages),
