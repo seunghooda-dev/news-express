@@ -2,7 +2,12 @@
 {% block content %}
 <section class="section-head">
   <h1>Gemini 사용량</h1>
-  <a class="source-link" href="https://aistudio.google.com/rate-limit?timeRange=last-28-days" target="_blank" rel="noopener noreferrer">Google AI Studio 사용량 확인</a>
+  <div class="section-actions">
+    <form method="post" action="{{ url_for('reset_gemini_usage') }}">
+      <button class="secondary" type="submit">사용량 초기화</button>
+    </form>
+    <a class="source-link" href="https://aistudio.google.com/rate-limit?timeRange=last-28-days" target="_blank" rel="noopener noreferrer">Google AI Studio 사용량 확인</a>
+  </div>
 </section>
 
 <section class="gemini-usage">
@@ -26,6 +31,9 @@
   {% endif %}
   {% if gemini_usage.last_error %}
     <p class="auto-status-error">{{ gemini_usage.last_error }}</p>
+  {% endif %}
+  {% if gemini_usage.reset_at %}
+    <p class="meta">초기화 시각: {{ gemini_usage.reset_at|date_label }}</p>
   {% endif %}
   <p class="meta">무료 key의 정확한 남은 한도와 분당/일일 제한은 Google AI Studio의 Usage and Limits에서 확인합니다. 이 화면은 News Express가 로컬 DB에 저장한 성공 호출 기준입니다.</p>
 </section>

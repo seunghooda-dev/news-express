@@ -252,6 +252,30 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     from news_summary.web import create_app
 
+    store = Store(db_path)
+    store.init_db()
+    press_release_id = store.add_press_release(
+        PressRelease(
+            source_id="test",
+            source_name="테스트",
+            region="전남",
+            title="Gemini 사용량 테스트",
+            url="https://example.com/gemini-usage",
+            content="테스트 본문입니다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert press_release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=press_release_id,
+            title="Gemini 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3-flash-preview:gemini",
+        )
+    )
+
     app = create_app()
     app.testing = True
     client = app.test_client()
@@ -261,8 +285,18 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
 
     assert response.status_code == 200
     assert 'class="gemini-usage"' in html
+    assert "전체 1회" in html
+    assert "사용량 초기화" in html
     assert "Google AI Studio 사용량 확인" in html
     assert "운영 로그" not in html
+
+    reset_response = client.post("/gemini-usage/reset", follow_redirects=True)
+    reset_html = reset_response.data.decode("utf-8")
+
+    assert reset_response.status_code == 200
+    assert "전체 0회" in reset_html
+    assert "초기화 시각:" in reset_html
+    assert Store(db_path).counts()["drafts"] == 1
 
 
 def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeypatch):

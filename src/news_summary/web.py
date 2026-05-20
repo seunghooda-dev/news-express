@@ -27,6 +27,7 @@ STATUS_LABELS = {
 LOCAL_TZ = timezone(timedelta(hours=9))
 DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
+GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 
 
 def create_app() -> Flask:
@@ -87,6 +88,12 @@ def create_app() -> Flask:
             "gemini_usage.html",
             gemini_usage=_gemini_usage_summary(store, auto_status),
         )
+
+    @app.post("/gemini-usage/reset")
+    def reset_gemini_usage():
+        store.set_app_metadata(GEMINI_USAGE_RESET_AT_KEY, datetime.now(timezone.utc).isoformat())
+        flash("Gemini 로컬 사용량을 초기화했습니다.")
+        return redirect(url_for("gemini_usage"))
 
     @app.get("/drafts")
     def drafts():
@@ -537,6 +544,7 @@ def _model_counts(store: Store) -> dict[str, int]:
 
 def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
     today = datetime.now(LOCAL_TZ).date()
+    reset_at = _parse_datetime(store.get_app_metadata(GEMINI_USAGE_RESET_AT_KEY))
     with store.connect() as conn:
         rows = conn.execute(
             """
@@ -557,8 +565,10 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
         model = str(row["model"] or "")
         is_refine = ":gemini-refine" in model
         model_name = model.split(":", 1)[0]
-        model_counts[model_name] = model_counts.get(model_name, 0) + 1
         event_date = _parse_datetime(row["updated_at"] if is_refine else row["created_at"])
+        if reset_at and (not event_date or event_date <= reset_at):
+            continue
+        model_counts[model_name] = model_counts.get(model_name, 0) + 1
         if is_refine:
             total_refines += 1
             if event_date and event_date.date() == today:
@@ -578,6 +588,7 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
         "total_refines": total_refines,
         "top_models": top_models,
         "last_error": getattr(auto_status, "last_error", None) if auto_status else None,
+        "reset_at": reset_at.isoformat() if reset_at else None,
     }
 
 
