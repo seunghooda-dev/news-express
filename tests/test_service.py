@@ -95,6 +95,41 @@ def test_store_normalizes_existing_published_at_metadata():
     assert row["published_at"] == "2026-05-20 14:03"
 
 
+def test_store_keeps_existing_published_at_when_recrawl_has_no_date():
+    db_path = Path(f"data/.test_storage_keep_date_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    url = "https://example.com/keep-date"
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="shinan",
+            source_name="신안군",
+            region="전남",
+            title="신안군 소식",
+            url=url,
+            content="신안군은 새 사업을 추진한다고 밝혔다.",
+            published_at="2026-05-11 17:28:00",
+        )
+    )
+    assert release_id is not None
+
+    store.add_press_release(
+        PressRelease(
+            source_id="shinan",
+            source_name="신안군",
+            region="전남",
+            title="신안군 소식",
+            url=url,
+            content="신안군은 새 사업을 다시 안내했다.",
+            published_at=None,
+        )
+    )
+
+    with store.connect() as conn:
+        row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
+    assert row["published_at"] == "2026-05-11 17:28:00"
+
+
 def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
     db_path = Path(f"data/.test_auto_collect_metadata_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

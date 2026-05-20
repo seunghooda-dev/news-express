@@ -159,7 +159,7 @@ class Store:
                     """
                     UPDATE press_releases
                     SET source_id = ?, source_name = ?, region = ?, title = ?,
-                        content = ?, published_at = ?, collected_at = ?,
+                        content = ?, published_at = COALESCE(?, published_at), collected_at = ?,
                         validation_status = ?, validation_note = ?
                     WHERE url = ?
                     """,
