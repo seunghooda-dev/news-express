@@ -235,7 +235,7 @@ def test_refine_draft_with_gemini_uses_only_non_lite_flash_models(monkeypatch):
             raise RuntimeError("503 overloaded")
         return _parse_model_output(
             draft["press_release_id"],
-            "제목: [뉴스 단신] Gemini 3.1 Flash 성공\n\n본문:\n첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.\n\n검수 메모:\n- non-lite 모델",
+            "제목: [뉴스 단신] Gemini 3 Flash 성공\n\n본문:\n첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.\n\n검수 메모:\n- non-lite 모델",
             f"{model_name}:gemini-refine",
         )
 
@@ -246,8 +246,8 @@ def test_refine_draft_with_gemini_uses_only_non_lite_flash_models(monkeypatch):
 
     refined = refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
 
-    assert calls == ["gemini-3.5-flash", "gemini-3.1-flash"]
-    assert refined.model == "gemini-3.1-flash:gemini-refine"
+    assert calls == ["gemini-3.5-flash", "gemini-3-flash-preview"]
+    assert refined.model == "gemini-3-flash-preview:gemini-refine"
 
 
 def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
@@ -273,6 +273,6 @@ def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
         refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
     except GeminiRefineError as exc:
         assert "요청 한도" in str(exc)
-        assert exc.attempted_models == ["gemini-3.5-flash", "gemini-3.1-flash"]
+        assert exc.attempted_models == ["gemini-3.5-flash", "gemini-3-flash-preview"]
     else:
         raise AssertionError("GeminiRefineError가 발생해야 합니다.")
