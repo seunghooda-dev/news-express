@@ -131,7 +131,7 @@ def test_generate_draft_prefers_gemini_when_key_exists(monkeypatch):
 
     draft = generate_draft(1, item)
 
-    assert draft.model == "gemini-test:gemini"
+    assert draft.model == "gemini-3-flash-preview:gemini"
     assert draft.title == "광주시, 사업 추진"
     assert len(draft.body.split("\n\n")) == 3
 
@@ -213,11 +213,11 @@ def test_refine_draft_with_gemini_passes_reporter_instruction(monkeypatch):
         "기존 메모",
     )
 
-    assert refined.model == "gemini-test:gemini-refine"
+    assert refined.model == "gemini-3-flash-preview:gemini-refine"
     assert refined.title == "신안군, 교육 프로그램 운영"
 
 
-def test_refine_draft_with_gemini_tries_fallback_models(monkeypatch):
+def test_refine_draft_with_gemini_uses_only_gemini_3_flash(monkeypatch):
     draft_row = {
         "press_release_id": 7,
         "source_name": "신안군청 보도자료",
@@ -231,11 +231,9 @@ def test_refine_draft_with_gemini_tries_fallback_models(monkeypatch):
 
     def fake_refinement(draft, instruction, current_title, current_body, current_review_note, api_key, model_name):
         calls.append(model_name)
-        if model_name == "quota-model":
-            raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
         return _parse_model_output(
             draft["press_release_id"],
-            "제목: [뉴스 단신] 대체 모델 성공\n\n본문:\n첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.\n\n검수 메모:\n- 대체 모델",
+            "제목: [뉴스 단신] Gemini 3 Flash 성공\n\n본문:\n첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.\n\n검수 메모:\n- 단일 모델",
             f"{model_name}:gemini-refine",
         )
 
@@ -246,8 +244,8 @@ def test_refine_draft_with_gemini_tries_fallback_models(monkeypatch):
 
     refined = refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
 
-    assert calls[:2] == ["quota-model", "gemini-3.1-flash-lite"]
-    assert refined.model == "gemini-3.1-flash-lite:gemini-refine"
+    assert calls == ["gemini-3-flash-preview"]
+    assert refined.model == "gemini-3-flash-preview:gemini-refine"
 
 
 def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
@@ -273,6 +271,6 @@ def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
         refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
     except GeminiRefineError as exc:
         assert "요청 한도" in str(exc)
-        assert exc.attempted_models[:2] == ["quota-a", "quota-b"]
+        assert exc.attempted_models == ["gemini-3-flash-preview"]
     else:
         raise AssertionError("GeminiRefineError가 발생해야 합니다.")

@@ -10,13 +10,8 @@ from .writing_settings import custom_prompt_section
 
 
 PROMPT_PATH = Path(__file__).resolve().parents[2] / "templates" / "broadcast_shortform_prompt.md"
-DEFAULT_GEMINI_MODELS = (
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-flash-lite-latest",
-)
+GEMINI_FLASH_MODEL = "gemini-3-flash-preview"
+DEFAULT_GEMINI_MODELS = (GEMINI_FLASH_MODEL,)
 logger = get_logger("writer")
 
 
@@ -223,21 +218,9 @@ def _draft_value(draft, key: str):
 
 
 def _gemini_model_candidates(model: str | None = None) -> list[str]:
-    names = []
-    if model:
-        names.append(model)
-    env_models = os.getenv("GEMINI_MODELS", "")
-    names.extend(name.strip() for name in env_models.split(",") if name.strip())
-    env_model = os.getenv("GEMINI_MODEL")
-    if env_model:
-        names.append(env_model)
-    names.extend(DEFAULT_GEMINI_MODELS)
-
-    deduped = []
-    for name in names:
-        if name and name not in deduped:
-            deduped.append(name)
-    return deduped or list(DEFAULT_GEMINI_MODELS)
+    if model and model == GEMINI_FLASH_MODEL:
+        return [model]
+    return list(DEFAULT_GEMINI_MODELS)
 
 
 def _summarize_gemini_error(exc: Exception | None) -> str:
@@ -246,7 +229,7 @@ def _summarize_gemini_error(exc: Exception | None) -> str:
     message = str(exc)
     lowered = message.lower()
     if "429" in message or "resource_exhausted" in lowered or "quota" in lowered:
-        return "Gemini 요청 한도가 찼습니다. 다른 대체 모델까지 시도했지만 모두 실패했습니다."
+        return "Gemini 3 Flash 요청 한도가 찼습니다. 지정 모델만 사용하도록 설정되어 있어 초안 생성을 보류했습니다."
     if "503" in message or "unavailable" in lowered:
         return "Gemini 모델이 일시적으로 과부하 상태입니다. 잠시 뒤 다시 시도하세요."
     if "api key" in lowered or "401" in message or "unauthorized" in lowered:
