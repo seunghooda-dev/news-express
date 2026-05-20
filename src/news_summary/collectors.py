@@ -268,6 +268,11 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
             date_node = row.select_one(selectors.get("published_at", "")) if selectors.get("published_at") else None
             row_text = _clean_text(row.get_text(" ")) if isinstance(row, Tag) else ""
             published_at = _normalize_published_at(_clean_text(date_node.get_text(" ")) if date_node else "")
+            if not published_at and selectors.get("detail_published_at"):
+                detail_date_node = detail_soup.select_one(str(selectors["detail_published_at"]))
+                published_at = _normalize_published_at(
+                    _clean_text(detail_date_node.get_text(" ")) if detail_date_node else ""
+                )
             if not published_at:
                 published_at = (
                     _extract_labeled_date(row_text)

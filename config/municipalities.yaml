@@ -319,6 +319,7 @@ sources:
       - "participation_07_03/show"
     selectors:
       link: "a[href*='participation_07_03/show']"
+      detail_published_at: ".show_form"
       content:
         - "td.content"
         - "#content"

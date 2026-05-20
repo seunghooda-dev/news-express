@@ -67,6 +67,7 @@ def test_extract_labeled_date_keeps_written_at_time():
 
     assert _extract_labeled_date(text) == "2026.05.14 13:56"
     assert _normalize_published_at("(이용우 / 2026-05-20 14:03)") == "2026-05-20 14:03"
+    assert _normalize_published_at("등록일\t2026-05-11 17:28:00") == "2026-05-11 17:28:00"
 
 
 def test_extract_detail_content_trims_haenam_contact_header():
