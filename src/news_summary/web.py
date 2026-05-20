@@ -130,6 +130,13 @@ def create_app() -> Flask:
             page_title=_drafts_page_title(status, target_date, review_filter, source_filter, config_path),
         )
 
+    @app.get("/press-releases")
+    def press_releases():
+        return render_template(
+            "press_releases.html",
+            press_releases=store.press_releases(limit=1000),
+        )
+
     @app.get("/drafts/<int:draft_id>")
     def draft_detail(draft_id: int):
         draft = store.get_draft(draft_id)

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <h1>수집 원문</h1>
+  <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
+</section>
+
+<section class="list">
+  {% for item in press_releases %}
+    <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
+      <strong>{{ item.title }}</strong>
+      <span class="row-meta">
+        <span>{{ item.source_name }}</span>
+        <span>{{ item.published_at|date_label }}</span>
+        {% if item.draft_id %}
+          <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
+        {% else %}
+          <span class="badge badge-neutral">초안 없음</span>
+        {% endif %}
+      </span>
+    </a>
+  {% else %}
+    <p class="empty">수집 원문이 없습니다.</p>
+  {% endfor %}
+</section>
+{% endblock %}

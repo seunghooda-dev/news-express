@@ -203,6 +203,50 @@ def test_display_helpers_make_labels_readable():
     assert interval_label(600) == "10분마다"
 
 
+def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_metric_links_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="테스트 원문",
+            url="https://example.com/original",
+            content="테스트 원문 내용입니다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="테스트 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/").data.decode("utf-8")
+    assert 'href="/press-releases"' in dashboard_html
+    assert 'href="/drafts"' in dashboard_html
+    assert 'href="/drafts?status=needs_review"' in dashboard_html
+
+    releases_html = client.get("/press-releases").data.decode("utf-8")
+    assert "테스트 원문" in releases_html
+    assert f'href="/drafts/{draft_id}"' in releases_html
+
+
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     db_path = Path(f"data/.test_recrawl_route_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

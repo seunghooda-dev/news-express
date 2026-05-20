@@ -42,9 +42,9 @@
 </section>
 
 <section class="metrics">
-  <div><b>{{ counts.press_releases }}</b><span>수집 원문</span></div>
-  <div><b>{{ counts.drafts }}</b><span>기사 초안</span></div>
-  <div><b>{{ counts.needs_review }}</b><span>검수 대기</span></div>
+  <a class="metric-link" href="{{ url_for('press_releases') }}"><b>{{ counts.press_releases }}</b><span>수집 원문</span></a>
+  <a class="metric-link" href="{{ url_for('drafts') }}"><b>{{ counts.drafts }}</b><span>기사 초안</span></a>
+  <a class="metric-link" href="{{ url_for('drafts', status='needs_review') }}"><b>{{ counts.needs_review }}</b><span>검수 대기</span></a>
   <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
   <a class="metric-link" href="{{ url_for('drafts', status='approved') }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
 </section>

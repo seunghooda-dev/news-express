@@ -151,7 +151,6 @@ button.secondary:hover {
   margin-bottom: 28px;
 }
 
-.metrics div,
 .metric-link,
 .original,
 .editor,
@@ -161,7 +160,6 @@ button.secondary:hover {
   background: var(--panel);
 }
 
-.metrics div,
 .metric-link {
   color: inherit;
   padding: 18px;
