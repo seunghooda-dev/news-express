@@ -710,7 +710,7 @@ h3 {
 .source-card {
   display: grid;
   gap: 4px;
-  min-height: 126px;
+  min-height: 104px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -728,17 +728,9 @@ h3 {
   font-size: 14px;
 }
 
-.source-card span,
-.source-card small {
+.source-card span {
   color: var(--muted);
   font-size: 12px;
-}
-
-.source-card small {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .source-card em {

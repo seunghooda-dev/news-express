@@ -622,7 +622,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
             row["source_id"]: row
             for row in conn.execute(
                 """
-                SELECT pr.source_id, pr.title, pr.published_at
+                SELECT pr.source_id, pr.published_at
                 FROM press_releases pr
                 JOIN (
                     SELECT source_id, MAX(id) AS max_id
@@ -652,8 +652,6 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "region": source.region,
                 "releases": releases,
                 "last_collected": stat["last_collected"] if stat else None,
-                "latest_title": latest_row["title"] if latest_row else "",
-                "latest_published_at": latest_row["published_at"] if latest_row else None,
                 "issue": issue,
             }
         )
