@@ -36,9 +36,7 @@
       {% endif %}
     </section>
   {% endif %}
-  <form method="post" action="{{ url_for('recrawl') }}">
-    <label>재수집 건수</label>
-    <input type="number" name="limit" value="10" min="1" max="100">
+  <form class="manual-recrawl" method="post" action="{{ url_for('recrawl') }}">
     <button type="submit">수동 재수집</button>
   </form>
 </section>

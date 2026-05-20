@@ -335,6 +335,9 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
     assert "전라남도청 보도자료" in html
     assert "수집 범위:" not in html
     assert "마지막 자동 수집 아직 없음" not in html
+    assert "재수집 건수" not in html
+    assert 'name="limit"' not in html
+    assert 'class="manual-recrawl"' in html
     assert html.index('class="auto-status"') < html.index("수동 재수집")
     assert "/recrawl/status" in html
 
