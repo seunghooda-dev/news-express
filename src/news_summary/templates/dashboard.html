@@ -14,8 +14,6 @@
   <div><b>{{ counts.needs_review }}</b><span>검수 대기</span></div>
   <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
   <a class="metric-link" href="{{ url_for('drafts', status='approved') }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
-  <div><b>{{ model_counts.gemini }}</b><span>Gemini 적용</span></div>
-  <div><b>{{ model_counts.rule_based }}</b><span>규칙 기반</span></div>
 </section>
 
 {% if auto_collector_status %}
@@ -63,37 +61,6 @@
     {% endif %}
   </section>
 {% endif %}
-
-<section class="gemini-usage">
-  <div>
-    <h1>Gemini 사용량</h1>
-    <p>오늘 {{ gemini_usage.today_total }}회 · 전체 {{ gemini_usage.total }}회</p>
-  </div>
-  <div class="gemini-usage-grid">
-    <span>오늘 초안 {{ gemini_usage.today_drafts }}회</span>
-    <span>오늘 다듬기 {{ gemini_usage.today_refines }}회</span>
-    <span>전체 초안 {{ gemini_usage.total_drafts }}회</span>
-    <span>전체 다듬기 {{ gemini_usage.total_refines }}회</span>
-  </div>
-  {% if gemini_usage.top_models %}
-    <p class="gemini-models">
-      많이 쓴 모델:
-      {% for model, count in gemini_usage.top_models %}
-        <span>{{ model }} {{ count }}회</span>
-      {% endfor %}
-    </p>
-  {% endif %}
-  {% if gemini_usage.last_error %}
-    <p class="auto-status-error">{{ gemini_usage.last_error }}</p>
-  {% endif %}
-  <a class="source-link" href="https://aistudio.google.com/rate-limit?timeRange=last-28-days" target="_blank" rel="noopener noreferrer">Google AI Studio 사용량 확인</a>
-  <p class="meta">무료 key의 정확한 남은 한도와 분당/일일 제한은 Google AI Studio의 Usage and Limits에서 확인합니다. 이 패널은 News Express가 로컬 DB에 저장한 성공 호출 기준입니다.</p>
-</section>
-
-<section class="ops-log">
-  <h1>운영 로그</h1>
-  <p>수집 실패, Gemini 오류, 웹 오류, 내보내기 기록은 <code>{{ log_path }}</code>에 저장됩니다.</p>
-</section>
 
 <section class="source-board">
   <div class="section-head compact">

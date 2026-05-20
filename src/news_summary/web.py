@@ -31,7 +31,7 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 
 def create_app() -> Flask:
     load_environment()
-    log_path = configure_logging()
+    configure_logging()
     logger = get_logger("web")
     app = Flask(__name__)
     app.secret_key = "local-news-summary-review"
@@ -67,13 +67,10 @@ def create_app() -> Flask:
         return render_template(
             "dashboard.html",
             counts=store.counts(),
-            model_counts=_model_counts(store),
             draft_groups=draft_groups,
             approved_drafts=store.approved_drafts(limit=200),
             auto_collector_status=auto_status,
             source_summaries=_source_summaries(store, config_path),
-            gemini_usage=_gemini_usage_summary(store, auto_status),
-            log_path=log_path,
             duplicate_titles=duplicate_titles,
             attention_count=attention_count,
         )
@@ -81,6 +78,15 @@ def create_app() -> Flask:
     @app.get("/favicon.ico")
     def favicon():
         return Response(status=204)
+
+    @app.get("/gemini-usage")
+    def gemini_usage():
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        auto_status = auto_collector.snapshot() if auto_collector else None
+        return render_template(
+            "gemini_usage.html",
+            gemini_usage=_gemini_usage_summary(store, auto_status),
+        )
 
     @app.get("/drafts")
     def drafts():

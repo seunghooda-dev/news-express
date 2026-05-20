@@ -21,7 +21,8 @@ cd "C:\Users\seung\news summary"
 
 ## 상단 메뉴
 
-- `대시보드`: 수집 상태, 기관별 상태, Gemini 사용량, 주의 필요 건수를 확인하는 첫 화면입니다.
+- `대시보드`: 수집 상태, 기관별 상태, 주의 필요 건수를 확인하는 첫 화면입니다.
+- `Gemini 사용량`: 로컬 성공 호출 수와 Google AI Studio 사용량 확인 링크를 보는 화면입니다.
 - `초안 검수`: 전체 초안과 승인/반려/주의 필요 필터를 다루는 작업 화면입니다.
 - `기사 설정`: Gemini 기사 톤, 길이, 문장 스타일을 조정하는 설정 화면입니다.
 
@@ -47,7 +48,7 @@ cd "C:\Users\seung\news summary"
 
 ## Gemini 사용량
 
-홈 화면의 `Gemini 사용량`은 News Express DB에 저장된 성공 호출을 기준으로 오늘 초안 생성, 오늘 다듬기, 전체 Gemini 생성 건수를 보여줍니다.
+상단 메뉴의 `Gemini 사용량`은 News Express DB에 저장된 성공 호출을 기준으로 오늘 초안 생성, 오늘 다듬기, 전체 Gemini 생성 건수를 보여줍니다.
 무료 key의 정확한 남은 요청 수, 분당 제한, 일일 제한은 Google AI Studio의 `Usage and Limits` 화면에서 확인합니다.
 Google 공식 문서상 Gemini API rate limit은 요청/토큰/일일 요청 등 여러 축으로 적용되며, 활성 제한은 AI Studio에서 확인하는 방식입니다.
 
@@ -65,7 +66,7 @@ NEWS_SUMMARY_LOG_MAX_BYTES=2000000
 NEWS_SUMMARY_LOG_BACKUP_COUNT=5
 ```
 
-문제가 발생하면 홈 화면의 `운영 로그` 경로를 확인하고, 가장 최근의 `WARNING` 또는 `ERROR` 줄부터 보면 됩니다.
+문제가 발생하면 `data/logs/news_summary.log`에서 가장 최근의 `WARNING` 또는 `ERROR` 줄부터 보면 됩니다.
 
 ## 명령줄 흐름
 

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <h1>Gemini 사용량</h1>
+  <a class="source-link" href="https://aistudio.google.com/rate-limit?timeRange=last-28-days" target="_blank" rel="noopener noreferrer">Google AI Studio 사용량 확인</a>
+</section>
+
+<section class="gemini-usage">
+  <div>
+    <h1>로컬 사용량</h1>
+    <p>오늘 {{ gemini_usage.today_total }}회 · 전체 {{ gemini_usage.total }}회</p>
+  </div>
+  <div class="gemini-usage-grid">
+    <span>오늘 초안 {{ gemini_usage.today_drafts }}회</span>
+    <span>오늘 다듬기 {{ gemini_usage.today_refines }}회</span>
+    <span>전체 초안 {{ gemini_usage.total_drafts }}회</span>
+    <span>전체 다듬기 {{ gemini_usage.total_refines }}회</span>
+  </div>
+  {% if gemini_usage.top_models %}
+    <p class="gemini-models">
+      많이 쓴 모델:
+      {% for model, count in gemini_usage.top_models %}
+        <span>{{ model }} {{ count }}회</span>
+      {% endfor %}
+    </p>
+  {% endif %}
+  {% if gemini_usage.last_error %}
+    <p class="auto-status-error">{{ gemini_usage.last_error }}</p>
+  {% endif %}
+  <p class="meta">무료 key의 정확한 남은 한도와 분당/일일 제한은 Google AI Studio의 Usage and Limits에서 확인합니다. 이 화면은 News Express가 로컬 DB에 저장한 성공 호출 기준입니다.</p>
+</section>
+{% endblock %}

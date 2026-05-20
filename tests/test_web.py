@@ -228,11 +228,14 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     dashboard_html = dashboard.data.decode("utf-8")
     assert "수동 재수집" in dashboard_html
     assert "초안 검수" in dashboard_html
+    assert "Gemini 사용량" in dashboard_html
+    assert 'href="/gemini-usage"' in dashboard_html
     assert "초안 목록" not in dashboard_html
     assert "승인 기사</a>" not in dashboard_html
     assert 'href="/drafts?status=approved"' in dashboard_html
-    assert "운영 로그" in dashboard_html
-    assert "news_summary.log" in dashboard_html
+    assert 'class="gemini-usage"' not in dashboard_html
+    assert "운영 로그" not in dashboard_html
+    assert "news_summary.log" not in dashboard_html
     assert "원문 수집" not in dashboard_html
     assert "초안 생성" not in dashboard_html
     assert "승인 기사 내보내기" not in dashboard_html
@@ -241,6 +244,24 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
 
     assert response.status_code == 200
     assert calls == [{"collect_limit": 7, "draft_limit": 250, "require_gemini": True}]
+
+
+def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
+    db_path = Path(f"data/.test_gemini_usage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/gemini-usage")
+    html = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert 'class="gemini-usage"' in html
+    assert "Google AI Studio 사용량 확인" in html
+    assert "운영 로그" not in html
 
 
 def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeypatch):
