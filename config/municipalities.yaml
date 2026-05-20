@@ -291,21 +291,23 @@ sources:
       title_attr: "title"
       content: *common_content
 
-  - id: jindo-county-atc
-    name: 진도군 농업기술센터 보도자료
+  - id: jindo-county
+    name: 진도군청 보도자료
     region: 전남 진도
     enabled: true
     type: html_board
-    list_url: "https://www.jindo.go.kr/atc/board/B0148.cs?m=45"
+    list_url: "https://www.jindo.go.kr/home/board/B0016.cs?m=626"
     include_url_contains:
-      - "B0148.cs"
+      - "B0016.cs"
       - "act=read"
     selectors:
+      item: "ul.news_list li.thumb_news"
+      title: ".news_tit"
       link: "a[href*='act=read'][href*='articleId=']"
+      published_at: ".news_info"
       content:
-        - ".viewContent"
-        - ".viewContentInner"
-        - "article"
+        - ".board_view .view_body"
+        - ".board_view"
 
   - id: shinan-county
     name: 신안군청 보도자료/해명
