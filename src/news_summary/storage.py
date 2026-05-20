@@ -268,6 +268,27 @@ class Store:
                 (limit,),
             ).fetchall()
 
+    def press_releases_missing_published_at(self, source_id: str, limit: int = 20) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, source_id, source_name, title, url, published_at
+                FROM press_releases
+                WHERE source_id = ?
+                  AND (published_at IS NULL OR TRIM(published_at) = '')
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (source_id, limit),
+            ).fetchall()
+
+    def update_press_release_published_at(self, release_id: int, published_at: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE press_releases SET published_at = ? WHERE id = ?",
+                (published_at, release_id),
+            )
+
     def recent_drafts(self, limit: int) -> list[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute(

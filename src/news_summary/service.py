@@ -3,8 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from .collectors import CollectionError, collect_source
-from .models import PressRelease
+import httpx
+from bs4 import BeautifulSoup
+
+from .collectors import DEFAULT_HEADERS, CollectionError, _clean_text, _normalize_published_at, collect_source
+from .models import PressRelease, Source
 from .ops_logging import get_logger
 from .settings import load_sources
 from .storage import Store
@@ -73,13 +76,17 @@ def collect_enabled_sources(
             if store.add_press_release(release):
                 inserted += 1
                 source_inserted += 1
+        repaired_dates = repair_missing_published_dates(store, source, limit=max(5, limit))
         messages.append(f"{source.name}: 원문 검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건")
+        if repaired_dates:
+            messages.append(f"{source.name}: 누락 게시일 {repaired_dates}건 보정")
         logger.info(
-            "source collection succeeded source_id=%s source_name=%s releases=%s inserted=%s",
+            "source collection succeeded source_id=%s source_name=%s releases=%s inserted=%s repaired_dates=%s",
             source.id,
             source.name,
             len(releases),
             source_inserted,
+            repaired_dates,
         )
         _report_progress(
             progress_callback,
@@ -94,6 +101,59 @@ def collect_enabled_sources(
     logger.info("collect finished sources=%s inserted=%s", total, inserted)
     _report_progress(progress_callback, phase="collected", current=total, total=total, message="수집 완료")
     return messages
+
+
+def repair_missing_published_dates(store: Store, source: Source, limit: int = 20) -> int:
+    if source.type != "html_board":
+        return 0
+
+    rows = store.press_releases_missing_published_at(source.id, limit=limit)
+    if not rows:
+        return 0
+
+    repaired = 0
+    selectors = source.selectors or {}
+    with httpx.Client(
+        headers=DEFAULT_HEADERS,
+        timeout=20,
+        follow_redirects=True,
+        verify=source.verify_ssl,
+    ) as client:
+        for row in rows:
+            try:
+                response = client.get(str(row["url"]))
+                response.raise_for_status()
+            except Exception as exc:  # noqa: BLE001 - one broken detail page should not stop collection.
+                logger.warning(
+                    "published date repair failed source_id=%s release_id=%s error=%s",
+                    source.id,
+                    row["id"],
+                    exc,
+                )
+                continue
+
+            published_at = _extract_detail_published_at(response.text, selectors)
+            if published_at:
+                store.update_press_release_published_at(int(row["id"]), published_at)
+                repaired += 1
+                logger.info(
+                    "published date repaired source_id=%s release_id=%s published_at=%s",
+                    source.id,
+                    row["id"],
+                    published_at,
+                )
+    return repaired
+
+
+def _extract_detail_published_at(html: str, selectors: dict) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    selector = selectors.get("detail_published_at") or selectors.get("published_at")
+    if selector:
+        node = soup.select_one(str(selector))
+        published_at = _normalize_published_at(_clean_text(node.get_text(" ")) if node else "")
+        if published_at:
+            return published_at
+    return _normalize_published_at(_clean_text(soup.get_text(" ")))
 
 
 def collect_and_draft_cycle(

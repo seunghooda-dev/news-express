@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from news_summary.models import PressRelease, Source
 from news_summary.scheduler import AutoCollector
-from news_summary.service import collect_enabled_sources, draft_pending_releases
+from news_summary.service import collect_enabled_sources, draft_pending_releases, repair_missing_published_dates
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
 
@@ -128,6 +128,65 @@ def test_store_keeps_existing_published_at_when_recrawl_has_no_date():
     with store.connect() as conn:
         row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
     assert row["published_at"] == "2026-05-11 17:28:00"
+
+
+def test_repair_missing_published_dates_reads_detail_registration_date(monkeypatch):
+    db_path = Path(f"data/.test_repair_dates_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="shinan-county",
+            source_name="신안군청 보도자료/해명",
+            region="전남 신안",
+            title="신안군 소식",
+            url="https://example.com/shinan/141205",
+            content="신안군은 나눔 봉사를 진행했다고 밝혔다.",
+            published_at=None,
+        )
+    )
+    assert release_id is not None
+
+    class FakeResponse:
+        text = """
+        <table class="show_form">
+          <tr><th><label>등록일</label></th><td><span>2026-05-08 13:08:00</span></td></tr>
+          <tr><th><label>내용</label></th><td>본문</td></tr>
+        </table>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, url):
+            assert url == "https://example.com/shinan/141205"
+            return FakeResponse()
+
+    monkeypatch.setattr("news_summary.service.httpx.Client", FakeClient)
+    source = Source(
+        id="shinan-county",
+        name="신안군청 보도자료/해명",
+        region="전남 신안",
+        type="html_board",
+        selectors={"detail_published_at": ".show_form"},
+    )
+
+    repaired = repair_missing_published_dates(store, source)
+
+    assert repaired == 1
+    with store.connect() as conn:
+        row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
+    assert row["published_at"] == "2026-05-08 13:08:00"
 
 
 def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
