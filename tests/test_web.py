@@ -195,6 +195,7 @@ def test_approval_checks_warn_before_approval():
 def test_display_helpers_make_labels_readable():
     assert format_datetime_label("2026-05-20T07:30:00+00:00") == "2026.05.20 16:30"
     assert format_datetime_label("2026-05-20") == "2026.05.20"
+    assert format_datetime_label("2026.05.14 13:56") == "2026.05.14 13:56"
     assert model_label("gemini-3.1-flash-lite:gemini") == "Gemini"
     assert model_label("gpt-4.1-mini:rule-based") == "규칙 기반"
     assert interval_label(3600) == "1시간마다"

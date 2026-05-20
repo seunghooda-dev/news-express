@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .collectors import _normalize_published_at
 from .models import ArticleDraft, PressRelease
 
 
@@ -66,6 +67,7 @@ class Store:
             self._backfill_initial_draft_columns(conn)
             self._remove_news_brief_prefixes(conn)
             self._remove_leading_titles_from_bodies(conn)
+            self._normalize_published_dates(conn)
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -112,6 +114,16 @@ class Store:
                     WHERE id = ?
                     """,
                     (body, initial_body, row["id"]),
+                )
+
+    def _normalize_published_dates(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("SELECT id, published_at FROM press_releases").fetchall()
+        for row in rows:
+            normalized = _normalize_published_at(row["published_at"])
+            if normalized and normalized != row["published_at"]:
+                conn.execute(
+                    "UPDATE press_releases SET published_at = ? WHERE id = ?",
+                    (normalized, row["id"]),
                 )
 
     def add_press_release(self, item: PressRelease) -> int | None:

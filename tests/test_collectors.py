@@ -2,7 +2,9 @@ from bs4 import BeautifulSoup
 
 from news_summary.collectors import (
     _canonical_url,
+    _extract_labeled_date,
     _extract_detail_content,
+    _normalize_published_at,
     _validated_release,
     collect_json_board,
 )
@@ -58,6 +60,13 @@ def test_extract_detail_content_prefers_article_body_over_attachment_metadata():
 
     assert "전라남도가 2027년 국고 확보" in text
     assert "다운로드" not in text
+
+
+def test_extract_labeled_date_keeps_written_at_time():
+    text = "작성일2026.05.14 13:56 등록자 홍보팀 조회수 72"
+
+    assert _extract_labeled_date(text) == "2026.05.14 13:56"
+    assert _normalize_published_at("(이용우 / 2026-05-20 14:03)") == "2026-05-20 14:03"
 
 
 def test_extract_detail_content_trims_haenam_contact_header():

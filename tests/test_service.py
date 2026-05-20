@@ -68,3 +68,27 @@ def test_collect_enabled_sources_reports_source_progress(monkeypatch):
     assert any(event["message"].startswith("1/2 첫 기관") for event in events)
     assert any(event["message"].startswith("2/2 둘째 기관") for event in events)
     assert events[-1]["message"] == "수집 완료"
+
+
+def test_store_normalizes_existing_published_at_metadata():
+    db_path = Path(f"data/.test_storage_dates_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="yeongam",
+            source_name="영암군",
+            region="전남",
+            title="영암군 소식",
+            url="https://example.com/date-normalize",
+            content="영암군은 새 사업을 추진한다고 밝혔다.",
+            published_at="(이용우 / 2026-05-20 14:03)",
+        )
+    )
+    assert release_id is not None
+
+    store.init_db()
+
+    with store.connect() as conn:
+        row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
+    assert row["published_at"] == "2026-05-20 14:03"

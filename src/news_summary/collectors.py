@@ -20,6 +20,10 @@ class CollectionError(RuntimeError):
 
 
 DATE_RE = re.compile(r"(20\d{2}[./-]\d{1,2}[./-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)")
+LABELED_DATE_RE = re.compile(
+    r"(?:작성일|게시일|등록일|입력일|보도일|날짜)\s*[:：]?\s*"
+    r"(20\d{2}[./-]\d{1,2}[./-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)"
+)
 HANGUL_RE = re.compile(r"[가-힣]")
 WORD_RE = re.compile(r"[가-힣A-Za-z0-9]+")
 TITLE_STOPWORDS = {
@@ -256,22 +260,27 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
             detail_response = client.get(detail_url)
             detail_response.raise_for_status()
             detail_soup = BeautifulSoup(detail_response.text, "html.parser")
+            detail_text = _clean_text(detail_soup.get_text(" "))
             content = _extract_detail_content(detail_soup, selectors)
             if not content:
                 continue
 
             date_node = row.select_one(selectors.get("published_at", "")) if selectors.get("published_at") else None
             row_text = _clean_text(row.get_text(" ")) if isinstance(row, Tag) else ""
+            published_at = _normalize_published_at(_clean_text(date_node.get_text(" ")) if date_node else "")
+            if not published_at:
+                published_at = (
+                    _extract_labeled_date(row_text)
+                    or _extract_labeled_date(detail_text)
+                    or _extract_date(row_text)
+                    or _extract_date(content)
+                )
             release = _validated_release(
                 source=source,
                 title=title,
                 url=detail_url,
                 content=content,
-                published_at=(
-                    _clean_text(date_node.get_text(" "))
-                    if date_node
-                    else _extract_date(row_text) or _extract_date(content)
-                ),
+                published_at=published_at,
             )
             if release:
                 releases.append(release)
@@ -361,7 +370,7 @@ def _validated_release(
         title=title,
         url=_canonical_url(url),
         content=content,
-        published_at=published_at,
+        published_at=_normalize_published_at(published_at),
         validation_status="검증 완료",
         validation_note=note,
     )
@@ -550,6 +559,18 @@ def _trim_leading_contact_metadata(text: str) -> str:
 def _extract_date(text: str) -> str | None:
     match = DATE_RE.search(text)
     return match.group(1) if match else None
+
+
+def _extract_labeled_date(text: str) -> str | None:
+    match = LABELED_DATE_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _normalize_published_at(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = _clean_text(str(value))
+    return _extract_labeled_date(text) or _extract_date(text)
 
 
 def _as_list(value: object) -> list[str]:
