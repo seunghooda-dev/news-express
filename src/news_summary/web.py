@@ -443,9 +443,11 @@ def model_badge_class(model: str | None) -> str:
 def interval_label(seconds: int | None) -> str:
     if not seconds:
         return "주기 미상"
+    if seconds == 3600:
+        return "매시간 정각"
     if seconds % 3600 == 0:
         hours = seconds // 3600
-        return "1시간마다" if hours == 1 else f"{hours}시간마다"
+        return f"{hours}시간마다"
     if seconds % 60 == 0:
         minutes = seconds // 60
         return "1분마다" if minutes == 1 else f"{minutes}분마다"

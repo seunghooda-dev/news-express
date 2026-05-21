@@ -3,7 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from news_summary.models import PressRelease, Source
-from news_summary.scheduler import AutoCollector, _next_auto_wait_seconds
+from news_summary.scheduler import AutoCollector, build_auto_collector_from_env, _next_hourly_run_at, _wait_seconds_until
 from news_summary.service import collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, repair_missing_published_dates
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
@@ -249,11 +249,25 @@ def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
     assert restored.snapshot().last_auto_finished_at == last_auto_finished_at
 
 
-def test_auto_collector_startup_wait_uses_last_successful_auto_finish():
-    now = datetime(2026, 5, 21, 9, 0, tzinfo=timezone.utc)
-    recent = (now - timedelta(minutes=20)).isoformat()
-    stale = (now - timedelta(hours=2)).isoformat()
+def test_auto_collector_waits_until_the_next_hourly_boundary():
+    exact_hour = datetime(2026, 5, 21, 9, 0, tzinfo=timezone.utc)
+    middle_of_hour = datetime(2026, 5, 21, 9, 20, 10, tzinfo=timezone.utc)
+    almost_next_hour = datetime(2026, 5, 21, 9, 59, 59, 500000, tzinfo=timezone.utc)
 
-    assert _next_auto_wait_seconds(recent, 3600, now=now) == 2400
-    assert _next_auto_wait_seconds(stale, 3600, now=now) == 0
-    assert _next_auto_wait_seconds(None, 3600, now=now) == 0
+    assert _next_hourly_run_at(exact_hour) == exact_hour
+    assert _next_hourly_run_at(middle_of_hour) == datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
+    assert _wait_seconds_until(_next_hourly_run_at(middle_of_hour), now=middle_of_hour) == 2390
+    assert _wait_seconds_until(_next_hourly_run_at(almost_next_hour), now=almost_next_hour) == 1
+
+
+def test_auto_collector_interval_is_fixed_to_hourly_boundary(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_fixed_interval_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_INTERVAL_SECONDS", "600")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = build_auto_collector_from_env(store, Path("unused.yaml"))
+
+    assert collector is not None
+    assert collector.snapshot().interval_seconds == 3600

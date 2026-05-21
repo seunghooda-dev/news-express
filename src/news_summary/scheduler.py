@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -230,27 +229,19 @@ class AutoCollector:
             )
 
     def _loop(self) -> None:
-        initial_wait = _next_auto_wait_seconds(self._status.last_auto_finished_at, self.interval_seconds)
-        if initial_wait:
-            self._set_next_run_after(initial_wait, message="다음 자동 수집 대기 중")
-            logger.info("auto collector startup delayed wait_seconds=%s", initial_wait)
-            if self._stop_event.wait(initial_wait):
-                return
-
         while not self._stop_event.is_set():
-            started_monotonic = time.monotonic()
-            self.run_once()
-            elapsed = time.monotonic() - started_monotonic
-            wait_seconds = max(1, self.interval_seconds - int(elapsed))
-            self._set_next_run_after(wait_seconds, message="다음 자동 수집 대기 중")
+            next_run_at = _next_hourly_run_at()
+            wait_seconds = _wait_seconds_until(next_run_at)
+            self._set_next_run_at(next_run_at, message="다음 정각 자동 수집 대기 중")
+            logger.info("auto collector waiting for hourly run wait_seconds=%s next_run_at=%s", wait_seconds, next_run_at.isoformat())
             if self._stop_event.wait(wait_seconds):
                 break
 
-    def _set_next_run_after(self, wait_seconds: int, message: str | None = None) -> None:
+            self.run_once()
+
+    def _set_next_run_at(self, next_run_at: datetime, message: str | None = None) -> None:
         with self._state_lock:
-            self._status.next_run_at = (
-                datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
-            ).isoformat()
+            self._status.next_run_at = next_run_at.astimezone(timezone.utc).isoformat()
             if message and not self._status.running:
                 self._status.progress_message = message
 
@@ -285,7 +276,7 @@ def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollec
     return AutoCollector(
         store=store,
         config_path=config_path,
-        interval_seconds=env_int("NEWS_SUMMARY_AUTO_INTERVAL_SECONDS", DEFAULT_AUTO_INTERVAL_SECONDS, minimum=60),
+        interval_seconds=DEFAULT_AUTO_INTERVAL_SECONDS,
         collect_limit=collect_limit,
         draft_limit=env_int("NEWS_SUMMARY_AUTO_DRAFT_LIMIT", default_draft_limit),
         require_gemini=env_bool("NEWS_SUMMARY_AUTO_REQUIRE_GEMINI", True),
@@ -296,22 +287,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _next_auto_wait_seconds(
-    last_finished_at: str | None,
-    interval_seconds: int,
-    now: datetime | None = None,
-) -> int:
-    if not last_finished_at:
-        return 0
-    try:
-        parsed = datetime.fromisoformat(last_finished_at.replace("Z", "+00:00"))
-    except ValueError:
-        return 0
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+def _next_hourly_run_at(now: datetime | None = None) -> datetime:
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    elapsed = (now.astimezone(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
-    remaining = int(interval_seconds - elapsed)
-    return max(0, remaining)
+    now = now.astimezone(timezone.utc)
+    if now.minute == 0 and now.second == 0 and now.microsecond == 0:
+        return now
+    return now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+
+
+def _wait_seconds_until(target: datetime, now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    remaining = (target.astimezone(timezone.utc) - now.astimezone(timezone.utc)).total_seconds()
+    if remaining <= 0:
+        return 0
+    return max(1, int(remaining + 0.999))

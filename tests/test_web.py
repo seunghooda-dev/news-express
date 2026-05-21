@@ -199,7 +199,7 @@ def test_display_helpers_make_labels_readable():
     assert format_datetime_label("2026.05.14 13:56") == "2026.05.14 13:56"
     assert model_label("gemini-3.5-flash:gemini") == "Gemini"
     assert model_label("gpt-4.1-mini:rule-based") == "규칙 기반"
-    assert interval_label(3600) == "1시간마다"
+    assert interval_label(3600) == "매시간 정각"
     assert interval_label(7200) == "2시간마다"
     assert interval_label(600) == "10분마다"
 

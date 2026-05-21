@@ -20,7 +20,7 @@ cd "C:\Users\seung\news summary"
 브라우저에서 `http://127.0.0.1:5000`을 열면 검수 화면을 볼 수 있습니다.
 
 `.env`에 `GEMINI_API_KEY`를 넣으면 Gemini가 기사 초안을 생성합니다. 키가 없으면 규칙 기반 방송 단신 초안으로 동작합니다.
-검수 화면을 실행하면 자동 수집이 기본으로 켜져 1시간마다 전체 기관 보도자료를 확인하고, 새 원문은 Gemini 기사 초안으로 만들어 검수 대기에 추가합니다.
+검수 화면을 실행하면 자동 수집이 기본으로 켜져 매시간 정각마다 전체 기관 보도자료를 확인하고, 새 원문은 Gemini 기사 초안으로 만들어 검수 대기에 추가합니다.
 
 ## 설정
 
@@ -62,7 +62,7 @@ PowerShell 스크립트로 수집과 초안 생성을 한 번에 실행하려면
 
 `.\scripts\run_review_app.ps1`로 검수 화면을 켜두면 자동 수집기가 함께 실행됩니다.
 
-- 기본 주기: 1시간마다 1회
+- 기본 주기: 매시간 정각마다 1회
 - 수집 범위: 설정에서 켜진 전체 기관
 - 기본 처리: 기관별 최근 10건 확인, 새 원문은 Gemini 초안으로 생성
 - Gemini 실패 시: 규칙 기반 초안을 만들지 않고 원문을 보류해 다음 주기에 다시 시도
@@ -72,7 +72,6 @@ PowerShell 스크립트로 수집과 초안 생성을 한 번에 실행하려면
 
 ```text
 NEWS_SUMMARY_AUTO_COLLECT=1
-NEWS_SUMMARY_AUTO_INTERVAL_SECONDS=3600
 NEWS_SUMMARY_AUTO_COLLECT_LIMIT=10
 NEWS_SUMMARY_AUTO_DRAFT_LIMIT=250
 NEWS_SUMMARY_AUTO_REQUIRE_GEMINI=1

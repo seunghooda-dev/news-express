@@ -121,7 +121,7 @@ def serve_command(host: str, port: int) -> None:
         auto_collector.start()
         logger.info("auto collector started host=%s port=%s", host, port)
         print(
-            "자동 수집 시작: 1시간마다 전체 기관 원문 수집 후 Gemini 초안을 검수 대기에 추가합니다."
+            "자동 수집 시작: 매시간 정각마다 전체 기관 원문 수집 후 Gemini 초안을 검수 대기에 추가합니다."
         )
     logger.info("flask app starting host=%s port=%s", host, port)
     app.run(host=host, port=port, debug=False)
