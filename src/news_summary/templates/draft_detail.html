@@ -2,7 +2,13 @@
 {% block content %}
 <section class="section-head">
   <h1>초안 #{{ draft.id }}</h1>
-  <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 열기</a>
+  <div class="section-actions">
+    {% if next_review_draft_id %}
+      <a class="source-link" href="{{ url_for('draft_detail', draft_id=next_review_draft_id) }}">다음 검수할 기사</a>
+    {% endif %}
+    <a class="source-link" href="{{ url_for('source_detail', source_id=draft.source_id) }}">기관 상세</a>
+    <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 열기</a>
+  </div>
 </section>
 
 <section class="detail-status">
@@ -60,8 +66,11 @@
 
     <div class="actions">
       <button type="submit">저장</button>
+      <button class="secondary" type="submit" name="action" value="save_next">저장 후 다음</button>
       <button type="submit" name="action" value="approved">승인</button>
+      <button type="submit" name="action" value="approved_next">승인 후 다음</button>
       <button type="submit" name="action" value="rejected">반려</button>
+      <button type="submit" name="action" value="rejected_next">반려 후 다음</button>
     </div>
 
     <section class="approval-checks">

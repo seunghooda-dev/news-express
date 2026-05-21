@@ -484,6 +484,18 @@ h3 {
   gap: 8px;
 }
 
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.export-actions button {
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
 .section-head.compact {
   margin-bottom: 10px;
 }
@@ -654,12 +666,17 @@ h3 {
   gap: 8px;
 }
 
-.actions button[name="action"][value="rejected"] {
+.actions button[name="action"][value="rejected"],
+.actions button[name="action"][value="rejected_next"] {
   background: var(--warn);
 }
 
 .source-board {
   margin-bottom: 28px;
+}
+
+.metric-static {
+  display: block;
 }
 
 .gemini-usage {

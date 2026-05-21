@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .storage import Store
 
+LOCAL_TZ = timezone(timedelta(hours=9))
 
-def export_approved(store: Store, output_dir: Path) -> tuple[Path, Path, int]:
+
+def export_approved(
+    store: Store,
+    output_dir: Path,
+    unexported_only: bool = True,
+    approved_on: date | None = None,
+) -> tuple[Path, Path, int]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    rows = store.approved_drafts()
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    rows = list(store.approved_drafts(unexported_only=unexported_only))
+    if approved_on:
+        rows = [row for row in rows if _approved_local_date(row) == approved_on]
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
     markdown_path = output_dir / f"승인기사_{stamp}.md"
     csv_path = output_dir / f"승인기사_{stamp}.csv"
 
@@ -48,3 +57,18 @@ def export_approved(store: Store, output_dir: Path) -> tuple[Path, Path, int]:
 
     store.mark_exported([int(row["id"]) for row in rows])
     return markdown_path, csv_path, len(rows)
+
+
+def _approved_local_date(row) -> date | None:
+    value = row["approved_time"] or row["updated_at"] or row["created_at"]
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo:
+        parsed = parsed.astimezone(LOCAL_TZ)
+    else:
+        parsed = parsed.replace(tzinfo=LOCAL_TZ)
+    return parsed.date()

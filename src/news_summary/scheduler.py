@@ -230,17 +230,29 @@ class AutoCollector:
             )
 
     def _loop(self) -> None:
+        initial_wait = _next_auto_wait_seconds(self._status.last_auto_finished_at, self.interval_seconds)
+        if initial_wait:
+            self._set_next_run_after(initial_wait, message="다음 자동 수집 대기 중")
+            logger.info("auto collector startup delayed wait_seconds=%s", initial_wait)
+            if self._stop_event.wait(initial_wait):
+                return
+
         while not self._stop_event.is_set():
             started_monotonic = time.monotonic()
             self.run_once()
             elapsed = time.monotonic() - started_monotonic
             wait_seconds = max(1, self.interval_seconds - int(elapsed))
-            with self._state_lock:
-                self._status.next_run_at = (
-                    datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
-                ).isoformat()
+            self._set_next_run_after(wait_seconds, message="다음 자동 수집 대기 중")
             if self._stop_event.wait(wait_seconds):
                 break
+
+    def _set_next_run_after(self, wait_seconds: int, message: str | None = None) -> None:
+        with self._state_lock:
+            self._status.next_run_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
+            ).isoformat()
+            if message and not self._status.running:
+                self._status.progress_message = message
 
     def _update_progress(self, event: dict[str, object]) -> None:
         with self._state_lock:
@@ -282,3 +294,24 @@ def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollec
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _next_auto_wait_seconds(
+    last_finished_at: str | None,
+    interval_seconds: int,
+    now: datetime | None = None,
+) -> int:
+    if not last_finished_at:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(last_finished_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    elapsed = (now.astimezone(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+    remaining = int(interval_seconds - elapsed)
+    return max(0, remaining)

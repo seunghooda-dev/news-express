@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <div>
+    <h1>{{ source.name }}</h1>
+    <p class="meta">{{ source.region }} · {{ source.list_url }}</p>
+  </div>
+  <div class="section-actions">
+    <a class="source-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}">검수 대기 보기</a>
+    <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
+  </div>
+</section>
+
+<section class="metrics source-detail-metrics">
+  <div class="metric-link metric-static"><b>{{ summary.releases }}</b><span>누적 원문</span></div>
+  <div class="metric-link metric-static"><b>{{ summary.today_releases }}</b><span>오늘 수집</span></div>
+  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}"><b>{{ pending_drafts|length }}</b><span>검수 대기</span></a>
+  <div class="metric-link metric-static"><b>{{ summary.issue or "정상" }}</b><span>현재 상태</span></div>
+</section>
+
+<section class="split">
+  <div>
+    <div class="section-head compact">
+      <h1>최근 초안</h1>
+      <a class="source-link" href="{{ url_for('drafts', source=source.id) }}">전체 보기</a>
+    </div>
+    <div class="list">
+      {% for draft in recent_drafts %}
+        <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
+          <strong>{{ draft.title }}</strong>
+          <span class="row-meta">
+            <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
+            <span>{{ draft.published_at|date_label }}</span>
+            {% for flag in review_flags(draft, duplicate_titles)[:3] %}
+              <span class="badge badge-warning">{{ flag }}</span>
+            {% endfor %}
+          </span>
+        </a>
+      {% else %}
+        <p class="empty">이 기관의 초안이 없습니다.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div>
+    <div class="section-head compact">
+      <h1>최근 원문</h1>
+      <a class="source-link" href="{{ url_for('press_releases') }}">원문 전체</a>
+    </div>
+    <div class="list">
+      {% for item in recent_releases %}
+        <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
+          <strong>{{ item.title }}</strong>
+          <span class="row-meta">
+            <span>{{ item.published_at|date_label }}</span>
+            {% if item.draft_id %}
+              <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
+            {% else %}
+              <span class="badge badge-neutral">초안 없음</span>
+            {% endif %}
+          </span>
+        </a>
+      {% else %}
+        <p class="empty">이 기관의 수집 원문이 없습니다.</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

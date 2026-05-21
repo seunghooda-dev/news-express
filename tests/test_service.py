@@ -1,9 +1,10 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from news_summary.models import PressRelease, Source
-from news_summary.scheduler import AutoCollector
-from news_summary.service import collect_enabled_sources, draft_pending_releases, repair_missing_published_dates
+from news_summary.scheduler import AutoCollector, _next_auto_wait_seconds
+from news_summary.service import collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, repair_missing_published_dates
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
 
@@ -36,6 +37,43 @@ def test_draft_pending_releases_keeps_item_pending_when_gemini_required(monkeypa
     assert "초안 보류" in messages[0]
     assert len(store.pending_press_releases(5)) == 1
     assert store.drafts(limit=5) == []
+
+
+def test_draft_pending_releases_starts_cooldown_after_gemini_quota(monkeypatch):
+    db_path = Path(f"data/.test_service_cooldown_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    for index in range(2):
+        store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 군청",
+                region="전남",
+                title=f"테스트 군, 새 사업 추진 {index}",
+                url=f"https://example.com/press/quota-{index}",
+                content="테스트 군은 새 사업을 추진한다고 밝혔다. 신청은 다음 달부터 가능하다.",
+                published_at="2026-05-20",
+            )
+        )
+    calls = []
+
+    def fail_quota(item_id, item, model=None, require_gemini=False):
+        calls.append(item_id)
+        raise GeminiDraftError("Gemini 요청 한도가 찼습니다.", ["gemini-3.5-flash"])
+
+    monkeypatch.setattr("news_summary.service.DEFAULT_GEMINI_COOLDOWN_SECONDS", 60)
+    monkeypatch.setattr("news_summary.service.generate_draft", fail_quota)
+
+    messages = draft_pending_releases(store, limit=5, require_gemini=True)
+    second_messages = draft_pending_releases(store, limit=5, require_gemini=True)
+
+    assert len(calls) == 1
+    assert any("초안 보류" in message for message in messages)
+    assert any("초안 생성을 보류" in message for message in messages)
+    assert len(second_messages) == 1
+    assert "초안 생성을 보류" in second_messages[0]
+    assert gemini_cooldown_until(store) is not None
+    assert len(store.pending_press_releases(5)) == 2
 
 
 def test_collect_enabled_sources_reports_source_progress(monkeypatch):
@@ -209,3 +247,13 @@ def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
     assert last_auto_finished_at is not None
     restored = AutoCollector(store, Path("unused.yaml"))
     assert restored.snapshot().last_auto_finished_at == last_auto_finished_at
+
+
+def test_auto_collector_startup_wait_uses_last_successful_auto_finish():
+    now = datetime(2026, 5, 21, 9, 0, tzinfo=timezone.utc)
+    recent = (now - timedelta(minutes=20)).isoformat()
+    stale = (now - timedelta(hours=2)).isoformat()
+
+    assert _next_auto_wait_seconds(recent, 3600, now=now) == 2400
+    assert _next_auto_wait_seconds(stale, 3600, now=now) == 0
+    assert _next_auto_wait_seconds(None, 3600, now=now) == 0

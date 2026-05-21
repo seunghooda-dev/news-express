@@ -10,11 +10,11 @@ from werkzeug.exceptions import HTTPException
 
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
-from .service import collect_and_draft_cycle, collect_enabled_sources, draft_pending_releases
+from .service import collect_and_draft_cycle, collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, mark_gemini_cooldown
 from .settings import env_path, load_environment, load_sources
 from .storage import Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
-from .writer import GeminiRefineError, refine_draft_with_gemini
+from .writer import GEMINI_FLASH_MODELS, GeminiRefineError, refine_draft_with_gemini
 
 
 VALID_STATUSES = {"needs_review", "approved", "rejected"}
@@ -49,6 +49,8 @@ def create_app() -> Flask:
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
     export_dir = env_path("NEWS_SUMMARY_EXPORT_DIR", "exports")
     store.init_db()
+    source_options = load_sources(config_path)
+    store.sync_source_metadata(source_options)
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(exc: Exception):
@@ -130,11 +132,36 @@ def create_app() -> Flask:
             page_title=_drafts_page_title(status, target_date, review_filter, source_filter, config_path),
         )
 
+    @app.get("/drafts/next")
+    def next_review_draft():
+        next_draft_id = _next_review_draft_id(store)
+        if not next_draft_id:
+            flash("검수할 대기 초안이 없습니다.")
+            return redirect(url_for("drafts", status="needs_review"))
+        return redirect(url_for("draft_detail", draft_id=next_draft_id))
+
     @app.get("/press-releases")
     def press_releases():
         return render_template(
             "press_releases.html",
             press_releases=store.press_releases(limit=1000),
+        )
+
+    @app.get("/sources/<source_id>")
+    def source_detail(source_id: str):
+        source = _source_by_id(config_path, source_id)
+        if not source:
+            flash("기관 정보를 찾을 수 없습니다.")
+            return redirect(url_for("dashboard"))
+        summary = _source_summary_by_id(store, config_path, source_id)
+        return render_template(
+            "source_detail.html",
+            source=source,
+            summary=summary,
+            recent_releases=store.press_releases_by_source(source_id, limit=20),
+            recent_drafts=store.drafts_by_source(source_id, limit=20),
+            pending_drafts=store.drafts_by_source(source_id, status="needs_review", limit=20),
+            duplicate_titles=_duplicate_titles(store),
         )
 
     @app.get("/drafts/<int:draft_id>")
@@ -150,6 +177,7 @@ def create_app() -> Flask:
             statuses=STATUS_ORDER,
             duplicate_titles=duplicate_titles,
             checks=approval_checks(draft, duplicate_titles),
+            next_review_draft_id=_next_review_draft_id(store, current_id=draft_id),
         )
 
     @app.get("/writing-settings")
@@ -173,7 +201,14 @@ def create_app() -> Flask:
 
     @app.post("/drafts/<int:draft_id>")
     def update_draft(draft_id: int):
-        status = request.form.get("action") or request.form.get("status", "needs_review")
+        action = request.form.get("action") or ""
+        next_after_save = action in {"save_next", "approved_next", "rejected_next"}
+        if action in {"approved", "approved_next"}:
+            status = "approved"
+        elif action in {"rejected", "rejected_next"}:
+            status = "rejected"
+        else:
+            status = request.form.get("status", "needs_review")
         if status not in VALID_STATUSES:
             status = "needs_review"
         store.update_draft(
@@ -185,6 +220,12 @@ def create_app() -> Flask:
         )
         logger.info("draft updated draft_id=%s status=%s", draft_id, status)
         flash("초안을 저장했습니다.")
+        if next_after_save:
+            next_draft_id = _next_review_draft_id(store, current_id=draft_id)
+            if next_draft_id:
+                return redirect(url_for("draft_detail", draft_id=next_draft_id))
+            flash("다음 검수 대기 초안이 없습니다.")
+            return redirect(url_for("drafts", status="needs_review"))
         return redirect(url_for("draft_detail", draft_id=draft_id))
 
     @app.post("/drafts/<int:draft_id>/restore-initial")
@@ -232,6 +273,9 @@ def create_app() -> Flask:
             models = ", ".join(exc.attempted_models)
             suffix = f" 시도한 모델: {models}" if models else ""
             logger.warning("gemini refine failed draft_id=%s models=%s error=%s", draft_id, models, exc)
+            if _is_gemini_quota_message(str(exc)):
+                cooldown_until = mark_gemini_cooldown(store)
+                flash(f"Gemini 요청 한도 감지로 {format_datetime_label(cooldown_until.isoformat())}까지 다듬기를 보류합니다.")
             flash(f"{exc}{suffix}")
             return redirect(url_for("draft_detail", draft_id=draft_id))
         except Exception as exc:  # noqa: BLE001 - UI should report a concise Gemini failure.
@@ -331,9 +375,24 @@ def create_app() -> Flask:
 
     @app.post("/export")
     def export():
-        markdown_path, csv_path, count = export_approved(store, Path(export_dir))
-        logger.info("approved drafts exported count=%s markdown=%s csv=%s", count, markdown_path, csv_path)
-        flash(f"승인 기사 {count}건을 내보냈습니다.")
+        scope = request.form.get("scope") or "unexported"
+        approved_on = datetime.now(LOCAL_TZ).date() if scope == "today" else None
+        unexported_only = scope not in {"all", "today"}
+        markdown_path, csv_path, count = export_approved(
+            store,
+            Path(export_dir),
+            unexported_only=unexported_only,
+            approved_on=approved_on,
+        )
+        logger.info(
+            "approved drafts exported count=%s scope=%s markdown=%s csv=%s",
+            count,
+            scope,
+            markdown_path,
+            csv_path,
+        )
+        scope_label = {"today": "오늘 승인 기사", "all": "전체 승인 기사"}.get(scope, "미내보내기 승인 기사")
+        flash(f"{scope_label} {count}건을 내보냈습니다.")
         flash(f"마크다운 파일: {markdown_path}")
         flash(f"표 파일: {csv_path}")
         return redirect(url_for("dashboard"))
@@ -578,6 +637,13 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
                 today_drafts += 1
 
     top_models = sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:3]
+    current_models = [(model, model_counts.get(model, 0)) for model in GEMINI_FLASH_MODELS if model_counts.get(model, 0)]
+    legacy_models = [
+        (model, count)
+        for model, count in sorted(model_counts.items(), key=lambda item: item[1], reverse=True)
+        if model not in GEMINI_FLASH_MODELS
+    ]
+    cooldown_until = gemini_cooldown_until(store)
     return {
         "today_total": today_drafts + today_refines,
         "today_drafts": today_drafts,
@@ -586,8 +652,11 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
         "total_drafts": total_drafts,
         "total_refines": total_refines,
         "top_models": top_models,
+        "current_models": current_models,
+        "legacy_models": legacy_models,
         "last_error": getattr(auto_status, "last_error", None) if auto_status else None,
         "reset_at": reset_at.isoformat() if reset_at else None,
+        "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
     }
 
 
@@ -672,6 +741,29 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
     return summaries
 
 
+def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> dict[str, object]:
+    for summary in _source_summaries(store, config_path):
+        if summary["id"] == source_id:
+            return summary
+    source = _source_by_id(config_path, source_id)
+    return {
+        "id": source_id,
+        "name": source.name if source else source_id,
+        "region": source.region if source else "",
+        "releases": 0,
+        "today_releases": 0,
+        "last_collected": None,
+        "issue": "수집 없음",
+    }
+
+
+def _source_by_id(config_path: Path, source_id: str):
+    for source in load_sources(config_path):
+        if source.id == source_id:
+            return source
+    return None
+
+
 def _source_release_date(published_at: object, collected_at: object) -> date | None:
     published_datetime = _parse_datetime(published_at)
     if published_datetime:
@@ -685,6 +777,19 @@ def _source_release_date(published_at: object, collected_at: object) -> date | N
 
 def _draft_date(draft) -> date | None:
     return _parse_date(_row_value(draft, "published_at")) or _parse_date(_row_value(draft, "created_at"))
+
+
+def _next_review_draft_id(store: Store, current_id: int | None = None) -> int | None:
+    for draft in store.drafts(status="needs_review", limit=1000):
+        draft_id = int(draft["id"])
+        if current_id is None or draft_id != current_id:
+            return draft_id
+    return None
+
+
+def _is_gemini_quota_message(message: str) -> bool:
+    lowered = message.lower()
+    return "429" in message or "resource_exhausted" in lowered or "quota" in lowered or "요청 한도" in message
 
 
 def _sort_drafts_latest_first(drafts):

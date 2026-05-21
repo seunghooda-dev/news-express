@@ -278,6 +278,37 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
     dashboard_html = client.get("/").data.decode("utf-8")
 
     assert "광주 · 누적 2건 · 오늘 1건" in dashboard_html
+    assert 'href="/sources/gwangju-city"' in dashboard_html
+
+
+def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
+    db_path = Path(f"data/.test_source_detail_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군 농업기술센터 보도자료",
+            region="전남 진도",
+            title="진도군 군정뉴스",
+            url="https://example.com/jindo-news",
+            content="진도군은 군정 소식을 안내한다고 밝혔다.",
+            published_at="2026-05-20",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/sources/jindo-county").data.decode("utf-8")
+    releases_html = client.get("/press-releases").data.decode("utf-8")
+
+    assert "진도군청 보도자료" in html
+    assert "진도군 농업기술센터 보도자료" not in releases_html
 
 
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
@@ -352,6 +383,27 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
             model="gemini-3.5-flash:gemini",
         )
     )
+    legacy_release_id = store.add_press_release(
+        PressRelease(
+            source_id="test",
+            source_name="테스트",
+            region="전남",
+            title="Gemini 과거 사용량 테스트",
+            url="https://example.com/gemini-usage-legacy",
+            content="테스트 본문입니다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert legacy_release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=legacy_release_id,
+            title="Gemini 과거 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.1-flash-lite:gemini",
+        )
+    )
 
     app = create_app()
     app.testing = True
@@ -362,7 +414,12 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
 
     assert response.status_code == 200
     assert 'class="gemini-usage"' in html
-    assert "전체 1회" in html
+    assert "전체 2회" in html
+    assert "현재 사용 모델:" in html
+    assert "gemini-3.5-flash 1회" in html
+    assert "과거 사용 기록:" in html
+    assert "gemini-3.1-flash-lite 1회" in html
+    assert "많이 쓴 모델" not in html
     assert "사용량 초기화" in html
     assert "Google AI Studio 사용량 확인" in html
     assert "운영 로그" not in html
@@ -373,7 +430,7 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
     assert reset_response.status_code == 200
     assert "전체 0회" in reset_html
     assert "초기화 시각:" in reset_html
-    assert Store(db_path).counts()["drafts"] == 1
+    assert Store(db_path).counts()["drafts"] == 2
 
 
 def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeypatch):
@@ -425,6 +482,125 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2
     assert status["progress_total"] == 19
+
+
+def test_draft_actions_can_advance_to_next_review_item(monkeypatch):
+    db_path = Path(f"data/.test_next_review_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    draft_ids = []
+    for index in range(2):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="gwangju-city",
+                source_name="광주광역시청 보도자료",
+                region="광주",
+                title=f"검수 큐 테스트 {index}",
+                url=f"https://example.com/next-review-{index}",
+                content="광주시는 새 사업을 추진한다고 밝혔다.",
+                published_at="2026-05-20",
+            )
+        )
+        assert release_id is not None
+        draft_ids.append(
+            store.add_article_draft(
+                ArticleDraft(
+                    press_release_id=release_id,
+                    title=f"검수 큐 초안 {index}",
+                    body="첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.",
+                    review_note="메모",
+                    model="gemini-3.5-flash:gemini",
+                )
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    next_response = client.get("/drafts/next", follow_redirects=False)
+    assert next_response.headers["Location"].endswith(f"/drafts/{draft_ids[-1]}")
+
+    detail_html = client.get(f"/drafts/{draft_ids[-1]}").data.decode("utf-8")
+    assert "다음 검수할 기사" in detail_html
+    assert "승인 후 다음" in detail_html
+
+    response = client.post(
+        f"/drafts/{draft_ids[-1]}",
+        data={
+            "title": "승인할 제목",
+            "body": "첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.",
+            "review_note": "확인",
+            "status": "needs_review",
+            "action": "approved_next",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.headers["Location"].endswith(f"/drafts/{draft_ids[0]}")
+    assert Store(db_path).get_draft(draft_ids[-1])["status"] == "approved"
+
+
+def test_export_defaults_to_unexported_and_supports_today_scope(monkeypatch):
+    db_path = Path(f"data/.test_export_scopes_{uuid4().hex}.sqlite").resolve()
+    export_dir = Path(f"data/tmp/.test_exports_{uuid4().hex}").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_EXPORT_DIR", str(export_dir))
+    store = Store(db_path)
+    store.init_db()
+    draft_ids = []
+    for index in range(2):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="gwangju-city",
+                source_name="광주광역시청 보도자료",
+                region="광주",
+                title=f"내보내기 테스트 {index}",
+                url=f"https://example.com/export-{index}",
+                content="광주시는 새 사업을 추진한다고 밝혔다.",
+                published_at="2026-05-20",
+            )
+        )
+        assert release_id is not None
+        draft_id = store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=f"내보내기 초안 {index}",
+                body="첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.",
+                review_note="메모",
+                model="gemini-3.5-flash:gemini",
+            )
+        )
+        store.update_draft(
+            draft_id,
+            title=f"내보내기 초안 {index}",
+            body="첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.",
+            review_note="메모",
+            status="approved",
+        )
+        draft_ids.append(draft_id)
+    store.mark_exported([draft_ids[0]])
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.post("/export", data={"scope": "unexported"}, follow_redirects=True)
+    html = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "미내보내기 승인 기사 1건" in html
+
+    today_response = client.post("/export", data={"scope": "today"}, follow_redirects=True)
+    today_html = today_response.data.decode("utf-8")
+
+    assert today_response.status_code == 200
+    assert "오늘 승인 기사 2건" in today_html
 
 
 def test_refine_route_updates_current_draft_with_gemini(monkeypatch):

@@ -178,6 +178,35 @@ def test_generate_draft_can_require_gemini(monkeypatch):
         raise AssertionError("GeminiDraftError가 발생해야 합니다.")
 
 
+def test_generate_draft_stops_model_fallback_after_quota(monkeypatch):
+    item = PressRelease(
+        source_id="test",
+        source_name="테스트",
+        region="광주",
+        title="광주시, 사업 추진",
+        url="https://example.com",
+        content="광주시는 새 사업을 추진한다고 밝혔다.",
+    )
+    calls = []
+
+    def always_quota(item_id, press_release, api_key, model_name):
+        calls.append(model_name)
+        raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("news_summary.writer._generate_gemini_draft", always_quota)
+
+    try:
+        generate_draft(1, item, require_gemini=True)
+    except GeminiDraftError as exc:
+        assert "요청 한도" in str(exc)
+        assert exc.attempted_models == ["gemini-3.5-flash"]
+    else:
+        raise AssertionError("GeminiDraftError가 발생해야 합니다.")
+
+    assert calls == ["gemini-3.5-flash"]
+
+
 def test_refine_draft_with_gemini_passes_reporter_instruction(monkeypatch):
     draft_row = {
         "press_release_id": 7,
@@ -273,6 +302,6 @@ def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
         refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
     except GeminiRefineError as exc:
         assert "요청 한도" in str(exc)
-        assert exc.attempted_models == ["gemini-3.5-flash", "gemini-3-flash-preview"]
+        assert exc.attempted_models == ["gemini-3.5-flash"]
     else:
         raise AssertionError("GeminiRefineError가 발생해야 합니다.")

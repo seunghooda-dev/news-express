@@ -37,7 +37,9 @@ def generate_draft(
     if gemini_api_key:
         last_error: Exception | None = None
         gemini_models = _gemini_model_candidates(model)
+        attempted: list[str] = []
         for gemini_model in gemini_models:
+            attempted.append(gemini_model)
             try:
                 return _generate_gemini_draft(item_id, item, gemini_api_key, gemini_model)
             except Exception as exc:  # noqa: BLE001 - try the next configured Gemini model.
@@ -49,10 +51,12 @@ def generate_draft(
                     type(exc).__name__,
                     _shorten(str(exc), 240),
                 )
+                if _is_gemini_quota_error(exc):
+                    break
                 continue
         if require_gemini:
-            raise GeminiDraftError(_summarize_gemini_error(last_error), gemini_models)
-        failed_model = gemini_models[0]
+            raise GeminiDraftError(_summarize_gemini_error(last_error), attempted)
+        failed_model = attempted[0] if attempted else gemini_models[0]
         error_name = type(last_error).__name__ if last_error else "UnknownError"
         return _fallback_draft(item_id, item, f"{failed_model}:gemini-error:{error_name}")
 
@@ -119,6 +123,8 @@ def refine_draft_with_gemini(
                 type(exc).__name__,
                 _shorten(str(exc), 240),
             )
+            if _is_gemini_quota_error(exc):
+                break
             continue
     raise GeminiRefineError(_summarize_gemini_error(last_error), attempted)
 
@@ -239,6 +245,14 @@ def _summarize_gemini_error(exc: Exception | None) -> str:
     if "invalid_argument" in lowered or "400" in message:
         return "Gemini 모델명이나 요청 형식에 문제가 있습니다."
     return f"Gemini 호출 중 오류가 발생했습니다. ({type(exc).__name__})"
+
+
+def _is_gemini_quota_error(exc: Exception | None) -> bool:
+    if exc is None:
+        return False
+    message = str(exc)
+    lowered = message.lower()
+    return "429" in message or "resource_exhausted" in lowered or "quota" in lowered
 
 
 def build_system_prompt() -> str:

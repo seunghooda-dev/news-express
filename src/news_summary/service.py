@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,8 @@ from .writer import GeminiDraftError, generate_draft
 
 ProgressCallback = Callable[[dict[str, object]], None]
 logger = get_logger("service")
+GEMINI_COOLDOWN_UNTIL_KEY = "gemini_cooldown_until"
+DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
 
 
 def collect_enabled_sources(
@@ -173,6 +176,12 @@ def collect_and_draft_cycle(
 
 
 def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = False) -> list[str]:
+    if require_gemini:
+        cooldown_until = gemini_cooldown_until(store)
+        if cooldown_until:
+            logger.info("draft skipped gemini cooldown until=%s", cooldown_until.isoformat())
+            return [_gemini_cooldown_message(cooldown_until)]
+
     rows = store.pending_press_releases(limit)
     if not rows:
         logger.info("draft skipped no pending releases")
@@ -204,6 +213,11 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
                 models,
                 exc,
             )
+            if _is_gemini_quota_message(str(exc)):
+                cooldown_until = mark_gemini_cooldown(store)
+                messages.append(_gemini_cooldown_message(cooldown_until))
+                logger.warning("gemini cooldown started until=%s", cooldown_until.isoformat())
+                break
             continue
         draft_id = store.add_article_draft(draft)
         logger.info(
@@ -220,3 +234,35 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
 def _report_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
     if progress_callback:
         progress_callback(event)
+
+
+def gemini_cooldown_until(store: Store) -> datetime | None:
+    raw_value = store.get_app_metadata(GEMINI_COOLDOWN_UNTIL_KEY)
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(timezone.utc)
+    return parsed if parsed > datetime.now(timezone.utc) else None
+
+
+def mark_gemini_cooldown(
+    store: Store,
+    seconds: int = DEFAULT_GEMINI_COOLDOWN_SECONDS,
+) -> datetime:
+    cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    store.set_app_metadata(GEMINI_COOLDOWN_UNTIL_KEY, cooldown_until.isoformat())
+    return cooldown_until
+
+
+def _gemini_cooldown_message(cooldown_until: datetime) -> str:
+    return f"Gemini 요청 한도 감지로 {cooldown_until.astimezone(timezone.utc).strftime('%H:%M')} UTC까지 초안 생성을 보류합니다."
+
+
+def _is_gemini_quota_message(message: str) -> bool:
+    lowered = message.lower()
+    return "429" in message or "resource_exhausted" in lowered or "quota" in lowered or "요청 한도" in message

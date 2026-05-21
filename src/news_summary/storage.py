@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .collectors import _normalize_published_at
-from .models import ArticleDraft, PressRelease
+from .models import ArticleDraft, PressRelease, Source
 
 
 SCHEMA = """
@@ -151,6 +151,21 @@ class Store:
                 (key, value, now),
             )
 
+    def sync_source_metadata(self, sources: list[Source]) -> None:
+        if not sources:
+            return
+        with self.connect() as conn:
+            for source in sources:
+                conn.execute(
+                    """
+                    UPDATE press_releases
+                    SET source_name = ?, region = ?
+                    WHERE source_id = ?
+                      AND (source_name != ? OR region != ?)
+                    """,
+                    (source.name, source.region, source.id, source.name, source.region),
+                )
+
     def add_press_release(self, item: PressRelease) -> int | None:
         with self.connect() as conn:
             existing = conn.execute("SELECT id FROM press_releases WHERE url = ?", (item.url,)).fetchone()
@@ -268,6 +283,20 @@ class Store:
                 (limit,),
             ).fetchall()
 
+    def press_releases_by_source(self, source_id: str, limit: int = 50) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE pr.source_id = ?
+                ORDER BY pr.id DESC
+                LIMIT ?
+                """,
+                (source_id, limit),
+            ).fetchall()
+
     def press_releases_missing_published_at(self, source_id: str, limit: int = 20) -> list[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute(
@@ -316,6 +345,30 @@ class Store:
             params = (status, limit)
         else:
             params = (limit,)
+        query += " ORDER BY ad.id DESC LIMIT ?"
+        with self.connect() as conn:
+            return conn.execute(query, params).fetchall()
+
+    def drafts_by_source(
+        self,
+        source_id: str,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[sqlite3.Row]:
+        query = """
+                SELECT ad.*, pr.source_id, pr.source_name, pr.region, pr.url, pr.content AS original_content,
+                   pr.title AS original_title, pr.published_at,
+                   pr.validation_status, pr.validation_note
+            FROM article_drafts ad
+            JOIN press_releases pr ON pr.id = ad.press_release_id
+            WHERE pr.source_id = ?
+        """
+        params: tuple[object, ...]
+        if status:
+            query += " AND ad.status = ?"
+            params = (source_id, status, limit)
+        else:
+            params = (source_id, limit)
         query += " ORDER BY ad.id DESC LIMIT ?"
         with self.connect() as conn:
             return conn.execute(query, params).fetchall()
@@ -387,9 +440,12 @@ class Store:
                 (status, _now(), draft_id),
             )
 
-    def approved_drafts(self, limit: int | None = None) -> list[sqlite3.Row]:
+    def approved_drafts(self, limit: int | None = None, unexported_only: bool = False) -> list[sqlite3.Row]:
         limit_clause = "" if limit is None else "LIMIT ?"
         params: tuple[object, ...] = () if limit is None else (limit,)
+        where = "WHERE ad.status = 'approved'"
+        if unexported_only:
+            where += " AND ad.exported_at IS NULL"
         with self.connect() as conn:
             return conn.execute(
                 f"""
@@ -397,7 +453,7 @@ class Store:
                        pr.source_name, pr.region, pr.url, pr.title AS original_title, pr.published_at
                 FROM article_drafts ad
                 JOIN press_releases pr ON pr.id = ad.press_release_id
-                WHERE ad.status = 'approved'
+                {where}
                 ORDER BY COALESCE(ad.updated_at, ad.created_at) DESC, ad.id DESC
                 {limit_clause}
                 """,
