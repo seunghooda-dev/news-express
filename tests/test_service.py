@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from news_summary.models import PressRelease, Source
+from news_summary.models import ArticleDraft, PressRelease, Source
 from news_summary.scheduler import AutoCollector, build_auto_collector_from_env, _next_hourly_run_at, _wait_seconds_until
 from news_summary.service import collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, repair_missing_published_dates
 from news_summary.storage import Store
@@ -131,6 +131,58 @@ def test_store_normalizes_existing_published_at_metadata():
     with store.connect() as conn:
         row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
     assert row["published_at"] == "2026-05-20 14:03"
+
+
+def test_store_configures_sqlite_for_concurrent_app_usage():
+    db_path = Path(f"data/.test_storage_pragmas_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    with store.connect() as conn:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+
+
+def test_store_reuses_existing_draft_for_same_press_release():
+    db_path = Path(f"data/.test_storage_single_draft_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="테스트 군, 새 사업 추진",
+            url="https://example.com/single-draft",
+            content="테스트 군은 새 사업을 추진한다고 밝혔다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert release_id is not None
+
+    first_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="첫 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    second_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="중복 초안",
+            body="중복 본문입니다.",
+            review_note="중복 메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    assert second_id == first_id
+    assert store.counts()["drafts"] == 1
+    assert store.get_draft(first_id)["title"] == "첫 초안"
 
 
 def test_store_keeps_existing_published_at_when_recrawl_has_no_date():

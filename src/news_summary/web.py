@@ -346,9 +346,12 @@ def create_app() -> Flask:
                     "last_error": None,
                     "last_finished_at": None,
                     "last_auto_finished_at": None,
+                    "next_run_at": None,
+                    "gemini_cooldown_until": None,
                 }
             )
         status = auto_collector.snapshot()
+        cooldown_until = gemini_cooldown_until(store)
         return jsonify(
             {
                 "enabled": status.enabled,
@@ -362,6 +365,8 @@ def create_app() -> Flask:
                 "last_error": status.last_error,
                 "last_finished_at": status.last_finished_at,
                 "last_auto_finished_at": status.last_auto_finished_at,
+                "next_run_at": status.next_run_at,
+                "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
                 "run_count": status.run_count,
             }
         )

@@ -55,8 +55,12 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
     def init_db(self) -> None:
@@ -74,6 +78,7 @@ class Store:
             self._remove_news_brief_prefixes(conn)
             self._remove_leading_titles_from_bodies(conn)
             self._normalize_published_dates(conn)
+            self._ensure_single_draft_index(conn)
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -131,6 +136,25 @@ class Store:
                     "UPDATE press_releases SET published_at = ? WHERE id = ?",
                     (normalized, row["id"]),
                 )
+
+    def _ensure_single_draft_index(self, conn: sqlite3.Connection) -> None:
+        duplicate = conn.execute(
+            """
+            SELECT press_release_id
+            FROM article_drafts
+            GROUP BY press_release_id
+            HAVING COUNT(*) > 1
+            LIMIT 1
+            """
+        ).fetchone()
+        if duplicate:
+            return
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_article_drafts_press_release_id
+            ON article_drafts(press_release_id)
+            """
+        )
 
     def get_app_metadata(self, key: str) -> str | None:
         with self.connect() as conn:
@@ -231,9 +255,15 @@ class Store:
 
     def add_article_draft(self, draft: ArticleDraft) -> int:
         with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM article_drafts WHERE press_release_id = ?",
+                (draft.press_release_id,),
+            ).fetchone()
+            if existing:
+                return int(existing["id"])
             cur = conn.execute(
                 """
-                INSERT INTO article_drafts
+                INSERT OR IGNORE INTO article_drafts
                 (press_release_id, title, body, review_note, model, created_at,
                  initial_title, initial_body, initial_review_note, initial_model)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -251,7 +281,13 @@ class Store:
                     draft.model,
                 ),
             )
-            return int(cur.lastrowid)
+            if cur.lastrowid:
+                return int(cur.lastrowid)
+            existing = conn.execute(
+                "SELECT id FROM article_drafts WHERE press_release_id = ?",
+                (draft.press_release_id,),
+            ).fetchone()
+            return int(existing["id"]) if existing else 0
 
     def counts(self) -> dict[str, int]:
         with self.connect() as conn:

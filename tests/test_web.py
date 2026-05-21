@@ -482,6 +482,8 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2
     assert status["progress_total"] == 19
+    assert "next_run_at" in status
+    assert "gemini_cooldown_until" in status
 
 
 def test_draft_actions_can_advance_to_next_review_item(monkeypatch):

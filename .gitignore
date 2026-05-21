@@ -17,7 +17,9 @@ build/
 
 # Data / temporary files
 *.sqlite
+*.sqlite-*
 *.db
+*.db-*
 data/*.png
 data/backups/
 data/logs/
