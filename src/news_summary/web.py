@@ -179,6 +179,7 @@ def create_app() -> Flask:
             duplicate_titles=duplicate_titles,
             checks=approval_checks(draft, duplicate_titles),
             next_review_draft_id=_next_review_draft_id(store, current_id=draft_id),
+            gemini_cooldown_until=gemini_cooldown_until(store),
         )
 
     @app.get("/writing-settings")
@@ -250,6 +251,12 @@ def create_app() -> Flask:
         if not draft:
             flash("초안을 찾을 수 없습니다.")
             return redirect(url_for("dashboard"))
+
+        cooldown_until = gemini_cooldown_until(store)
+        if cooldown_until:
+            logger.info("gemini refine skipped cooldown draft_id=%s until=%s", draft_id, cooldown_until.isoformat())
+            flash(_gemini_refine_cooldown_message(cooldown_until))
+            return redirect(url_for("draft_detail", draft_id=draft_id))
 
         instruction = (request.form.get("refine_instruction") or "").strip()
         if not instruction:
@@ -802,6 +809,10 @@ def _next_review_draft_id(store: Store, current_id: int | None = None) -> int | 
 def _is_gemini_quota_message(message: str) -> bool:
     lowered = message.lower()
     return "429" in message or "resource_exhausted" in lowered or "quota" in lowered or "요청 한도" in message
+
+
+def _gemini_refine_cooldown_message(cooldown_until: datetime) -> str:
+    return f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until.isoformat())}까지 수동 다듬기를 보류합니다."
 
 
 def _sort_drafts_latest_first(drafts):

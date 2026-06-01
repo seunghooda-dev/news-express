@@ -728,6 +728,75 @@ def test_refine_route_updates_current_draft_with_gemini(monkeypatch):
     assert updated["model"] == "gemini-test:gemini-refine"
 
 
+def test_refine_route_reports_gemini_cooldown_without_calling_api(monkeypatch):
+    db_path = Path(f"data/.test_refine_cooldown_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    store = Store(db_path)
+    store.init_db()
+    press_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sinan",
+            source_name="신안군청 보도자료",
+            region="전남 신안",
+            title="교육 프로그램 운영",
+            url="https://example.com/refine-cooldown-test",
+            content="신안군 저녁노을미술관이 교육 프로그램을 운영한다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert press_release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=press_release_id,
+            title="기존 제목",
+            body="기존 본문입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.",
+            review_note="기존 메모",
+            model="gemini-test:gemini",
+        )
+    )
+    cooldown_until = datetime.now(LOCAL_TZ) + timedelta(minutes=20)
+    store.set_app_metadata("gemini_cooldown_until", cooldown_until.isoformat())
+
+    calls = []
+
+    def fail_refine(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("Gemini refine should not run during cooldown")
+
+    monkeypatch.setattr("news_summary.web.refine_draft_with_gemini", fail_refine)
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    detail_html = client.get(f"/drafts/{draft_id}").data.decode("utf-8")
+    assert "Gemini 쿨다운 중:" in detail_html
+    assert "수동 다듬기를 보류합니다." in detail_html
+    assert 'data-gemini-cooldown-until="' in detail_html
+
+    response = client.post(
+        f"/drafts/{draft_id}/refine",
+        data={
+            "title": "수정 중 제목",
+            "body": "수정 중 본문",
+            "review_note": "수정 중 메모",
+            "status": "needs_review",
+            "refine_instruction": "",
+            "preset_instruction": "",
+        },
+        follow_redirects=True,
+    )
+    html = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Gemini 쿨다운 중:" in html
+    assert "수동 다듬기를 보류합니다." in html
+    assert calls == []
+    assert Store(db_path).get_draft(draft_id)["title"] == "기존 제목"
+
+
 def test_restore_initial_draft_route_returns_first_gemini_version(monkeypatch):
     db_path = Path(f"data/.test_restore_initial_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

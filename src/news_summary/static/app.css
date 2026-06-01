@@ -660,6 +660,13 @@ h3 {
   font-size: 13px;
 }
 
+.refine-cooldown {
+  margin: 0;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .body-char-count {
   margin: -4px 0 2px;
   color: var(--muted);

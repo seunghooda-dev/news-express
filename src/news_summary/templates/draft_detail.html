@@ -31,7 +31,7 @@
     <p>{{ draft.original_content }}</p>
   </article>
 
-  <form id="draft-editor" class="editor" method="post" action="{{ url_for('update_draft', draft_id=draft.id) }}" data-refine-url="{{ url_for('refine_draft', draft_id=draft.id) }}" data-initial-url="{{ url_for('restore_initial_draft', draft_id=draft.id) }}">
+  <form id="draft-editor" class="editor" method="post" action="{{ url_for('update_draft', draft_id=draft.id) }}" data-refine-url="{{ url_for('refine_draft', draft_id=draft.id) }}" data-initial-url="{{ url_for('restore_initial_draft', draft_id=draft.id) }}" data-gemini-cooldown-until="{{ gemini_cooldown_until.isoformat() if gemini_cooldown_until else '' }}">
     <label for="title">제목</label>
     <input id="title" name="title" value="{{ draft.title }}">
 
@@ -58,6 +58,9 @@
         <button id="refine-submit" type="submit" formaction="{{ url_for('refine_draft', draft_id=draft.id) }}" formmethod="post">Gemini로 다시 다듬기</button>
         <span id="refine-status" class="refine-status" aria-live="polite" hidden>다듬는 중...</span>
       </div>
+      {% if gemini_cooldown_until %}
+        <p class="refine-cooldown">Gemini 쿨다운 중: {{ gemini_cooldown_until.isoformat()|date_label }}까지 수동 다듬기를 보류합니다.</p>
+      {% endif %}
     </div>
 
     <label for="status">상태</label>
@@ -97,11 +100,18 @@
     const refineStatus = document.querySelector("#refine-status");
     const refineUrl = form?.dataset.refineUrl;
     const initialUrl = form?.dataset.initialUrl;
+    const cooldownUntil = form?.dataset.geminiCooldownUntil || "";
     if (!form || !instruction || !preset || !refineUrl || !initialUrl) return;
 
     const updateBodyCount = () => {
       if (!body || !bodyCount) return;
       bodyCount.textContent = Array.from(body.value.replace(/\r\n/g, "\n")).length;
+    };
+
+    const isCooldownActive = () => {
+      if (!cooldownUntil) return false;
+      const timestamp = Date.parse(cooldownUntil);
+      return Number.isFinite(timestamp) && timestamp > Date.now();
     };
 
     const selectRefineInstruction = (button) => {
@@ -122,6 +132,7 @@
         refineSubmit.disabled = true;
       }
       if (refineStatus) {
+        refineStatus.textContent = isCooldownActive() ? "Gemini 쿨다운 중..." : "다듬는 중...";
         refineStatus.hidden = false;
       }
       if (form.requestSubmit) {
