@@ -31,6 +31,14 @@ def main() -> None:
     export = sub.add_parser("export", help="승인된 초안을 파일로 내보냅니다.")
     export.add_argument("--output-dir", default="exports", help="내보낼 폴더")
 
+    backup = sub.add_parser("backup", help="운영 데이터를 zip 백업으로 저장합니다.")
+    backup.add_argument("--output-dir", default="data/backups", help="백업 파일을 저장할 폴더")
+
+    restore = sub.add_parser("restore", help="백업 zip에서 운영 데이터를 복구합니다.")
+    restore.add_argument("backup_path", help="복구할 백업 zip 파일")
+    restore.add_argument("--yes", action="store_true", help="확인 질문 없이 복구합니다.")
+    restore.add_argument("--dry-run", action="store_true", help="복구 대상 파일만 확인합니다.")
+
     serve = sub.add_parser("serve", help="로컬 검수 화면을 실행합니다.")
     serve.add_argument("--host", default="127.0.0.1", help="실행할 호스트")
     serve.add_argument("--port", type=int, default=5000, help="실행할 포트")
@@ -61,6 +69,10 @@ def main() -> None:
         show_sources(config_path)
     elif args.command == "export":
         export_command(store, env_path("NEWS_SUMMARY_EXPORT_DIR", args.output_dir))
+    elif args.command == "backup":
+        backup_command(store, env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"), env_path("NEWS_SUMMARY_BACKUP_DIR", args.output_dir))
+    elif args.command == "restore":
+        restore_command(args.backup_path, args.yes, args.dry_run)
     elif args.command == "serve":
         logger.info("serve command host=%s port=%s", args.host, args.port)
         serve_command(args.host, args.port)
@@ -103,6 +115,32 @@ def export_command(store: Store, output_dir) -> None:
     print(f"승인 기사 {count}건을 내보냈습니다.")
     print(f"마크다운 파일: {markdown_path}")
     print(f"표 파일: {csv_path}")
+
+
+def backup_command(store: Store, db_path, output_dir) -> None:
+    from pathlib import Path
+
+    from .backup import create_backup
+
+    store.init_db()
+    backup_path = create_backup(Path.cwd(), Path(db_path), Path(output_dir))
+    print(f"백업 완료: {backup_path}")
+
+
+def restore_command(backup_path: str, yes: bool, dry_run: bool) -> None:
+    from pathlib import Path
+
+    from .backup import restore_backup
+
+    if not dry_run and not yes:
+        raise SystemExit("복구하려면 --yes 옵션을 함께 지정하세요.")
+    restored = restore_backup(Path.cwd(), Path(backup_path), dry_run=dry_run)
+    if dry_run:
+        print("복구 대상 파일:")
+    else:
+        print("복구 완료:")
+    for name in restored:
+        print(f"- {name}")
 
 
 def serve_command(host: str, port: int) -> None:

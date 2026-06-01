@@ -48,6 +48,7 @@ a {
 
 .topbar nav {
   display: flex;
+  align-items: center;
   gap: 18px;
 }
 
@@ -55,6 +56,25 @@ a {
   color: #f5f7fb;
   font-size: 14px;
   text-decoration: none;
+}
+
+.nav-form {
+  margin: 0;
+}
+
+.nav-form button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f5f7fb;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.nav-form button:hover {
+  background: transparent;
+  text-decoration: underline;
 }
 
 .page {
@@ -755,6 +775,81 @@ h3 {
 .ops-log p {
   margin: 0;
   color: var(--muted);
+  font-size: 13px;
+}
+
+.ops-log-view,
+.auth-panel,
+.source-health,
+.draft-history {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.auth-panel {
+  width: min(460px, 100%);
+}
+
+.auth-panel form,
+.draft-history article {
+  display: grid;
+  gap: 10px;
+}
+
+.ops-log-view pre {
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.source-health p,
+.draft-history p {
+  margin: 0;
+}
+
+.source-health p:first-of-type,
+.draft-history article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.draft-history h2,
+.source-health h2,
+.ops-log-view h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.draft-history article {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.draft-history article:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.draft-history button {
+  justify-self: start;
+  min-height: 32px;
+  padding: 5px 9px;
   font-size: 13px;
 }
 

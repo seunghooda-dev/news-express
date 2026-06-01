@@ -46,6 +46,31 @@ CREATE TABLE IF NOT EXISTS app_metadata (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS draft_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    review_note TEXT NOT NULL,
+    status TEXT NOT NULL,
+    model TEXT NOT NULL,
+    change_type TEXT NOT NULL,
+    changed_at TEXT NOT NULL,
+    FOREIGN KEY (draft_id) REFERENCES article_drafts(id)
+);
+
+CREATE TABLE IF NOT EXISTS source_collection_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL,
+    releases_found INTEGER NOT NULL DEFAULT 0,
+    inserted_count INTEGER NOT NULL DEFAULT 0,
+    repaired_dates INTEGER NOT NULL DEFAULT 0,
+    checked_at TEXT NOT NULL
+);
 """
 
 
@@ -79,6 +104,10 @@ class Store:
             self._remove_leading_titles_from_bodies(conn)
             self._normalize_published_dates(conn)
             self._ensure_single_draft_index(conn)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id DESC)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id DESC)"
+            )
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -432,8 +461,12 @@ class Store:
         review_note: str,
         status: str,
         model: str | None = None,
+        change_type: str = "manual",
     ) -> None:
         with self.connect() as conn:
+            previous = conn.execute("SELECT * FROM article_drafts WHERE id = ?", (draft_id,)).fetchone()
+            if previous and _draft_changed(previous, title, body, review_note, status, model):
+                self._record_draft_history(conn, previous, change_type)
             if model is None:
                 conn.execute(
                     """
@@ -455,6 +488,9 @@ class Store:
 
     def restore_initial_draft(self, draft_id: int, status: str) -> None:
         with self.connect() as conn:
+            previous = conn.execute("SELECT * FROM article_drafts WHERE id = ?", (draft_id,)).fetchone()
+            if previous:
+                self._record_draft_history(conn, previous, "restore_initial")
             conn.execute(
                 """
                 UPDATE article_drafts
@@ -471,6 +507,9 @@ class Store:
 
     def set_draft_status(self, draft_id: int, status: str) -> None:
         with self.connect() as conn:
+            previous = conn.execute("SELECT * FROM article_drafts WHERE id = ?", (draft_id,)).fetchone()
+            if previous and previous["status"] != status:
+                self._record_draft_history(conn, previous, "status")
             conn.execute(
                 "UPDATE article_drafts SET status = ?, updated_at = ? WHERE id = ?",
                 (status, _now(), draft_id),
@@ -506,9 +545,116 @@ class Store:
                 (_now(), *draft_ids),
             )
 
+    def draft_history(self, draft_id: int, limit: int = 20) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM draft_history
+                WHERE draft_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (draft_id, limit),
+            ).fetchall()
+
+    def get_draft_history_item(self, draft_id: int, history_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM draft_history
+                WHERE draft_id = ? AND id = ?
+                """,
+                (draft_id, history_id),
+            ).fetchone()
+
+    def record_source_collection_status(
+        self,
+        source_id: str,
+        source_name: str,
+        status: str,
+        message: str,
+        releases_found: int = 0,
+        inserted_count: int = 0,
+        repaired_dates: int = 0,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    source_name,
+                    status,
+                    message,
+                    max(0, releases_found),
+                    max(0, inserted_count),
+                    max(0, repaired_dates),
+                    _now(),
+                ),
+            )
+
+    def latest_source_collection_statuses(self) -> dict[str, sqlite3.Row]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT scr.*
+                FROM source_collection_runs scr
+                JOIN (
+                    SELECT source_id, MAX(id) AS max_id
+                    FROM source_collection_runs
+                    GROUP BY source_id
+                ) latest ON latest.max_id = scr.id
+                """
+            ).fetchall()
+        return {str(row["source_id"]): row for row in rows}
+
+    def _record_draft_history(self, conn: sqlite3.Connection, row: sqlite3.Row, change_type: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO draft_history
+            (draft_id, title, body, review_note, status, model, change_type, changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"],
+                row["title"],
+                row["body"],
+                row["review_note"],
+                row["status"],
+                row["model"],
+                change_type,
+                _now(),
+            ),
+        )
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _draft_changed(
+    previous: sqlite3.Row,
+    title: str,
+    body: str,
+    review_note: str,
+    status: str,
+    model: str | None,
+) -> bool:
+    next_model = previous["model"] if model is None else model
+    return any(
+        (
+            previous["title"] != title,
+            previous["body"] != body,
+            previous["review_note"] != review_note,
+            previous["status"] != status,
+            previous["model"] != next_model,
+        )
+    )
 
 
 def _strip_leading_body_title(body: str | None, title: str | None) -> str | None:

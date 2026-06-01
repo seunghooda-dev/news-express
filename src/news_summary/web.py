@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import re
+import os
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
 
+from .auth import auth_config, set_admin_password, verify_admin_password
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
-from .service import collect_and_draft_cycle, collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, mark_gemini_cooldown
+from .service import (
+    GEMINI_COOLDOWN_REASON_KEY,
+    collect_and_draft_cycle,
+    collect_enabled_sources,
+    draft_pending_releases,
+    gemini_cooldown_until,
+    mark_gemini_cooldown,
+)
 from .settings import env_path, load_environment, load_sources
 from .storage import Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
@@ -28,14 +37,15 @@ LOCAL_TZ = timezone(timedelta(hours=9))
 DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
+AUTH_EXEMPT_ENDPOINTS = {"favicon", "login", "logout", "admin_setup", "static"}
 
 
 def create_app() -> Flask:
     load_environment()
-    configure_logging()
+    log_path = configure_logging()
     logger = get_logger("web")
     app = Flask(__name__)
-    app.secret_key = "local-news-summary-review"
+    app.secret_key = os.getenv("NEWS_SUMMARY_SECRET_KEY", "local-news-summary-review")
     app.jinja_env.globals["status_label"] = status_label
     app.jinja_env.globals["status_badge_class"] = status_badge_class
     app.jinja_env.globals["model_label"] = model_label
@@ -44,6 +54,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["review_flags"] = review_flags
     app.jinja_env.globals["approval_checks"] = approval_checks
     app.jinja_env.globals["body_character_count"] = body_character_count
+    app.jinja_env.globals["change_type_label"] = change_type_label
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
@@ -52,6 +63,28 @@ def create_app() -> Flask:
     store.init_db()
     source_options = load_sources(config_path)
     store.sync_source_metadata(source_options)
+    app.config["NEWS_SUMMARY_LOG_PATH"] = log_path
+
+    @app.context_processor
+    def inject_auth_state():
+        return {
+            "auth_state": auth_config(store),
+            "admin_authenticated": bool(session.get("admin_authenticated")),
+        }
+
+    @app.before_request
+    def require_admin_login():
+        endpoint = request.endpoint or ""
+        if endpoint in AUTH_EXEMPT_ENDPOINTS:
+            return None
+        config = auth_config(store)
+        if not config.enabled:
+            return None
+        if config.setup_required:
+            return redirect(url_for("admin_setup", next=_current_next_path()))
+        if session.get("admin_authenticated"):
+            return None
+        return redirect(url_for("login", next=_current_next_path()))
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(exc: Exception):
@@ -82,6 +115,65 @@ def create_app() -> Flask:
     @app.get("/favicon.ico")
     def favicon():
         return Response(status=204)
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        config = auth_config(store)
+        if not config.enabled:
+            flash("관리자 비밀번호가 아직 설정되지 않아 로컬 잠금이 비활성화되어 있습니다.")
+            return redirect(url_for("admin_setup"))
+        if config.setup_required:
+            return redirect(url_for("admin_setup", next=_safe_next()))
+        if request.method == "POST":
+            password = request.form.get("password") or ""
+            if verify_admin_password(store, password):
+                session["admin_authenticated"] = True
+                logger.info("admin login succeeded remote_addr=%s", request.remote_addr)
+                return redirect(_safe_next())
+            logger.warning("admin login failed remote_addr=%s", request.remote_addr)
+            flash("관리자 비밀번호가 올바르지 않습니다.")
+        return render_template("login.html", next_url=_safe_next())
+
+    @app.post("/logout")
+    def logout():
+        session.pop("admin_authenticated", None)
+        flash("로그아웃했습니다.")
+        return redirect(url_for("login"))
+
+    @app.route("/admin/setup", methods=["GET", "POST"])
+    def admin_setup():
+        config = auth_config(store)
+        if config.source == "environment":
+            flash(".env의 관리자 비밀번호 설정이 우선 적용 중입니다.")
+            return redirect(url_for("dashboard") if session.get("admin_authenticated") else url_for("login"))
+        if config.enabled and not session.get("admin_authenticated"):
+            return redirect(url_for("login", next=url_for("admin_setup")))
+        if request.method == "POST":
+            password = request.form.get("password") or ""
+            confirm = request.form.get("confirm_password") or ""
+            if len(password) < 8:
+                flash("관리자 비밀번호는 8자 이상이어야 합니다.")
+            elif password != confirm:
+                flash("비밀번호 확인이 일치하지 않습니다.")
+            else:
+                set_admin_password(store, password)
+                session["admin_authenticated"] = True
+                logger.info("admin password configured remote_addr=%s", request.remote_addr)
+                flash("관리자 로그인을 활성화했습니다.")
+                return redirect(url_for("dashboard"))
+        return render_template("admin_setup.html", auth_state=config, next_url=_safe_next())
+
+    @app.get("/ops-logs")
+    def ops_logs():
+        log_path = Path(app.config["NEWS_SUMMARY_LOG_PATH"])
+        lines = _recent_log_lines(log_path, limit=250)
+        important_lines = [line for line in lines if " ERROR " in line or " WARNING " in line][-80:]
+        return render_template(
+            "ops_logs.html",
+            log_path=log_path,
+            log_lines=lines,
+            important_lines=important_lines,
+        )
 
     @app.get("/gemini-usage")
     def gemini_usage():
@@ -180,6 +272,7 @@ def create_app() -> Flask:
             checks=approval_checks(draft, duplicate_titles),
             next_review_draft_id=_next_review_draft_id(store, current_id=draft_id),
             gemini_cooldown_until=gemini_cooldown_until(store),
+            draft_history=store.draft_history(draft_id),
         )
 
     @app.get("/writing-settings")
@@ -219,6 +312,7 @@ def create_app() -> Flask:
             body=request.form.get("body", "").strip(),
             review_note=request.form.get("review_note", "").strip(),
             status=status,
+            change_type=_draft_change_type(action, status),
         )
         logger.info("draft updated draft_id=%s status=%s", draft_id, status)
         flash("초안을 저장했습니다.")
@@ -228,6 +322,25 @@ def create_app() -> Flask:
                 return redirect(url_for("draft_detail", draft_id=next_draft_id))
             flash("다음 검수 대기 초안이 없습니다.")
             return redirect(url_for("drafts", status="needs_review"))
+        return redirect(url_for("draft_detail", draft_id=draft_id))
+
+    @app.post("/drafts/<int:draft_id>/history/<int:history_id>/restore")
+    def restore_draft_history(draft_id: int, history_id: int):
+        history = store.get_draft_history_item(draft_id, history_id)
+        if not history:
+            flash("복구할 이력을 찾을 수 없습니다.")
+            return redirect(url_for("draft_detail", draft_id=draft_id))
+        store.update_draft(
+            draft_id=draft_id,
+            title=history["title"],
+            body=history["body"],
+            review_note=history["review_note"],
+            status=history["status"],
+            model=history["model"],
+            change_type="history_restore",
+        )
+        logger.info("draft history restored draft_id=%s history_id=%s", draft_id, history_id)
+        flash("선택한 이전 버전으로 복구했습니다.")
         return redirect(url_for("draft_detail", draft_id=draft_id))
 
     @app.post("/drafts/<int:draft_id>/restore-initial")
@@ -282,7 +395,7 @@ def create_app() -> Flask:
             suffix = f" 시도한 모델: {models}" if models else ""
             logger.warning("gemini refine failed draft_id=%s models=%s error=%s", draft_id, models, exc)
             if _is_gemini_quota_message(str(exc)):
-                cooldown_until = mark_gemini_cooldown(store)
+                cooldown_until = mark_gemini_cooldown(store, reason=f"수동 다듬기 한도 초과: {exc}")
                 flash(f"Gemini 요청 한도 감지로 {format_datetime_label(cooldown_until.isoformat())}까지 다듬기를 보류합니다.")
             flash(f"{exc}{suffix}")
             return redirect(url_for("draft_detail", draft_id=draft_id))
@@ -298,6 +411,7 @@ def create_app() -> Flask:
             review_note=refined.review_note,
             status=status,
             model=refined.model,
+            change_type="gemini_refine",
         )
         logger.info("gemini refine succeeded draft_id=%s model=%s status=%s", draft_id, refined.model, status)
         flash("Gemini가 요청한 방향으로 초안을 다시 다듬었습니다.")
@@ -419,6 +533,38 @@ def _positive_int(value: str | None, default: int) -> int:
     except ValueError:
         return default
     return max(1, min(parsed, 100))
+
+
+def _current_next_path() -> str:
+    return request.full_path.rstrip("?") if request.query_string else request.path
+
+
+def _safe_next(default_endpoint: str = "dashboard") -> str:
+    target = request.args.get("next") or request.form.get("next") or url_for(default_endpoint)
+    if not target.startswith("/") or target.startswith("//"):
+        return url_for(default_endpoint)
+    return target
+
+
+def _draft_change_type(action: str, status: str) -> str:
+    if action in {"approved", "approved_next"} or status == "approved":
+        return "approval"
+    if action in {"rejected", "rejected_next"} or status == "rejected":
+        return "rejection"
+    return "manual"
+
+
+def change_type_label(change_type: str | None) -> str:
+    labels = {
+        "manual": "수동 수정",
+        "approval": "승인 변경",
+        "rejection": "반려 변경",
+        "gemini_refine": "Gemini 다듬기",
+        "restore_initial": "처음 초안 복구",
+        "history_restore": "이전 버전 복구",
+        "status": "상태 변경",
+    }
+    return labels.get(change_type or "", change_type or "변경")
 
 
 def status_label(status: str) -> str:
@@ -676,6 +822,7 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
         "last_error": getattr(auto_status, "last_error", None) if auto_status else None,
         "reset_at": reset_at.isoformat() if reset_at else None,
         "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+        "cooldown_reason": store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None,
     }
 
 
@@ -695,6 +842,7 @@ def _duplicate_titles(store: Store) -> set[str]:
 def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:
     sources = [source for source in load_sources(config_path) if source.enabled]
     today = datetime.now(LOCAL_TZ).date()
+    source_statuses = store.latest_source_collection_statuses()
     with store.connect() as conn:
         stats = {
             row["source_id"]: row
@@ -738,9 +886,18 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
     for source in sources:
         stat = stats.get(source.id)
         latest_row = latest.get(source.id)
+        status_row = source_statuses.get(source.id)
         releases = int(stat["releases"]) if stat else 0
         issue = ""
-        if releases == 0:
+        last_status = str(status_row["status"]) if status_row else ""
+        last_checked_at = status_row["checked_at"] if status_row else None
+        last_message = status_row["message"] if status_row else ""
+        last_checked_datetime = _parse_datetime(last_checked_at)
+        if last_status == "failed":
+            issue = "수집 실패"
+        elif last_checked_datetime and last_checked_datetime < datetime.now(LOCAL_TZ) - timedelta(days=2):
+            issue = "점검 지연"
+        elif releases == 0:
             issue = "수집 없음"
         elif releases < 3:
             issue = "수집량 적음"
@@ -755,6 +912,9 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "today_releases": today_counts.get(source.id, 0),
                 "last_collected": stat["last_collected"] if stat else None,
                 "issue": issue,
+                "last_status": last_status or "unknown",
+                "last_checked_at": last_checked_at,
+                "last_message": last_message,
             }
         )
     return summaries
@@ -773,6 +933,9 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "today_releases": 0,
         "last_collected": None,
         "issue": "수집 없음",
+        "last_status": "unknown",
+        "last_checked_at": None,
+        "last_message": "",
     }
 
 
@@ -813,6 +976,15 @@ def _is_gemini_quota_message(message: str) -> bool:
 
 def _gemini_refine_cooldown_message(cooldown_until: datetime) -> str:
     return f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until.isoformat())}까지 수동 다듬기를 보류합니다."
+
+
+def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
+    if not log_path.exists():
+        return []
+    try:
+        return log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    except OSError:
+        return ["운영 로그 파일을 읽을 수 없습니다."]
 
 
 def _sort_drafts_latest_first(drafts):

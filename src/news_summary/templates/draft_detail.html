@@ -87,6 +87,24 @@
         </span>
       {% endfor %}
     </section>
+
+    <section class="draft-history">
+      <h2>수정 이력</h2>
+      {% for item in draft_history %}
+        <article>
+          <div>
+            <strong>{{ change_type_label(item.change_type) }}</strong>
+            <span>{{ item.changed_at|date_label }}</span>
+          </div>
+          <p>{{ item.title }}</p>
+          <form method="post" action="{{ url_for('restore_draft_history', draft_id=draft.id, history_id=item.id) }}">
+            <button class="secondary" type="submit">이 버전으로 복구</button>
+          </form>
+        </article>
+      {% else %}
+        <p class="empty">아직 저장된 수정 이력이 없습니다.</p>
+      {% endfor %}
+    </section>
   </form>
 </section>
 <script>

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="auth-panel">
+  <h1>관리자 로그인</h1>
+  <form method="post" action="{{ url_for('login') }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <label for="password">관리자 비밀번호</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit">로그인</button>
+  </form>
+</section>
+{% endblock %}

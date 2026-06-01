@@ -18,6 +18,7 @@ cd "C:\Users\seung\news summary"
 ```
 
 브라우저에서 `http://127.0.0.1:5000`을 열면 검수 화면을 볼 수 있습니다.
+바탕화면 바로가기는 `scripts\start_news_express.ps1`을 사용하며, 서버가 꺼져 있으면 자동으로 다시 실행합니다.
 
 `.env`에 `GEMINI_API_KEY`를 넣으면 Gemini가 기사 초안을 생성합니다. 키가 없으면 규칙 기반 방송 단신 초안으로 동작합니다.
 검수 화면을 실행하면 자동 수집이 기본으로 켜져 매시간 정각마다 전체 기관 보도자료를 확인하고, 새 원문은 Gemini 기사 초안으로 만들어 검수 대기에 추가합니다.
@@ -75,7 +76,25 @@ NEWS_SUMMARY_AUTO_COLLECT=1
 NEWS_SUMMARY_AUTO_COLLECT_LIMIT=10
 NEWS_SUMMARY_AUTO_DRAFT_LIMIT=250
 NEWS_SUMMARY_AUTO_REQUIRE_GEMINI=1
+NEWS_SUMMARY_ADMIN_PASSWORD=
+NEWS_SUMMARY_AUTH_REQUIRED=0
+NEWS_SUMMARY_BACKUP_DIR=data/backups
+NEWS_SUMMARY_LOG_DIR=data/logs
 ```
+
+`NEWS_SUMMARY_ADMIN_PASSWORD` 값을 설정하면 관리자 로그인이 강제됩니다. 운영 로그는 홈 화면에 표시하지 않고 `/ops-logs` 경로에서 확인합니다.
+
+## 백업과 자동 실행
+
+```powershell
+.\scripts\backup_news_express.ps1
+.\scripts\restore_news_express.ps1 -BackupPath data\backups\백업파일.zip -DryRun
+.\scripts\restore_news_express.ps1 -BackupPath data\backups\백업파일.zip
+.\scripts\install_startup_task.ps1
+```
+
+- 백업 대상: SQLite DB, 기사 설정, 수집 설정, `.env`, `exports/`
+- `install_startup_task.ps1`은 Windows 작업 스케줄러에 5분마다 서버 생존 확인 작업을 등록합니다.
 
 ## 검수 화면
 
@@ -86,6 +105,7 @@ NEWS_SUMMARY_AUTO_REQUIRE_GEMINI=1
 - 주의 필요, 오늘 기사, 신청·모집, 행사·교육, 지원·예산, 사진·카드뉴스, 게시일 확인 필터로 검수 우선순위 정리
 - 원문과 기사 초안을 좌우로 비교
 - 제목, 본문, 검수 메모 수정
+- 본문 총 글자수와 초안 수정 이력 확인
 - 승인 전 체크리스트로 날짜, 형식, 원문 길이, 신청 정보 반영 여부 확인
 - 검수 대기, 승인, 반려 상태 변경
 - 승인된 기사 마크다운/표 파일 내보내기

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <div>
+    <h1>운영 로그</h1>
+    <p class="meta">{{ log_path }}</p>
+  </div>
+  <div class="section-actions">
+    <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
+  </div>
+</section>
+
+<section class="ops-log-view">
+  <h2>최근 경고·오류</h2>
+  {% if important_lines %}
+    <pre>{% for line in important_lines %}{{ line }}
+{% endfor %}</pre>
+  {% else %}
+    <p class="empty">최근 경고나 오류가 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="ops-log-view">
+  <h2>최근 전체 로그</h2>
+  {% if log_lines %}
+    <pre>{% for line in log_lines %}{{ line }}
+{% endfor %}</pre>
+  {% else %}
+    <p class="empty">아직 기록된 로그가 없습니다.</p>
+  {% endif %}
+</section>
+{% endblock %}

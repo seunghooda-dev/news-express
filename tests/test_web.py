@@ -325,6 +325,85 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
 
+def test_source_status_records_collection_failures(monkeypatch):
+    db_path = Path(f"data/.test_source_status_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.record_source_collection_status(
+        "gwangju-city",
+        "광주광역시청 보도자료",
+        "failed",
+        "광주광역시청 보도자료 수집 실패: 타임아웃",
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/").data.decode("utf-8")
+    detail_html = client.get("/sources/gwangju-city").data.decode("utf-8")
+
+    assert "수집 실패" in dashboard_html
+    assert "최근 수집 점검" in detail_html
+    assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
+
+
+def test_admin_login_is_required_when_password_is_configured(monkeypatch):
+    db_path = Path(f"data/.test_admin_login_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+
+    wrong = client.post("/login", data={"password": "wrong"}, follow_redirects=True)
+    assert "관리자 비밀번호가 올바르지 않습니다." in wrong.data.decode("utf-8")
+
+    right = client.post("/login", data={"password": "secret1234", "next": "/"}, follow_redirects=True)
+    html = right.data.decode("utf-8")
+    assert right.status_code == 200
+    assert "대시보드" in html
+    assert "로그아웃" in html
+
+    logout = client.post("/logout", follow_redirects=False)
+    assert logout.status_code == 302
+
+
+def test_admin_setup_enables_login_without_env_password(monkeypatch):
+    db_path = Path(f"data/.test_admin_setup_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    setup = client.post(
+        "/admin/setup",
+        data={"password": "secret1234", "confirm_password": "secret1234"},
+        follow_redirects=True,
+    )
+    assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
+
+    client.post("/logout")
+    protected = client.get("/", follow_redirects=False)
+    assert protected.status_code == 302
+    assert "/login" in protected.headers["Location"]
+
+
 def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     db_path = Path(f"data/.test_source_detail_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -397,6 +476,30 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
 
     assert response.status_code == 200
     assert calls == [{"collect_limit": 7, "draft_limit": 250, "require_gemini": True}]
+
+
+def test_ops_logs_page_shows_recent_warnings(monkeypatch, tmp_path):
+    db_path = Path(f"data/.test_ops_logs_page_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_LOG_DIR", str(tmp_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    log_path = tmp_path / "news_summary.log"
+    log_path.write_text(
+        "2026-06-02 INFO [news_summary.test] 정상 로그\n"
+        "2026-06-02 WARNING [news_summary.test] 수집 실패 테스트\n",
+        encoding="utf-8",
+    )
+    client = app.test_client()
+
+    html = client.get("/ops-logs").data.decode("utf-8")
+
+    assert "운영 로그" in html
+    assert "최근 경고·오류" in html
+    assert "수집 실패 테스트" in html
 
 
 def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
@@ -588,6 +691,66 @@ def test_draft_actions_can_advance_to_next_review_item(monkeypatch):
 
     assert response.headers["Location"].endswith(f"/drafts/{draft_ids[0]}")
     assert Store(db_path).get_draft(draft_ids[-1])["status"] == "approved"
+
+
+def test_draft_history_records_and_restores_previous_version(monkeypatch):
+    db_path = Path(f"data/.test_draft_history_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangju-city",
+            source_name="광주광역시청 보도자료",
+            region="광주",
+            title="이력 테스트 원문",
+            url="https://example.com/history-test",
+            content="광주시는 새 사업을 추진한다고 밝혔다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="처음 제목",
+            body="처음 본문입니다.",
+            review_note="처음 메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    update = client.post(
+        f"/drafts/{draft_id}",
+        data={
+            "title": "수정 제목",
+            "body": "수정 본문입니다.",
+            "review_note": "수정 메모",
+            "status": "needs_review",
+        },
+        follow_redirects=True,
+    )
+    html = update.data.decode("utf-8")
+    assert "수정 이력" in html
+    assert "처음 제목" in html
+    history = Store(db_path).draft_history(draft_id)
+    assert len(history) == 1
+
+    restore = client.post(
+        f"/drafts/{draft_id}/history/{history[0]['id']}/restore",
+        follow_redirects=True,
+    )
+
+    assert restore.status_code == 200
+    restored = Store(db_path).get_draft(draft_id)
+    assert restored["title"] == "처음 제목"
+    assert len(Store(db_path).draft_history(draft_id)) == 2
 
 
 def test_export_defaults_to_unexported_and_supports_today_scope(monkeypatch):

@@ -18,6 +18,7 @@ from .writer import GeminiDraftError, generate_draft
 ProgressCallback = Callable[[dict[str, object]], None]
 logger = get_logger("service")
 GEMINI_COOLDOWN_UNTIL_KEY = "gemini_cooldown_until"
+GEMINI_COOLDOWN_REASON_KEY = "gemini_cooldown_reason"
 DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
 
 
@@ -50,7 +51,9 @@ def collect_enabled_sources(
         try:
             releases = collect_source(source, limit=limit)
         except CollectionError as exc:
-            messages.append(f"{source.name} 수집 실패: {exc}")
+            message = f"{source.name} 수집 실패: {exc}"
+            messages.append(message)
+            store.record_source_collection_status(source.id, source.name, "failed", message)
             logger.warning("source collection failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
             _report_progress(
                 progress_callback,
@@ -62,7 +65,9 @@ def collect_enabled_sources(
             )
             continue
         except Exception as exc:
-            messages.append(f"{source.name} 수집 실패: {type(exc).__name__}: {exc}")
+            message = f"{source.name} 수집 실패: {type(exc).__name__}: {exc}"
+            messages.append(message)
+            store.record_source_collection_status(source.id, source.name, "failed", message)
             logger.exception("source collection unexpected failure source_id=%s source_name=%s", source.id, source.name)
             _report_progress(
                 progress_callback,
@@ -83,6 +88,15 @@ def collect_enabled_sources(
         messages.append(f"{source.name}: 원문 검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건")
         if repaired_dates:
             messages.append(f"{source.name}: 누락 게시일 {repaired_dates}건 보정")
+        store.record_source_collection_status(
+            source.id,
+            source.name,
+            "ok",
+            f"원문 검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건",
+            releases_found=len(releases),
+            inserted_count=source_inserted,
+            repaired_dates=repaired_dates,
+        )
         logger.info(
             "source collection succeeded source_id=%s source_name=%s releases=%s inserted=%s repaired_dates=%s",
             source.id,
@@ -214,7 +228,7 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
                 exc,
             )
             if _is_gemini_quota_message(str(exc)):
-                cooldown_until = mark_gemini_cooldown(store)
+                cooldown_until = mark_gemini_cooldown(store, reason=f"자동 초안 생성 한도 초과: {exc}")
                 messages.append(_gemini_cooldown_message(cooldown_until))
                 logger.warning("gemini cooldown started until=%s", cooldown_until.isoformat())
                 break
@@ -252,10 +266,12 @@ def gemini_cooldown_until(store: Store) -> datetime | None:
 
 def mark_gemini_cooldown(
     store: Store,
+    reason: str = "Gemini 요청 한도 감지",
     seconds: int = DEFAULT_GEMINI_COOLDOWN_SECONDS,
 ) -> datetime:
     cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
     store.set_app_metadata(GEMINI_COOLDOWN_UNTIL_KEY, cooldown_until.isoformat())
+    store.set_app_metadata(GEMINI_COOLDOWN_REASON_KEY, reason)
     return cooldown_until
 
 
