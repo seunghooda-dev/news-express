@@ -660,6 +660,18 @@ h3 {
   font-size: 13px;
 }
 
+.body-char-count {
+  margin: -4px 0 2px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+.body-char-count span {
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

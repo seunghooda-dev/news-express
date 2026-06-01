@@ -37,6 +37,9 @@
 
     <label for="body">본문</label>
     <textarea id="body" name="body" rows="16">{{ draft.body }}</textarea>
+    <p id="body-char-count" class="body-char-count" aria-live="polite">
+      본문 총 글자수: <span id="body-char-count-value">{{ body_character_count(draft.body) }}</span>자
+    </p>
 
     <label for="review_note">검수 메모</label>
     <textarea id="review_note" name="review_note" rows="5">{{ draft.review_note }}</textarea>
@@ -86,6 +89,8 @@
 <script>
   (() => {
     const form = document.querySelector("#draft-editor");
+    const body = document.querySelector("#body");
+    const bodyCount = document.querySelector("#body-char-count-value");
     const instruction = document.querySelector("#refine_instruction");
     const preset = document.querySelector("#preset_instruction");
     const refineSubmit = document.querySelector("#refine-submit");
@@ -93,6 +98,11 @@
     const refineUrl = form?.dataset.refineUrl;
     const initialUrl = form?.dataset.initialUrl;
     if (!form || !instruction || !preset || !refineUrl || !initialUrl) return;
+
+    const updateBodyCount = () => {
+      if (!body || !bodyCount) return;
+      bodyCount.textContent = Array.from(body.value.replace(/\r\n/g, "\n")).length;
+    };
 
     const selectRefineInstruction = (button) => {
       const value = button.dataset.refineInstruction || "";
@@ -138,6 +148,9 @@
     document.querySelectorAll("[data-refine-instruction]").forEach((button) => {
       button.addEventListener("click", () => selectRefineInstruction(button));
     });
+
+    body?.addEventListener("input", updateBodyCount);
+    updateBodyCount();
 
     document.querySelector("#refine-submit")?.addEventListener("click", (event) => {
       event.preventDefault();

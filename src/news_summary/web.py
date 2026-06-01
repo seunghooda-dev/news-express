@@ -43,6 +43,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["interval_label"] = interval_label
     app.jinja_env.globals["review_flags"] = review_flags
     app.jinja_env.globals["approval_checks"] = approval_checks
+    app.jinja_env.globals["body_character_count"] = body_character_count
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
@@ -457,6 +458,10 @@ def interval_label(seconds: int | None) -> str:
         minutes = seconds // 60
         return "1분마다" if minutes == 1 else f"{minutes}분마다"
     return f"{seconds}초마다"
+
+
+def body_character_count(value: object) -> int:
+    return len(str(value or "").replace("\r\n", "\n"))
 
 
 def format_datetime_label(value: object) -> str:

@@ -14,6 +14,7 @@ from news_summary.web import (
     _sort_drafts_latest_first,
     LOCAL_TZ,
     approval_checks,
+    body_character_count,
     format_datetime_label,
     interval_label,
     model_label,
@@ -202,6 +203,49 @@ def test_display_helpers_make_labels_readable():
     assert interval_label(3600) == "매시간 정각"
     assert interval_label(7200) == "2시간마다"
     assert interval_label(600) == "10분마다"
+    assert body_character_count("첫 문단\r\n둘째 문단") == len("첫 문단\n둘째 문단")
+    assert body_character_count(None) == 0
+
+
+def test_draft_detail_shows_body_character_count(monkeypatch):
+    db_path = Path(f"data/.test_body_character_count_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    body = "첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다."
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="글자수 테스트 원문",
+            url="https://example.com/body-count",
+            content="테스트 원문 내용입니다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="글자수 테스트 초안",
+            body=body,
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get(f"/drafts/{draft_id}").data.decode("utf-8")
+
+    assert "본문 총 글자수:" in html
+    assert f'<span id="body-char-count-value">{body_character_count(body)}</span>자' in html
+    assert 'body?.addEventListener("input", updateBodyCount);' in html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
