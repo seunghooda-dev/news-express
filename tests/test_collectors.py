@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+import httpx
 
 from news_summary.collectors import (
     _canonical_url,
@@ -6,6 +7,7 @@ from news_summary.collectors import (
     _extract_detail_content,
     _normalize_published_at,
     _validated_release,
+    collect_html_board,
     collect_json_board,
 )
 from news_summary.models import Source
@@ -175,6 +177,110 @@ def test_collect_json_board_maps_nested_items(monkeypatch):
     assert items[0].url == "https://example.go.kr/board/detail?dataSid=123"
     assert items[0].content == "지역 사업을 추진한다고 밝혔다. 광주시는 시민 편의를 높이기 위해 다음 달부터 신청 접수를 시작하고, 관련 기관과 현장 점검을 이어갈 계획이라고 설명했다."
     assert items[0].published_at == "2026-05-20"
+
+
+def test_collect_html_board_retries_list_request(monkeypatch):
+    monkeypatch.setattr("news_summary.collectors.time.sleep", lambda seconds: None)
+
+    class FakeResponse:
+        def __init__(self, text, status_code=200):
+            self.text = text
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("failed", request=None, response=None)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            self.calls.append(url)
+            if len(self.calls) == 1:
+                raise httpx.ReadTimeout("temporary timeout")
+            if "list" in url:
+                return FakeResponse("<a href='https://example.com/view/1'>구례군 새 사업 추진</a>")
+            return FakeResponse(
+                "<main>구례군은 새 사업을 추진한다고 밝혔다. "
+                "구례군은 주민 편의를 높이기 위해 현장 점검과 관계 기관 협의를 이어갈 계획이라고 설명했다. "
+                "이번 사업은 지역 주민의 생활 여건을 개선하고 행정 서비스를 안정적으로 제공하기 위해 마련됐다.</main>"
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="gurye-test",
+        name="구례군청 보도자료",
+        region="전남 구례",
+        type="html_board",
+        list_url="https://example.com/list",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": ["main"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert items[0].title == "구례군 새 사업 추진"
+
+
+def test_collect_html_board_skips_failed_detail_and_continues(monkeypatch):
+    monkeypatch.setattr("news_summary.collectors.time.sleep", lambda seconds: None)
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if "list" in url:
+                return FakeResponse(
+                    "<a href='https://example.com/view/1'>무안군 첫 사업 추진</a>"
+                    "<a href='https://example.com/view/2'>무안군 둘째 사업 추진</a>"
+                )
+            if url.endswith("/1"):
+                raise httpx.RemoteProtocolError("server disconnected")
+            return FakeResponse(
+                "<main>무안군은 둘째 사업을 추진한다고 밝혔다. "
+                "무안군은 주민 편의를 높이기 위해 현장 점검과 관계 기관 협의를 이어갈 계획이라고 설명했다. "
+                "이번 사업은 지역 주민의 생활 여건을 개선하고 행정 서비스를 안정적으로 제공하기 위해 마련됐다.</main>"
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="muan-test",
+        name="무안군청 보도자료",
+        region="전남 무안",
+        type="html_board",
+        list_url="https://example.com/list",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": ["main"]},
+    )
+
+    items = collect_html_board(source, limit=2)
+
+    assert len(items) == 1
+    assert items[0].title == "무안군 둘째 사업 추진"
 
 
 def test_canonical_url_strips_board_session_path_segments():

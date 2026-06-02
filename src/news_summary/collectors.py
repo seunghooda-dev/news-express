@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
@@ -8,11 +9,13 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from .models import PressRelease, Source
+from .ops_logging import get_logger
 
 
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; NewsSummaryBot/0.1; press-release-monitor)"
 }
+logger = get_logger("collectors")
 
 
 class CollectionError(RuntimeError):
@@ -226,7 +229,7 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
         follow_redirects=True,
         verify=source.verify_ssl,
     ) as client:
-        list_response = client.get(source.list_url)
+        list_response = _get_with_retries(client, source.list_url, source=source, request_label="list")
         list_response.raise_for_status()
         soup = BeautifulSoup(list_response.text, "html.parser")
         rows = _candidate_rows(soup, selectors)
@@ -257,8 +260,18 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
                 continue
             seen_urls.add(detail_url)
 
-            detail_response = client.get(detail_url)
-            detail_response.raise_for_status()
+            try:
+                detail_response = _get_with_retries(client, detail_url, source=source, request_label="detail")
+                detail_response.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "detail collection skipped source_id=%s source_name=%s url=%s error=%s",
+                    source.id,
+                    source.name,
+                    detail_url,
+                    exc,
+                )
+                continue
             detail_soup = BeautifulSoup(detail_response.text, "html.parser")
             detail_text = _clean_text(detail_soup.get_text(" "))
             content = _extract_detail_content(detail_soup, selectors)
@@ -290,6 +303,48 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
             if release:
                 releases.append(release)
     return releases
+
+
+def _get_with_retries(
+    client: httpx.Client,
+    url: str,
+    source: Source,
+    request_label: str,
+    attempts: int = 3,
+) -> httpx.Response:
+    last_error: httpx.HTTPError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = client.get(url)
+            if response.status_code >= 500 and attempt < attempts:
+                logger.warning(
+                    "http retry source_id=%s source_name=%s label=%s attempt=%s status=%s url=%s",
+                    source.id,
+                    source.name,
+                    request_label,
+                    attempt,
+                    response.status_code,
+                    url,
+                )
+                time.sleep(0.6 * attempt)
+                continue
+            return response
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            logger.warning(
+                "http retry source_id=%s source_name=%s label=%s attempt=%s error=%s url=%s",
+                source.id,
+                source.name,
+                request_label,
+                attempt,
+                exc,
+                url,
+            )
+            time.sleep(0.6 * attempt)
+    assert last_error is not None
+    raise last_error
 
 
 def _xml_text(item: ElementTree.Element, tag: str) -> str:
