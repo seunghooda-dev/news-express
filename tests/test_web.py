@@ -624,7 +624,7 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
     assert response.status_code == 200
-    assert collector.calls == [(10, 250, "수동 재수집")]
+    assert collector.calls == [(10, 290, "수동 재수집")]
 
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2

@@ -248,11 +248,10 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
             if not title_node or not link_node:
                 continue
 
-            href = link_node.get("href")
-            if not href:
+            detail_url = _detail_url_from_node(source, row, link_node, selectors)
+            if not detail_url:
                 continue
 
-            detail_url = _canonical_url(urljoin(source.base_url or source.list_url, href))
             title = _node_title(title_node, selectors)
             if not _is_allowed_link(source, detail_url, title):
                 continue
@@ -384,9 +383,50 @@ def _node_title(node: Tag, selectors: dict) -> str:
     return _clean_title(node.get_text(" "))
 
 
+def _detail_url_from_node(source: Source, row: Tag, link_node: Tag, selectors: dict) -> str:
+    href = str(link_node.get("href") or "").strip()
+    if href and href != "#" and not href.lower().startswith("javascript:"):
+        return _canonical_url(urljoin(source.base_url or source.list_url or "", href))
+
+    template = selectors.get("detail_url_template")
+    if not template:
+        return ""
+
+    detail_id = _detail_id_from_node(row, link_node, selectors)
+    if not detail_id:
+        return ""
+
+    return _canonical_url(
+        urljoin(source.base_url or source.list_url or "", str(template).format(detail_id=detail_id))
+    )
+
+
+def _detail_id_from_node(row: Tag, link_node: Tag, selectors: dict) -> str:
+    attr_names = ["onclick", "href", "data-id", "data-seq", "data-list-no"]
+    configured_attr = selectors.get("detail_id_attr")
+    if configured_attr:
+        attr_names.insert(0, str(configured_attr))
+
+    values = []
+    for node in (link_node, row):
+        for attr_name in attr_names:
+            attr_value = node.get(attr_name)
+            if attr_value:
+                values.append(str(attr_value))
+
+    pattern = str(selectors.get("detail_id_pattern") or r"searchDetail\(['\"]?([^'\")]+)")
+    for value in values:
+        match = re.search(pattern, value)
+        if match:
+            return _clean_text(match.group(1))
+    return ""
+
+
 def _clean_title(value: str) -> str:
     title = _clean_text(value)
     title = re.sub(r"^\d{1,2}:\d{2}\s+", "", title)
+    title = re.sub(r"^(?:새글|NEW)\s+", "", title)
+    title = re.sub(r"\s+(?:새글|NEW)$", "", title)
     title = re.sub(r"\s+(?:NEW|새로운글)$", "", title)
     title = re.sub(r"\s+에 대한 (?:글내용 보기|글보기)\.?$", "", title)
     title = re.sub(r"\s+20\d{2}[./-]\d{1,2}[./-]\d{1,2}$", "", title)

@@ -1,5 +1,5 @@
 # 광주·전남 공식 지자체 보도자료 기본 소스입니다.
-# 전남 군청 보도자료/군정소식 게시판까지 함께 수집합니다.
+# 광주 자치구청과 전남 시군청 보도자료/군정소식 게시판까지 함께 수집합니다.
 
 common_content: &common_content
   - ".board_view"
@@ -44,6 +44,86 @@ sources:
       link: "a[href*='boardView.do'][href*='BD_0000000027']"
       content: *common_content
 
+  - id: gwangju-donggu
+    name: 광주 동구청 보도자료
+    region: 광주 동구
+    enabled: true
+    type: html_board
+    list_url: "https://www.donggu.kr/board.es?mid=a10102040100&bid=0243"
+    include_url_contains:
+      - "board.es"
+      - "bid=0243"
+      - "act=view"
+    selectors:
+      item: "#listView > ul"
+      link: "a[href*='act=view'][href*='bid=0243']"
+      title: "li.title a"
+      published_at: ".col03"
+      content: *common_content
+
+  - id: gwangju-seogu
+    name: 광주 서구청 보도자료
+    region: 광주 서구
+    enabled: true
+    type: html_board
+    list_url: "https://www.seogu.gwangju.kr/board.es?mid=c50501000000&bid=0154"
+    include_url_contains:
+      - "board.es"
+      - "bid=0154"
+      - "act=view"
+    selectors:
+      link: "a[href*='act=view'][href*='bid=0154']"
+      content: *common_content
+
+  - id: gwangju-namgu
+    name: 광주 남구청 보도자료
+    region: 광주 남구
+    enabled: true
+    type: html_board
+    list_url: "https://www.namgu.gwangju.kr/api/eminwon/pressList.es?mid=a10605050000"
+    include_url_contains:
+      - "pressView.es"
+      - "news_epct_no="
+    selectors:
+      item: "table.tbltype1 tbody tr"
+      link: "a[onclick*='searchDetail']"
+      title: "a[onclick*='searchDetail']"
+      published_at: "td:nth-child(4)"
+      detail_url_template: "/api/eminwon/pressView.es?mid=a10605050000&news_epct_no={detail_id}&method=selectOfrNews&methodnm=selectOfrNewsMgt"
+      content:
+        - "table.tstyle_view td.tb_contents"
+
+  - id: gwangju-bukgu
+    name: 광주 북구청 보도자료
+    region: 광주 북구
+    enabled: true
+    type: html_board
+    list_url: "https://eminwon.bukgu.gwangju.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do?pageIndex=&jndinm=OfrBcAdvNewsEJB&context=NTIS&method=selectListOfrNews&methodnm=selectListOfrNewsHomepage&news_epct_no=&subCheck=N&ofr_pageSize=10&news_epct_yn=1&title=%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C&data_open_yn=1&initValue=&countYn=Y"
+    include_url_contains:
+      - "OfrAction.do"
+      - "news_epct_no="
+    selectors:
+      item: "table[summary='보도자료 목록'] tr[bgcolor]"
+      link: "td:nth-child(2) a[onclick*='searchDetail']"
+      title: "td:nth-child(2) a[onclick*='searchDetail']"
+      published_at: "td:nth-child(4)"
+      detail_url_template: "/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do?pageIndex=&jndinm=OfrBcAdvNewsEJB&context=NTIS&method=selectOfrNews&methodnm=selectOfrNewsMgt&news_epct_no={detail_id}&subCheck=N&ofr_pageSize=10&news_epct_yn=1&title=%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C&data_open_yn=1&initValue=&countYn=Y"
+      content:
+        - "table[summary='보도자료 상세조회'] td[colspan='4'][style*='word-break']"
+
+  - id: gwangju-gwangsan
+    name: 광주 광산구청 보도자료
+    region: 광주 광산구
+    enabled: true
+    type: html_board
+    list_url: "https://www.gwangsan.go.kr/boardList.do?boardId=REPORT_NEW&pageId=www16"
+    include_url_contains:
+      - "boardView.do"
+      - "REPORT_NEW"
+    selectors:
+      link: "a[href*='boardView.do'][href*='REPORT_NEW']"
+      content: *common_content
+
   - id: jeonnam-province
     name: 전라남도청 보도자료
     region: 전남
@@ -62,6 +142,83 @@ sources:
       link: "a[href*='boardView.do']"
       content:
         - ".bbs_view_contnet"
+
+  - id: mokpo-city
+    name: 목포시청 보도자료
+    region: 전남 목포
+    enabled: true
+    type: html_board
+    list_url: "https://www.mokpo.go.kr/www/mokpo_news/press_release/report_material"
+    include_url_contains:
+      - "report_material"
+      - "mode=view"
+    selectors:
+      item: ".board_thumb .item"
+      link: "a[href*='mode=view'][href*='idx=']"
+      title: ".title_box h3"
+      published_at: ".item_info"
+      content: *common_content
+
+  - id: yeosu-city
+    name: 여수시청 보도자료
+    region: 전남 여수
+    enabled: true
+    type: html_board
+    list_url: "https://www.yeosu.go.kr/www/govt/news/release/press"
+    include_url_contains:
+      - "/www/govt/news/release/press"
+      - "mode=view"
+    selectors:
+      link: "a[href*='mode=view'][href*='idx=']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: suncheon-city
+    name: 순천시청 보도자료
+    region: 전남 순천
+    enabled: true
+    type: html_board
+    list_url: "https://www.suncheon.go.kr/kr/news/0006/0001"
+    base_url: "https://www.suncheon.go.kr/kr/news/0006/0001/"
+    include_url_contains:
+      - "/kr/news/0006/0001/"
+      - "mode=view"
+    selectors:
+      item: "tbody tr"
+      link: "a[href*='mode=view'][href*='seq=']"
+      title: ".title_minwon a"
+      published_at: ".created"
+      content:
+        - "#content table"
+        - ".contents table"
+
+  - id: naju-city
+    name: 나주시청 보도자료
+    region: 전남 나주
+    enabled: true
+    type: html_board
+    list_url: "https://www.naju.go.kr/www/administration/reporting/coverage"
+    include_url_contains:
+      - "/www/administration/reporting/coverage"
+      - "mode=view"
+    selectors:
+      link: "a[href*='mode=view'][href*='idx=']"
+      title_attr: "title"
+      content: *common_content
+
+  - id: gwangyang-city
+    name: 광양시청 보도자료
+    region: 전남 광양
+    enabled: true
+    type: html_board
+    list_url: "https://gwangyang.go.kr/board.es?mid=a11007000000&bid=0057"
+    include_url_contains:
+      - "board.es"
+      - "bid=0057"
+      - "act=view"
+    selectors:
+      link: "a[href*='act=view'][href*='bid=0057']"
+      content: *common_content
 
   - id: damyang-county
     name: 담양군청 보도자료

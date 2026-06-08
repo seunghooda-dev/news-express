@@ -283,6 +283,79 @@ def test_collect_html_board_skips_failed_detail_and_continues(monkeypatch):
     assert items[0].title == "무안군 둘째 사업 추진"
 
 
+def test_collect_html_board_builds_detail_url_from_onclick(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if "list" in url:
+                return FakeResponse(
+                    """
+                    <table>
+                      <tr>
+                        <td><a href="#" onclick="searchDetail('10996')">북구, 음식물 감량 지원</a></td>
+                        <td>청소행정과</td>
+                        <td>2026-06-08</td>
+                      </tr>
+                    </table>
+                    """
+                )
+            assert "news_epct_no=10996" in url
+            return FakeResponse(
+                """
+                <table summary="보도자료 상세조회">
+                  <tr>
+                    <td colspan="4" style="word-break:break-all;">
+                      북구는 음식물 쓰레기 배출량을 줄이기 위한 지원금을 지급한다고 밝혔다.
+                      북구는 대상 사업장을 선정해 설치비 일부를 지원하고 현장 점검을 이어갈 계획이다.
+                      이번 사업은 폐기물 감량과 쾌적한 도시 환경 조성을 위해 마련됐다.
+                    </td>
+                  </tr>
+                </table>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="bukgu-test",
+        name="광주 북구청 보도자료",
+        region="광주 북구",
+        type="html_board",
+        list_url="https://example.com/list",
+        include_url_contains=["news_epct_no="],
+        selectors={
+            "item": "tr",
+            "link": "a[onclick*='searchDetail']",
+            "title": "a[onclick*='searchDetail']",
+            "published_at": "td:nth-child(3)",
+            "detail_url_template": "/detail?news_epct_no={detail_id}",
+            "content": ["table[summary='보도자료 상세조회'] td[colspan='4']"],
+        },
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert items[0].url == "https://example.com/detail?news_epct_no=10996"
+    assert items[0].published_at == "2026-06-08"
+
+
 def test_canonical_url_strips_board_session_path_segments():
     url = (
         "https://www.gurye.go.kr/board/view.do;gurye.go.kr=ABC123"
