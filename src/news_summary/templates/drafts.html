@@ -3,26 +3,30 @@
 <section class="section-head">
   <h1>{{ page_title }}</h1>
   <div class="filters">
-    <a class="{% if not status %}active{% endif %}" href="{{ url_for('drafts') }}">전체</a>
-    <a class="{% if status == 'needs_review' %}active{% endif %}" href="{{ url_for('drafts', status='needs_review') }}">검수 대기</a>
-    <a class="{% if status == 'approved' %}active{% endif %}" href="{{ url_for('drafts', status='approved') }}">승인</a>
-    <a class="{% if status == 'rejected' %}active{% endif %}" href="{{ url_for('drafts', status='rejected') }}">반려</a>
+    <a class="{% if not status %}active{% endif %}" href="{{ url_for('drafts', region=selected_regions) }}">전체</a>
+    <a class="{% if status == 'needs_review' %}active{% endif %}" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}">검수 대기</a>
+    <a class="{% if status == 'approved' %}active{% endif %}" href="{{ url_for('drafts', status='approved', region=selected_regions) }}">승인</a>
+    <a class="{% if status == 'rejected' %}active{% endif %}" href="{{ url_for('drafts', status='rejected', region=selected_regions) }}">반려</a>
   </div>
 </section>
 
 <section class="quick-filters">
-  <a class="{% if review_filter == 'today' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='today') }}">오늘 기사</a>
-  <a class="{% if review_filter == 'attention' %}active{% endif %}" href="{{ url_for('drafts', status=status or 'needs_review', review='attention') }}">주의 필요</a>
-  <a class="{% if review_filter == 'application' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='application') }}">신청·모집</a>
-  <a class="{% if review_filter == 'event' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='event') }}">행사·교육</a>
-  <a class="{% if review_filter == 'support' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='support') }}">지원·예산</a>
-  <a class="{% if review_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='date_issue') }}">게시일 확인</a>
+  <a class="{% if review_filter == 'today' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='today', region=selected_regions) }}">오늘 기사</a>
+  <a class="{% if review_filter == 'attention' %}active{% endif %}" href="{{ url_for('drafts', status=status or 'needs_review', review='attention', region=selected_regions) }}">주의 필요</a>
+  <a class="{% if review_filter == 'application' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='application', region=selected_regions) }}">신청·모집</a>
+  <a class="{% if review_filter == 'event' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='event', region=selected_regions) }}">행사·교육</a>
+  <a class="{% if review_filter == 'support' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='support', region=selected_regions) }}">지원·예산</a>
+  <a class="{% if review_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('drafts', status=status, review='date_issue', region=selected_regions) }}">게시일 확인</a>
 </section>
+
+{% include "_region_filter.html" %}
 
 <form class="source-filter" method="get">
   {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+  {% if date_filter %}<input type="hidden" name="date" value="{{ date_filter.isoformat() }}">{% endif %}
   {% if review_filter %}<input type="hidden" name="review" value="{{ review_filter }}">{% endif %}
   {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+  {% for region in selected_regions %}<input type="hidden" name="region" value="{{ region }}">{% endfor %}
   <label for="source">기관별</label>
   <select id="source" name="source" onchange="this.form.submit()">
     <option value="">전체 기관</option>
@@ -37,10 +41,11 @@
   {% if date_filter %}<input type="hidden" name="date" value="{{ date_filter.isoformat() }}">{% endif %}
   {% if review_filter %}<input type="hidden" name="review" value="{{ review_filter }}">{% endif %}
   {% if source_filter %}<input type="hidden" name="source" value="{{ source_filter }}">{% endif %}
+  {% for region in selected_regions %}<input type="hidden" name="region" value="{{ region }}">{% endfor %}
   <label for="q">검색</label>
   <input id="q" name="q" value="{{ query }}" placeholder="제목, 지자체, 원문">
   <button type="submit">검색</button>
-  {% if query or review_filter or source_filter or date_filter %}
+  {% if query or review_filter or source_filter or date_filter or selected_regions %}
     <a class="source-link" href="{{ url_for('drafts', status=status) if status else url_for('drafts') }}">초기화</a>
   {% endif %}
 </form>

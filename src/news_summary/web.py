@@ -95,7 +95,15 @@ def create_app() -> Flask:
 
     @app.get("/")
     def dashboard():
-        pending_drafts = store.drafts(status="needs_review", limit=300)
+        selected_regions = _selected_regions(config_path)
+        pending_drafts = store.drafts(status="needs_review", limit=1000 if selected_regions else 300)
+        pending_drafts = _filter_rows_by_regions(pending_drafts, selected_regions)
+        approved_drafts = store.approved_drafts(limit=1000 if selected_regions else 200)
+        approved_drafts = _filter_rows_by_regions(approved_drafts, selected_regions)
+        source_summaries = _filter_source_summaries_by_regions(
+            _source_summaries(store, config_path),
+            selected_regions,
+        )
         draft_groups = _group_drafts_by_recent_dates(pending_drafts)
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
@@ -103,13 +111,17 @@ def create_app() -> Flask:
         auto_status = auto_collector.snapshot() if auto_collector else None
         return render_template(
             "dashboard.html",
-            counts=store.counts(),
+            counts=_counts_for_regions(store, selected_regions) if selected_regions else store.counts(),
             draft_groups=draft_groups,
-            approved_drafts=store.approved_drafts(limit=200),
+            approved_drafts=approved_drafts,
             auto_collector_status=auto_status,
-            source_summaries=_source_summaries(store, config_path),
+            source_summaries=source_summaries,
             duplicate_titles=duplicate_titles,
             attention_count=attention_count,
+            region_options=_region_options(config_path),
+            selected_regions=selected_regions,
+            region_filter_hidden={},
+            region_reset_url=url_for("dashboard"),
         )
 
     @app.get("/favicon.ico")
@@ -199,9 +211,12 @@ def create_app() -> Flask:
         query = (request.args.get("q") or "").strip()
         review_filter = (request.args.get("review") or "").strip()
         source_filter = (request.args.get("source") or "").strip()
-        has_filter = bool(target_date or query or review_filter or source_filter)
+        selected_regions = _selected_regions(config_path)
+        has_filter = bool(target_date or query or review_filter or source_filter or selected_regions)
         draft_rows = store.drafts(status=status, limit=1000 if has_filter else 120)
         duplicate_titles = _duplicate_titles(store)
+        if selected_regions:
+            draft_rows = _filter_rows_by_regions(draft_rows, selected_regions)
         if target_date:
             draft_rows = _filter_drafts_by_date(draft_rows, target_date)
         if query:
@@ -210,8 +225,15 @@ def create_app() -> Flask:
             draft_rows = [draft for draft in draft_rows if _row_value(draft, "source_id") == source_filter]
         if review_filter:
             draft_rows = _filter_drafts_by_review(draft_rows, review_filter, duplicate_titles)
-        if source_filter:
+        if source_filter or selected_regions:
             draft_rows = _sort_drafts_latest_first(draft_rows)
+        region_filter_hidden = _clean_query_args(
+            status=status,
+            date=target_date.isoformat() if target_date else "",
+            review=review_filter,
+            source=source_filter,
+            q=query,
+        )
         return render_template(
             "drafts.html",
             drafts=draft_rows,
@@ -222,6 +244,10 @@ def create_app() -> Flask:
             source_filter=source_filter,
             duplicate_titles=duplicate_titles,
             source_options=load_sources(config_path),
+            region_options=_region_options(config_path),
+            selected_regions=selected_regions,
+            region_filter_hidden=region_filter_hidden,
+            region_reset_url=url_for("drafts", **region_filter_hidden),
             page_title=_drafts_page_title(status, target_date, review_filter, source_filter, config_path),
         )
 
@@ -235,9 +261,16 @@ def create_app() -> Flask:
 
     @app.get("/press-releases")
     def press_releases():
+        selected_regions = _selected_regions(config_path)
+        releases = store.press_releases(limit=1000)
+        releases = _filter_rows_by_regions(releases, selected_regions)
         return render_template(
             "press_releases.html",
-            press_releases=store.press_releases(limit=1000),
+            press_releases=releases,
+            region_options=_region_options(config_path),
+            selected_regions=selected_regions,
+            region_filter_hidden={},
+            region_reset_url=url_for("press_releases"),
         )
 
     @app.get("/sources/<source_id>")
@@ -732,6 +765,94 @@ def _filter_drafts_by_query(drafts, query: str):
         if all(term in haystack for term in terms):
             filtered.append(draft)
     return filtered
+
+
+def _region_options(config_path: Path) -> list[str]:
+    regions = []
+    seen = set()
+    for source in load_sources(config_path):
+        if not source.enabled:
+            continue
+        region = source.region.strip()
+        if region and region not in seen:
+            regions.append(region)
+            seen.add(region)
+    return regions
+
+
+def _selected_regions(config_path: Path) -> list[str]:
+    allowed = _region_options(config_path)
+    allowed_set = set(allowed)
+    requested = [region.strip() for region in request.args.getlist("region") if region.strip()]
+    selected = []
+    seen = set()
+    for region in requested:
+        if region in allowed_set and region not in seen:
+            selected.append(region)
+            seen.add(region)
+    return [region for region in allowed if region in seen]
+
+
+def _filter_rows_by_regions(rows, selected_regions: list[str]):
+    if not selected_regions:
+        return list(rows)
+    selected = set(selected_regions)
+    return [row for row in rows if str(_row_value(row, "region") or "") in selected]
+
+
+def _filter_source_summaries_by_regions(summaries: list[dict[str, object]], selected_regions: list[str]):
+    if not selected_regions:
+        return summaries
+    selected = set(selected_regions)
+    return [summary for summary in summaries if str(summary.get("region") or "") in selected]
+
+
+def _counts_for_regions(store: Store, selected_regions: list[str]) -> dict[str, int]:
+    if not selected_regions:
+        return store.counts()
+    placeholders = ",".join("?" for _ in selected_regions)
+    with store.connect() as conn:
+        releases = conn.execute(
+            f"SELECT COUNT(*) AS count FROM press_releases WHERE region IN ({placeholders})",
+            selected_regions,
+        ).fetchone()["count"]
+        drafts = conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM article_drafts ad
+            JOIN press_releases pr ON pr.id = ad.press_release_id
+            WHERE pr.region IN ({placeholders})
+            """,
+            selected_regions,
+        ).fetchone()["count"]
+        approved = conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM article_drafts ad
+            JOIN press_releases pr ON pr.id = ad.press_release_id
+            WHERE ad.status = 'approved' AND pr.region IN ({placeholders})
+            """,
+            selected_regions,
+        ).fetchone()["count"]
+        needs_review = conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM article_drafts ad
+            JOIN press_releases pr ON pr.id = ad.press_release_id
+            WHERE ad.status = 'needs_review' AND pr.region IN ({placeholders})
+            """,
+            selected_regions,
+        ).fetchone()["count"]
+    return {
+        "press_releases": int(releases),
+        "drafts": int(drafts),
+        "approved": int(approved),
+        "needs_review": int(needs_review),
+    }
+
+
+def _clean_query_args(**values: object) -> dict[str, object]:
+    return {key: value for key, value in values.items() if value not in (None, "")}
 
 
 def _filter_drafts_by_review(drafts, review_filter: str, duplicate_titles: set[str]):

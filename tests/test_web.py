@@ -325,6 +325,79 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
 
+def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch):
+    db_path = Path(f"data/.test_region_filter_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    today = datetime.now(LOCAL_TZ).date().isoformat()
+
+    release_id_gwangju = store.add_press_release(
+        PressRelease(
+            source_id="gwangju-city",
+            source_name="광주광역시청 보도자료",
+            region="광주",
+            title="광주 지역 원문",
+            url="https://example.com/gwangju-region",
+            content="광주시는 지역 사업을 추진한다고 밝혔다.",
+            published_at=today,
+        )
+    )
+    release_id_jindo = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="진도 지역 원문",
+            url="https://example.com/jindo-region",
+            content="진도군은 지역 사업을 추진한다고 밝혔다.",
+            published_at=today,
+        )
+    )
+    assert release_id_gwangju is not None
+    assert release_id_jindo is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id_gwangju,
+            title="광주 지역 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id_jindo,
+            title="진도 지역 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/?region=전남+진도").data.decode("utf-8")
+    assert 'name="region" value="전남 진도" checked' in dashboard_html
+    assert "진도군청 보도자료" in dashboard_html
+    assert "진도 지역 초안" in dashboard_html
+    assert "광주광역시청 보도자료" not in dashboard_html
+    assert "광주 지역 초안" not in dashboard_html
+    assert "/press-releases?region=" in dashboard_html
+
+    drafts_html = client.get("/drafts?region=전남+진도").data.decode("utf-8")
+    assert "진도 지역 초안" in drafts_html
+    assert "광주 지역 초안" not in drafts_html
+
+    releases_html = client.get("/press-releases?region=전남+진도").data.decode("utf-8")
+    assert "진도 지역 원문" in releases_html
+    assert "광주 지역 원문" not in releases_html
+
+
 def test_source_status_records_collection_failures(monkeypatch):
     db_path = Path(f"data/.test_source_status_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

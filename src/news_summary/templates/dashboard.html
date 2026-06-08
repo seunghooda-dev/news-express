@@ -42,17 +42,19 @@
 </section>
 
 <section class="metrics">
-  <a class="metric-link" href="{{ url_for('press_releases') }}"><b>{{ counts.press_releases }}</b><span>수집 원문</span></a>
-  <a class="metric-link" href="{{ url_for('drafts') }}"><b>{{ counts.drafts }}</b><span>기사 초안</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', status='needs_review') }}"><b>{{ counts.needs_review }}</b><span>검수 대기</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', status='approved') }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
+  <a class="metric-link" href="{{ url_for('press_releases', region=selected_regions) }}"><b>{{ counts.press_releases }}</b><span>수집 원문</span></a>
+  <a class="metric-link" href="{{ url_for('drafts', region=selected_regions) }}"><b>{{ counts.drafts }}</b><span>기사 초안</span></a>
+  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}"><b>{{ counts.needs_review }}</b><span>검수 대기</span></a>
+  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
+  <a class="metric-link" href="{{ url_for('drafts', status='approved', region=selected_regions) }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
 </section>
+
+{% include "_region_filter.html" %}
 
 <section class="source-board">
   <div class="section-head compact">
     <h1>기관별 수집 상태</h1>
-    <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention') }}">주의 필요 보기</a>
+    <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}">주의 필요 보기</a>
   </div>
   <div class="source-grid">
     {% for source in source_summaries %}
@@ -97,7 +99,7 @@
             <p class="empty">해당 날짜의 검수 대기 초안이 없습니다.</p>
           {% endfor %}
           {% if group.drafts|length > 10 %}
-            <a class="more-summary" href="{{ url_for('drafts', status='needs_review', date=group.iso_date) }}">
+            <a class="more-summary" href="{{ url_for('drafts', status='needs_review', date=group.iso_date, region=selected_regions) }}">
               <span>전체 보기</span>
             </a>
           {% endif %}

@@ -1,0 +1,22 @@
+<form class="region-filter" method="get">
+  {% for key, value in region_filter_hidden.items() %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {% endfor %}
+  <div class="region-filter-head">
+    <strong>지역</strong>
+    {% if selected_regions %}
+      <a class="source-link" href="{{ region_reset_url }}">전체</a>
+    {% endif %}
+  </div>
+  <div class="region-checks">
+    {% for region in region_options %}
+      <label class="region-check {% if region in selected_regions %}active{% endif %}">
+        <input type="checkbox" name="region" value="{{ region }}" {% if region in selected_regions %}checked{% endif %}>
+        <span>{{ region }}</span>
+      </label>
+    {% endfor %}
+  </div>
+  <div class="region-filter-actions">
+    <button type="submit">적용</button>
+  </div>
+</form>

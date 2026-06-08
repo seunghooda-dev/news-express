@@ -5,6 +5,8 @@
   <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
 </section>
 
+{% include "_region_filter.html" %}
+
 <section class="list">
   {% for item in press_releases %}
     <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
