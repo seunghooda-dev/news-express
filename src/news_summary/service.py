@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from json import JSONDecodeError
 from pathlib import Path
 
 import httpx
@@ -51,9 +52,17 @@ def collect_enabled_sources(
         try:
             releases = collect_source(source, limit=limit)
         except CollectionError as exc:
+            failure_stage, failure_reason = classify_collection_failure(exc)
             message = f"{source.name} 수집 실패: {exc}"
             messages.append(message)
-            store.record_source_collection_status(source.id, source.name, "failed", message)
+            store.record_source_collection_status(
+                source.id,
+                source.name,
+                "failed",
+                message,
+                failure_stage=failure_stage,
+                failure_reason=failure_reason,
+            )
             logger.warning("source collection failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
             _report_progress(
                 progress_callback,
@@ -65,9 +74,17 @@ def collect_enabled_sources(
             )
             continue
         except Exception as exc:
+            failure_stage, failure_reason = classify_collection_failure(exc)
             message = f"{source.name} 수집 실패: {type(exc).__name__}: {exc}"
             messages.append(message)
-            store.record_source_collection_status(source.id, source.name, "failed", message)
+            store.record_source_collection_status(
+                source.id,
+                source.name,
+                "failed",
+                message,
+                failure_stage=failure_stage,
+                failure_reason=failure_reason,
+            )
             logger.exception("source collection unexpected failure source_id=%s source_name=%s", source.id, source.name)
             _report_progress(
                 progress_callback,
@@ -248,6 +265,27 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
 def _report_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
     if progress_callback:
         progress_callback(event)
+
+
+def classify_collection_failure(exc: Exception) -> tuple[str, str]:
+    message = str(exc)
+    lowered = message.lower()
+    if isinstance(exc, httpx.TimeoutException) or "timeout" in lowered or "timed out" in lowered or "타임아웃" in message:
+        return "사이트 접속", "응답 지연 또는 타임아웃"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code if exc.response else ""
+        return "사이트 접속", f"HTTP 상태 오류 {status_code}".strip()
+    if isinstance(exc, httpx.RequestError):
+        return "사이트 접속", "요청 실패 또는 SSL/연결 오류"
+    if isinstance(exc, JSONDecodeError) or "json" in lowered:
+        return "자료 파싱", "JSON 응답 해석 실패"
+    if isinstance(exc, CollectionError):
+        if "설정" in message or "지원하지 않는" in message or "주소가 없습니다" in message:
+            return "수집 설정", "수집 소스 설정 확인 필요"
+        return "수집 처리", "수집 규칙 또는 사이트 구조 확인 필요"
+    if isinstance(exc, (KeyError, TypeError, ValueError)):
+        return "자료 파싱", "목록/본문 구조 해석 실패"
+    return "기타 오류", type(exc).__name__
 
 
 def gemini_cooldown_until(store: Store) -> datetime | None:

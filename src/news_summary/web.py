@@ -6,10 +6,11 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
 from .auth import auth_config, set_admin_password, verify_admin_password
+from .backup import create_backup, restore_backup
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .service import (
@@ -20,7 +21,7 @@ from .service import (
     gemini_cooldown_until,
     mark_gemini_cooldown,
 )
-from .settings import env_path, load_environment, load_sources
+from .settings import PROJECT_ROOT, env_path, load_environment, load_sources
 from .storage import Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
 from .writer import GEMINI_FLASH_MODELS, GeminiRefineError, refine_draft_with_gemini
@@ -55,11 +56,13 @@ def create_app() -> Flask:
     app.jinja_env.globals["approval_checks"] = approval_checks
     app.jinja_env.globals["body_character_count"] = body_character_count
     app.jinja_env.globals["change_type_label"] = change_type_label
+    app.jinja_env.globals["file_size_label"] = file_size_label
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
     export_dir = env_path("NEWS_SUMMARY_EXPORT_DIR", "exports")
+    backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
     store.init_db()
     source_options = load_sources(config_path)
     store.sync_source_metadata(source_options)
@@ -186,6 +189,82 @@ def create_app() -> Flask:
             log_lines=lines,
             important_lines=important_lines,
         )
+
+    @app.get("/operations")
+    def operations():
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        auto_status = auto_collector.snapshot() if auto_collector else None
+        return render_template(
+            "operations.html",
+            auto_collector_status=auto_status,
+            backup_dir=backup_dir,
+            backup_files=_backup_files(backup_dir),
+            db_path=store.path,
+            log_path=Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
+        )
+
+    @app.post("/operations/auto-collect")
+    def update_auto_collect():
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        if not auto_collector:
+            flash("자동 수집 컨트롤러가 준비되지 않았습니다. 프로그램을 다시 실행해 주세요.")
+            return redirect(url_for("operations"))
+        enabled = request.form.get("enabled") == "true"
+        auto_collector.set_enabled(enabled)
+        logger.info("auto collector setting changed enabled=%s", enabled)
+        flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
+        return redirect(url_for("operations"))
+
+    @app.post("/operations/backup")
+    def create_backup_route():
+        backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
+        logger.info("backup created path=%s", backup_path)
+        flash(f"백업을 생성했습니다: {backup_path.name}")
+        return redirect(url_for("operations"))
+
+    @app.get("/operations/backups/<path:filename>")
+    def download_backup(filename: str):
+        backup_path = _safe_backup_file(backup_dir, filename)
+        if not backup_path:
+            flash("백업 파일을 찾을 수 없습니다.")
+            return redirect(url_for("operations"))
+        return send_file(backup_path, as_attachment=True, download_name=backup_path.name)
+
+    @app.post("/operations/restore")
+    def restore_backup_route():
+        backup_path = _safe_backup_file(backup_dir, request.form.get("backup_name") or "")
+        if not backup_path:
+            flash("복구할 백업 파일을 선택하세요.")
+            return redirect(url_for("operations"))
+
+        restored = restore_backup(PROJECT_ROOT, backup_path, dry_run=True)
+        if not restored:
+            flash("복구 가능한 항목이 없는 백업 파일입니다.")
+            return redirect(url_for("operations"))
+
+        action = request.form.get("action") or "preview"
+        if action == "preview":
+            flash("복구 대상: " + ", ".join(restored))
+            return redirect(url_for("operations"))
+
+        if request.form.get("confirm_restore") != "yes":
+            flash("복구를 실행하려면 확인 체크박스를 선택해야 합니다.")
+            return redirect(url_for("operations"))
+
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        if auto_collector:
+            auto_collector.set_enabled(False)
+        safety_backup = create_backup(PROJECT_ROOT, store.path, backup_dir)
+        restored = restore_backup(PROJECT_ROOT, backup_path, dry_run=False)
+        store.init_db()
+        logger.warning(
+            "backup restored backup=%s restored=%s safety_backup=%s",
+            backup_path,
+            restored,
+            safety_backup,
+        )
+        flash(f"백업을 복구했습니다. 복구 전 안전 백업: {safety_backup.name}")
+        return redirect(url_for("operations"))
 
     @app.get("/gemini-usage")
     def gemini_usage():
@@ -579,6 +658,39 @@ def _safe_next(default_endpoint: str = "dashboard") -> str:
     return target
 
 
+def _backup_files(backup_dir: Path) -> list[dict[str, object]]:
+    if not backup_dir.exists():
+        return []
+    files = []
+    for path in sorted(backup_dir.glob("*.zip"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        files.append(
+            {
+                "name": path.name,
+                "path": path,
+                "size": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=LOCAL_TZ).isoformat(),
+            }
+        )
+    return files
+
+
+def _safe_backup_file(backup_dir: Path, filename: str) -> Path | None:
+    if not filename or Path(filename).name != filename or not filename.endswith(".zip"):
+        return None
+    backup_dir = backup_dir.resolve()
+    path = (backup_dir / filename).resolve()
+    try:
+        if os.path.commonpath([str(backup_dir), str(path)]) != str(backup_dir):
+            return None
+    except ValueError:
+        return None
+    return path if path.exists() and path.is_file() else None
+
+
 def _draft_change_type(action: str, status: str) -> str:
     if action in {"approved", "approved_next"} or status == "approved":
         return "approval"
@@ -648,6 +760,21 @@ def interval_label(seconds: int | None) -> str:
 
 def body_character_count(value: object) -> int:
     return len(str(value or "").replace("\r\n", "\n"))
+
+
+def file_size_label(size: object) -> str:
+    try:
+        value = float(size or 0)
+    except (TypeError, ValueError):
+        return "0 B"
+    units = ("B", "KB", "MB", "GB")
+    index = 0
+    while value >= 1024 and index < len(units) - 1:
+        value /= 1024
+        index += 1
+    if index == 0:
+        return f"{int(value)} {units[index]}"
+    return f"{value:.1f} {units[index]}"
 
 
 def format_datetime_label(value: object) -> str:
@@ -1013,9 +1140,11 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         last_status = str(status_row["status"]) if status_row else ""
         last_checked_at = status_row["checked_at"] if status_row else None
         last_message = status_row["message"] if status_row else ""
+        failure_stage = status_row["failure_stage"] if status_row else ""
+        failure_reason = status_row["failure_reason"] if status_row else ""
         last_checked_datetime = _parse_datetime(last_checked_at)
         if last_status == "failed":
-            issue = "수집 실패"
+            issue = str(failure_stage or "수집 실패")
         elif last_checked_datetime and last_checked_datetime < datetime.now(LOCAL_TZ) - timedelta(days=2):
             issue = "점검 지연"
         elif releases == 0:
@@ -1036,6 +1165,8 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "last_status": last_status or "unknown",
                 "last_checked_at": last_checked_at,
                 "last_message": last_message,
+                "failure_stage": failure_stage,
+                "failure_reason": failure_reason,
             }
         )
     return summaries
@@ -1057,6 +1188,8 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "last_status": "unknown",
         "last_checked_at": None,
         "last_message": "",
+        "failure_stage": "",
+        "failure_reason": "",
     }
 
 

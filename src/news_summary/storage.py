@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS source_collection_runs (
     source_name TEXT NOT NULL,
     status TEXT NOT NULL,
     message TEXT NOT NULL,
+    failure_stage TEXT NOT NULL DEFAULT '',
+    failure_reason TEXT NOT NULL DEFAULT '',
     releases_found INTEGER NOT NULL DEFAULT 0,
     inserted_count INTEGER NOT NULL DEFAULT 0,
     repaired_dates INTEGER NOT NULL DEFAULT 0,
@@ -99,6 +101,8 @@ class Store:
             self._ensure_column(conn, "article_drafts", "exported_at", "TEXT")
             self._ensure_column(conn, "press_releases", "validation_status", "TEXT DEFAULT '검증 완료'")
             self._ensure_column(conn, "press_releases", "validation_note", "TEXT DEFAULT '기존 수집 원문입니다.'")
+            self._ensure_column(conn, "source_collection_runs", "failure_stage", "TEXT DEFAULT ''")
+            self._ensure_column(conn, "source_collection_runs", "failure_reason", "TEXT DEFAULT ''")
             self._backfill_initial_draft_columns(conn)
             self._remove_news_brief_prefixes(conn)
             self._remove_leading_titles_from_bodies(conn)
@@ -575,6 +579,8 @@ class Store:
         source_name: str,
         status: str,
         message: str,
+        failure_stage: str = "",
+        failure_reason: str = "",
         releases_found: int = 0,
         inserted_count: int = 0,
         repaired_dates: int = 0,
@@ -583,14 +589,17 @@ class Store:
             conn.execute(
                 """
                 INSERT INTO source_collection_runs
-                (source_id, source_name, status, message, releases_found, inserted_count, repaired_dates, checked_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
                     source_name,
                     status,
                     message,
+                    failure_stage,
+                    failure_reason,
                     max(0, releases_found),
                     max(0, inserted_count),
                     max(0, repaired_dates),

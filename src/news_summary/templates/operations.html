@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <div>
+    <h1>운영 관리</h1>
+    <p class="meta">자동 수집, 백업, 복구를 관리합니다.</p>
+  </div>
+  <div class="section-actions">
+    <a class="source-link" href="{{ url_for('ops_logs') }}">운영 로그</a>
+    <a class="source-link" href="{{ url_for('dashboard') }}">Home</a>
+  </div>
+</section>
+
+<section class="ops-grid">
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>자동 수집</h2>
+      <span class="badge {% if auto_collector_status and auto_collector_status.enabled %}badge-gemini{% else %}badge-neutral{% endif %}">
+        {% if auto_collector_status and auto_collector_status.enabled %}켜짐{% else %}꺼짐{% endif %}
+      </span>
+    </div>
+    {% if auto_collector_status %}
+      <p class="meta">
+        {% if auto_collector_status.running %}
+          현재 실행 중 · {{ auto_collector_status.progress_message }}
+        {% elif auto_collector_status.enabled %}
+          {{ interval_label(auto_collector_status.interval_seconds) }} 실행 · 다음 실행 {{ auto_collector_status.next_run_at|date_label }}
+        {% else %}
+          서버는 실행 중이지만 자동 수집은 꺼져 있습니다.
+        {% endif %}
+      </p>
+      <p class="meta">마지막 자동 수집 {{ auto_collector_status.last_auto_finished_at|date_label }}</p>
+    {% else %}
+      <p class="meta">자동 수집 컨트롤러가 준비되지 않았습니다.</p>
+    {% endif %}
+    <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}">
+      {% if auto_collector_status and auto_collector_status.enabled %}
+        <input type="hidden" name="enabled" value="false">
+        <button class="secondary" type="submit">자동 수집 끄기</button>
+      {% else %}
+        <input type="hidden" name="enabled" value="true">
+        <button type="submit">자동 수집 켜기</button>
+      {% endif %}
+    </form>
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>DB 백업</h2>
+      <span class="badge badge-neutral">{{ backup_files|length }}개</span>
+    </div>
+    <p class="meta">현재 DB: {{ db_path }}</p>
+    <p class="meta">백업 폴더: {{ backup_dir }}</p>
+    <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}">
+      <button type="submit">지금 백업 생성</button>
+    </form>
+  </article>
+</section>
+
+<section class="ops-log-view">
+  <div class="section-head compact">
+    <h2>백업 목록</h2>
+    <span class="meta">최신순</span>
+  </div>
+  {% if backup_files %}
+    <div class="list">
+      {% for backup in backup_files %}
+        <div class="row backup-row">
+          <strong>{{ backup.name }}</strong>
+          <span class="row-meta">
+            <span>{{ backup.modified_at|date_label }}</span>
+            <span>{{ file_size_label(backup.size) }}</span>
+            <a class="source-link" href="{{ url_for('download_backup', filename=backup.name) }}">다운로드</a>
+          </span>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">아직 생성된 백업이 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="ops-log-view">
+  <h2>백업 복구</h2>
+  <form class="restore-form" method="post" action="{{ url_for('restore_backup_route') }}">
+    <label for="backup_name">복구할 백업</label>
+    <select id="backup_name" name="backup_name" required>
+      <option value="">백업 선택</option>
+      {% for backup in backup_files %}
+        <option value="{{ backup.name }}">{{ backup.name }}</option>
+      {% endfor %}
+    </select>
+    <label class="check-line">
+      <input type="checkbox" name="confirm_restore" value="yes">
+      현재 운영 데이터를 선택한 백업 내용으로 덮어쓰는 것을 확인했습니다.
+    </label>
+    <div class="actions">
+      <button class="secondary" type="submit" name="action" value="preview">복구 대상 확인</button>
+      <button type="submit" name="action" value="restore">선택 백업 복구</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

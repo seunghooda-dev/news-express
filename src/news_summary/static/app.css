@@ -856,6 +856,62 @@ h3 {
   background: #fff;
 }
 
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.ops-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ops-card-head,
+.inline-actions,
+.backup-row .row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ops-card-head {
+  justify-content: space-between;
+}
+
+.ops-card h2,
+.ops-log-view h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.ops-card p {
+  margin: 0;
+}
+
+.restore-form {
+  display: grid;
+  gap: 10px;
+}
+
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.check-line input {
+  width: auto;
+}
+
 .auth-panel {
   width: min(460px, 100%);
 }

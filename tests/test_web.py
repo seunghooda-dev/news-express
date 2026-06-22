@@ -408,6 +408,8 @@ def test_source_status_records_collection_failures(monkeypatch):
         "광주광역시청 보도자료",
         "failed",
         "광주광역시청 보도자료 수집 실패: 타임아웃",
+        failure_stage="사이트 접속",
+        failure_reason="응답 지연 또는 타임아웃",
     )
 
     from news_summary.web import create_app
@@ -419,8 +421,10 @@ def test_source_status_records_collection_failures(monkeypatch):
     dashboard_html = client.get("/").data.decode("utf-8")
     detail_html = client.get("/sources/gwangju-city").data.decode("utf-8")
 
-    assert "수집 실패" in dashboard_html
+    assert "사이트 접속" in dashboard_html
+    assert "응답 지연 또는 타임아웃" in dashboard_html
     assert "최근 수집 점검" in detail_html
+    assert "사이트 접속" in detail_html
     assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
 
 
@@ -573,6 +577,95 @@ def test_ops_logs_page_shows_recent_warnings(monkeypatch, tmp_path):
     assert "운영 로그" in html
     assert "최근 경고·오류" in html
     assert "수집 실패 테스트" in html
+
+
+def test_operations_page_toggles_auto_collection(monkeypatch):
+    db_path = Path(f"data/.test_operations_auto_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    class FakeCollector:
+        def __init__(self):
+            self.enabled = False
+            self.calls = []
+
+        def snapshot(self):
+            return AutoCollectorStatus(enabled=self.enabled, progress_message="자동 수집 꺼짐")
+
+        def set_enabled(self, enabled):
+            self.enabled = enabled
+            self.calls.append(enabled)
+
+    collector = FakeCollector()
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = collector
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/operations").data.decode("utf-8")
+
+    assert "운영 관리" in html
+    assert "자동 수집 켜기" in html
+
+    enabled_response = client.post("/operations/auto-collect", data={"enabled": "true"}, follow_redirects=True)
+    disabled_response = client.post("/operations/auto-collect", data={"enabled": "false"}, follow_redirects=True)
+
+    assert enabled_response.status_code == 200
+    assert disabled_response.status_code == 200
+    assert collector.calls == [True, False]
+
+
+def test_operations_page_creates_and_restores_backup(monkeypatch):
+    db_path = Path(f"data/.test_operations_backup_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_operations_backups_{uuid4().hex}").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    backup_response = client.post("/operations/backup", follow_redirects=True)
+    backup_html = backup_response.data.decode("utf-8")
+    backups = sorted(backup_dir.glob("*.zip"))
+
+    assert backup_response.status_code == 200
+    assert "백업을 생성했습니다" in backup_html
+    assert len(backups) == 1
+
+    backup_name = backups[0].name
+    preview_response = client.post(
+        "/operations/restore",
+        data={"backup_name": backup_name, "action": "preview"},
+        follow_redirects=True,
+    )
+    preview_html = preview_response.data.decode("utf-8")
+
+    assert "복구 대상:" in preview_html
+    assert "data/.test_operations_backup_" in preview_html
+
+    blocked_response = client.post(
+        "/operations/restore",
+        data={"backup_name": backup_name, "action": "restore"},
+        follow_redirects=True,
+    )
+    blocked_html = blocked_response.data.decode("utf-8")
+
+    assert "확인 체크박스" in blocked_html
+
+    restore_response = client.post(
+        "/operations/restore",
+        data={"backup_name": backup_name, "action": "restore", "confirm_restore": "yes"},
+        follow_redirects=True,
+    )
+    restore_html = restore_response.data.decode("utf-8")
+
+    assert restore_response.status_code == 200
+    assert "백업을 복구했습니다" in restore_html
+    assert len(list(backup_dir.glob("*.zip"))) >= 2
 
 
 def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):

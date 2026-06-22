@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
+
 from news_summary.models import ArticleDraft, PressRelease, Source
 from news_summary.scheduler import AutoCollector, build_auto_collector_from_env, _next_hourly_run_at, _wait_seconds_until
 from news_summary.service import collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, repair_missing_published_dates
@@ -107,6 +109,27 @@ def test_collect_enabled_sources_reports_source_progress(monkeypatch):
     assert any(event["message"].startswith("1/2 첫 기관") for event in events)
     assert any(event["message"].startswith("2/2 둘째 기관") for event in events)
     assert events[-1]["message"] == "수집 완료"
+
+
+def test_collect_enabled_sources_classifies_connection_failures(monkeypatch):
+    db_path = Path(f"data/.test_service_failure_reason_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id="timeout-source", name="응답 지연 기관", region="전남", type="html_board")]
+
+    def fail_collect(source, limit):
+        raise httpx.TimeoutException("timed out")
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", fail_collect)
+
+    messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+    status = store.latest_source_collection_statuses()["timeout-source"]
+
+    assert "수집 실패" in messages[0]
+    assert status["status"] == "failed"
+    assert status["failure_stage"] == "사이트 접속"
+    assert status["failure_reason"] == "응답 지연 또는 타임아웃"
 
 
 def test_store_normalizes_existing_published_at_metadata():
@@ -323,3 +346,22 @@ def test_auto_collector_interval_is_fixed_to_hourly_boundary(monkeypatch):
 
     assert collector is not None
     assert collector.snapshot().interval_seconds == 3600
+
+
+def test_auto_collector_enabled_state_can_be_persisted(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_enabled_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_COLLECT", "false")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = build_auto_collector_from_env(store, Path("unused.yaml"))
+
+    assert collector is not None
+    assert collector.snapshot().enabled is False
+
+    collector.set_enabled(True)
+    restored = build_auto_collector_from_env(store, Path("unused.yaml"))
+
+    assert restored is not None
+    assert restored.snapshot().enabled is True

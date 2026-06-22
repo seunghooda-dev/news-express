@@ -6,29 +6,39 @@
       <div class="auto-status-head">
         <h1>자동 수집</h1>
         <span class="badge badge-gemini">
-          {% if auto_collector_status.running %}실행 중{% else %}{{ interval_label(auto_collector_status.interval_seconds) }} 실행{% endif %}
+          {% if auto_collector_status.running %}
+            실행 중
+          {% elif auto_collector_status.enabled %}
+            {{ interval_label(auto_collector_status.interval_seconds) }} 실행
+          {% else %}
+            꺼짐
+          {% endif %}
         </span>
       </div>
-      <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
-        <div class="crawl-progress-head">
-          <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
-          <span data-progress-count>
-            {% if auto_collector_status.progress_total %}
-              {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
+      {% if auto_collector_status.enabled %}
+        <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
+          <div class="crawl-progress-head">
+            <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
+            <span data-progress-count>
+              {% if auto_collector_status.progress_total %}
+                {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
+              {% else %}
+                -/-
+              {% endif %}
+            </span>
+          </div>
+          <div class="crawl-progress-track"><span data-progress-bar></span></div>
+          <p data-progress-source>
+            {% if auto_collector_status.progress_source_name %}
+              현재 기관: {{ auto_collector_status.progress_source_name }}
             {% else %}
-              -/-
+              대기 중
             {% endif %}
-          </span>
+          </p>
         </div>
-        <div class="crawl-progress-track"><span data-progress-bar></span></div>
-        <p data-progress-source>
-          {% if auto_collector_status.progress_source_name %}
-            현재 기관: {{ auto_collector_status.progress_source_name }}
-          {% else %}
-            대기 중
-          {% endif %}
-        </p>
-      </div>
+      {% else %}
+        <p class="auto-status-message">자동 수집은 꺼져 있습니다. 운영 관리에서 다시 켤 수 있습니다.</p>
+      {% endif %}
       {% if auto_collector_status.last_error %}
         <p class="auto-status-error">{{ auto_collector_status.last_error }}</p>
       {% elif auto_collector_status.last_messages %}
@@ -65,6 +75,9 @@
         <span>마지막 점검 {{ source.last_checked_at|date_label }}</span>
         {% if source.issue %}
           <em>{{ source.issue }}</em>
+          {% if source.failure_reason %}
+            <span>원인 {{ source.failure_reason }}</span>
+          {% endif %}
         {% else %}
           <em>정상</em>
         {% endif %}
@@ -149,7 +162,7 @@
   </div>
 </section>
 
-{% if auto_collector_status %}
+{% if auto_collector_status and auto_collector_status.enabled %}
   <script>
     (() => {
       const panel = document.querySelector(".crawl-progress");

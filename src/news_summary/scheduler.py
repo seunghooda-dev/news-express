@@ -13,6 +13,7 @@ from .storage import Store
 
 
 DEFAULT_AUTO_INTERVAL_SECONDS = 3600
+AUTO_COLLECT_ENABLED_KEY = "auto_collect_enabled"
 LAST_AUTO_COLLECT_FINISHED_AT_KEY = "last_auto_collect_finished_at"
 logger = get_logger("scheduler")
 
@@ -64,6 +65,7 @@ class AutoCollector:
         collect_limit: int = 10,
         draft_limit: int = 250,
         require_gemini: bool = True,
+        enabled: bool = True,
     ) -> None:
         self.store = store
         self.config_path = config_path
@@ -77,16 +79,21 @@ class AutoCollector:
         self._thread: threading.Thread | None = None
         source_count = self._enabled_source_count()
         self._status = AutoCollectorStatus(
-            enabled=True,
+            enabled=enabled,
             interval_seconds=interval_seconds,
             collect_limit=collect_limit,
             draft_limit=draft_limit,
             require_gemini=require_gemini,
             progress_total=source_count,
             last_auto_finished_at=self.store.get_app_metadata(LAST_AUTO_COLLECT_FINISHED_AT_KEY),
+            progress_message="다음 정각 자동 수집 대기 중" if enabled else "자동 수집 꺼짐",
         )
 
     def start(self) -> None:
+        with self._state_lock:
+            if not self._status.enabled:
+                logger.info("auto collector start skipped disabled")
+                return
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -96,7 +103,26 @@ class AutoCollector:
 
     def stop(self) -> None:
         self._stop_event.set()
+        with self._state_lock:
+            self._status.next_run_at = None
+            if not self._status.running:
+                self._status.progress_message = "자동 수집 꺼짐"
         logger.info("auto collector stop requested")
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.store.set_app_metadata(AUTO_COLLECT_ENABLED_KEY, "true" if enabled else "false")
+        with self._state_lock:
+            self._status.enabled = enabled
+            if not enabled:
+                self._status.next_run_at = None
+                if not self._status.running:
+                    self._status.progress_message = "자동 수집 꺼짐"
+            elif not self._status.running:
+                self._status.progress_message = "다음 정각 자동 수집 대기 중"
+        if enabled:
+            self.start()
+        else:
+            self.stop()
 
     def run_once(
         self,
@@ -230,6 +256,8 @@ class AutoCollector:
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
+            if not self.snapshot().enabled:
+                break
             next_run_at = _next_hourly_run_at()
             wait_seconds = _wait_seconds_until(next_run_at)
             self._set_next_run_at(next_run_at, message="다음 정각 자동 수집 대기 중")
@@ -267,9 +295,6 @@ class AutoCollector:
 
 
 def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollector | None:
-    if not env_bool("NEWS_SUMMARY_AUTO_COLLECT", True):
-        return None
-
     collect_limit = env_int("NEWS_SUMMARY_AUTO_COLLECT_LIMIT", 10)
     source_count = max(1, len([source for source in load_sources(config_path) if source.enabled]))
     default_draft_limit = max(collect_limit * source_count, 250)
@@ -280,7 +305,15 @@ def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollec
         collect_limit=collect_limit,
         draft_limit=env_int("NEWS_SUMMARY_AUTO_DRAFT_LIMIT", default_draft_limit),
         require_gemini=env_bool("NEWS_SUMMARY_AUTO_REQUIRE_GEMINI", True),
+        enabled=auto_collect_enabled(store),
     )
+
+
+def auto_collect_enabled(store: Store) -> bool:
+    stored = store.get_app_metadata(AUTO_COLLECT_ENABLED_KEY)
+    if stored is not None:
+        return stored.strip().lower() in {"1", "true", "yes", "on", "예", "켜기"}
+    return env_bool("NEWS_SUMMARY_AUTO_COLLECT", True)
 
 
 def _now() -> str:

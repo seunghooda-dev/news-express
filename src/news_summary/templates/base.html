@@ -13,6 +13,7 @@
       <a href="{{ url_for('gemini_usage') }}">Gemini 사용량</a>
       <a href="{{ url_for('drafts') }}">초안 검수</a>
       <a href="{{ url_for('writing_settings') }}">기사 설정</a>
+      <a href="{{ url_for('operations') }}">운영 관리</a>
       {% if auth_state.enabled %}
         {% if admin_authenticated %}
           <form class="nav-form" method="post" action="{{ url_for('logout') }}">

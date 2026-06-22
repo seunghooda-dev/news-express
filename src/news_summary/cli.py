@@ -155,12 +155,15 @@ def serve_command(host: str, port: int) -> None:
     auto_collector = build_auto_collector_from_env(store, config_path)
     app = create_app()
     app.config["AUTO_COLLECTOR"] = auto_collector
-    if auto_collector:
+    if auto_collector and auto_collector.snapshot().enabled:
         auto_collector.start()
         logger.info("auto collector started host=%s port=%s", host, port)
         print(
             "자동 수집 시작: 매시간 정각마다 전체 기관 원문 수집 후 Gemini 초안을 검수 대기에 추가합니다."
         )
+    elif auto_collector:
+        logger.info("auto collector prepared but disabled host=%s port=%s", host, port)
+        print("자동 수집 꺼짐: 운영 관리 화면에서 다시 켤 수 있습니다.")
     logger.info("flask app starting host=%s port=%s", host, port)
     app.run(host=host, port=port, debug=False)
 

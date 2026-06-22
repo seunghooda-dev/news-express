@@ -18,6 +18,7 @@ ALLOWED_RESTORE_ROOTS = (
     "data/writing_settings.json",
     "exports/",
 )
+ALLOWED_DATA_SUFFIXES = (".sqlite", ".json")
 
 
 def create_backup(
@@ -29,7 +30,7 @@ def create_backup(
     backup_dir = _resolve_under(project_root, backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_path = backup_dir / f"{BACKUP_FILE_PREFIX}-{timestamp}.zip"
+    backup_path = _unique_backup_path(backup_dir, timestamp)
 
     with tempfile.TemporaryDirectory() as tmp:
         temp_root = Path(tmp)
@@ -40,6 +41,17 @@ def create_backup(
             _add_directory_if_exists(archive, project_root, "exports")
 
     return backup_path
+
+
+def _unique_backup_path(backup_dir: Path, timestamp: str) -> Path:
+    base_path = backup_dir / f"{BACKUP_FILE_PREFIX}-{timestamp}.zip"
+    if not base_path.exists():
+        return base_path
+    for index in range(1, 1000):
+        candidate = backup_dir / f"{BACKUP_FILE_PREFIX}-{timestamp}-{index}.zip"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError("사용 가능한 백업 파일명을 만들 수 없습니다.")
 
 
 def restore_backup(
@@ -64,8 +76,12 @@ def restore_backup(
             if dry_run:
                 continue
             destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.suffix == ".sqlite":
+                _remove_sqlite_sidecars(destination)
             with archive.open(member) as source, destination.open("wb") as target:
                 shutil.copyfileobj(source, target)
+            if destination.suffix == ".sqlite":
+                _remove_sqlite_sidecars(destination)
     return restored
 
 
@@ -121,6 +137,8 @@ def _is_within(root: Path, path: Path) -> bool:
 
 def _is_allowed_restore_path(name: str) -> bool:
     normalized = name.strip("/")
+    if normalized.startswith("data/") and normalized.endswith(ALLOWED_DATA_SUFFIXES):
+        return True
     for allowed in ALLOWED_RESTORE_ROOTS:
         if allowed.endswith("/"):
             if normalized.startswith(allowed):
@@ -128,3 +146,22 @@ def _is_allowed_restore_path(name: str) -> bool:
         elif normalized == allowed:
             return True
     return False
+
+
+def _remove_sqlite_sidecars(path: Path) -> None:
+    if path.exists():
+        try:
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+    for suffix in ("-wal", "-shm"):
+        sidecar = path.with_name(path.name + suffix)
+        if sidecar.exists():
+            try:
+                sidecar.unlink()
+            except PermissionError:
+                pass
