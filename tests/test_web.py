@@ -445,7 +445,7 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     right = client.post("/login", data={"password": "secret1234", "next": "/"}, follow_redirects=True)
     html = right.data.decode("utf-8")
     assert right.status_code == 200
-    assert "대시보드" in html
+    assert "Home" in html
     assert "로그아웃" in html
 
     logout = client.post("/logout", follow_redirects=False)
