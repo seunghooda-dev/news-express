@@ -704,7 +704,28 @@ def _normalize_published_at(value: str | None) -> str | None:
     if not value:
         return None
     text = _clean_text(str(value))
-    return _extract_labeled_date(text) or _extract_date(text)
+    return _standardize_published_at(_extract_labeled_date(text) or _extract_date(text))
+
+
+def _standardize_published_at(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = DATE_RE.search(str(value).strip())
+    if not match:
+        return None
+    matched = match.group(1)
+    date_part, _, time_part = matched.partition(" ")
+    year, month, day = re.split(r"[./-]", date_part)
+    normalized = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    if time_part:
+        time_parts = time_part.split(":")
+        hour = int(time_parts[0])
+        minute = int(time_parts[1])
+        if len(time_parts) > 2:
+            second = int(time_parts[2])
+            return f"{normalized} {hour:02d}:{minute:02d}:{second:02d}"
+        return f"{normalized} {hour:02d}:{minute:02d}"
+    return normalized
 
 
 def _as_list(value: object) -> list[str]:

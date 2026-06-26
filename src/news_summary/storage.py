@@ -408,7 +408,8 @@ class Store:
                 SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
-                ORDER BY pr.id DESC
+                ORDER BY COALESCE(NULLIF(TRIM(pr.published_at), ''), pr.collected_at) DESC,
+                         pr.id DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -422,7 +423,8 @@ class Store:
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE pr.source_id = ?
-                ORDER BY pr.id DESC
+                ORDER BY COALESCE(NULLIF(TRIM(pr.published_at), ''), pr.collected_at) DESC,
+                         pr.id DESC
                 LIMIT ?
                 """,
                 (source_id, limit),

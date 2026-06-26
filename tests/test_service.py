@@ -357,6 +357,42 @@ def test_store_keeps_existing_published_at_when_recrawl_has_no_date():
     assert row["published_at"] == "2026-05-11 17:28:00"
 
 
+def test_press_releases_are_sorted_by_published_time_not_collection_order():
+    db_path = Path(f"data/.test_storage_release_sort_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="먼저 수집된 오래된 보도자료",
+            url="https://example.com/old-first",
+            content="테스트 군은 먼저 수집된 오래된 보도자료를 안내한다고 밝혔다.",
+            published_at="2026-05-19 09:00",
+            collected_at="2026-05-20T10:00:00+00:00",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="나중에 수집된 최신 보도자료",
+            url="https://example.com/new-second",
+            content="테스트 군은 나중에 수집된 최신 보도자료를 안내한다고 밝혔다.",
+            published_at="2026-05-20 08:00",
+            collected_at="2026-05-20T09:00:00+00:00",
+        )
+    )
+
+    releases = store.press_releases(limit=10)
+    source_releases = store.press_releases_by_source("sample", limit=10)
+
+    assert [row["title"] for row in releases] == ["나중에 수집된 최신 보도자료", "먼저 수집된 오래된 보도자료"]
+    assert [row["title"] for row in source_releases] == ["나중에 수집된 최신 보도자료", "먼저 수집된 오래된 보도자료"]
+
+
 def test_repair_missing_published_dates_reads_detail_registration_date(monkeypatch):
     db_path = Path(f"data/.test_repair_dates_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
