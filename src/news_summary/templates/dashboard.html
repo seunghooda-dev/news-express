@@ -112,7 +112,7 @@
             <p class="empty">해당 날짜의 검수 대기 초안이 없습니다.</p>
           {% endfor %}
           {% if group.drafts|length > 10 %}
-            <a class="more-summary" href="{{ url_for('drafts', status='needs_review', date=group.iso_date, region=selected_regions) }}">
+            <a class="more-summary" href="{% if group.iso_date %}{{ url_for('drafts', status='needs_review', date=group.iso_date, region=selected_regions) }}{% else %}{{ url_for('drafts', status='needs_review', region=selected_regions) }}{% endif %}">
               <span>전체 보기</span>
             </a>
           {% endif %}

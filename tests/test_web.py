@@ -59,6 +59,19 @@ def test_group_drafts_by_recent_dates_builds_five_daily_categories():
     assert groups[0]["iso_date"] == "2026-05-20"
 
 
+def test_group_drafts_by_recent_dates_can_include_older_bucket():
+    drafts = [
+        {"id": 1, "published_at": "2026-05-20", "created_at": "2026-05-20T07:00:00+00:00"},
+        {"id": 2, "published_at": "2026-05-10", "created_at": "2026-05-20T07:00:00+00:00"},
+    ]
+
+    groups = _group_drafts_by_recent_dates(drafts, today=date(2026, 5, 20), days=5, include_older=True)
+
+    assert groups[-1]["label"] == "이전 검수 대기"
+    assert groups[-1]["iso_date"] == ""
+    assert [draft["id"] for draft in groups[-1]["drafts"]] == [2]
+
+
 def test_filter_drafts_by_date_uses_published_date_first():
     drafts = [
         {
@@ -396,6 +409,50 @@ def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch
     releases_html = client.get("/press-releases?region=전남+진도").data.decode("utf-8")
     assert "진도 지역 원문" in releases_html
     assert "광주 지역 원문" not in releases_html
+
+
+def test_parent_region_filter_shows_child_region_pending_drafts_on_dashboard(monkeypatch):
+    db_path = Path(f"data/.test_parent_region_filter_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="진도 오래된 원문",
+            url="https://example.com/jindo-old-region",
+            content="진도군은 지역 사업을 추진한다고 밝혔다.",
+            published_at="2026-05-10",
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="진도 오래된 검수 대기 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/?region=전남").data.decode("utf-8")
+
+    assert 'name="region" value="전남" checked' in dashboard_html
+    assert "이전 검수 대기" in dashboard_html
+    assert "진도 오래된 검수 대기 초안" in dashboard_html
+
+    drafts_html = client.get("/drafts?status=needs_review&region=전남").data.decode("utf-8")
+    assert "진도 오래된 검수 대기 초안" in drafts_html
 
 
 def test_source_status_records_collection_failures(monkeypatch):

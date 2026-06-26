@@ -1,4 +1,4 @@
-<form class="region-filter" method="get">
+<form class="region-filter" method="get" data-auto-submit>
   {% for key, value in region_filter_hidden.items() %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
   {% endfor %}
@@ -20,3 +20,10 @@
     <button type="submit">적용</button>
   </div>
 </form>
+<script>
+  (() => {
+    document.querySelectorAll("[data-auto-submit] input[type='checkbox']").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => checkbox.form.requestSubmit());
+    });
+  })();
+</script>

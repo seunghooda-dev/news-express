@@ -107,7 +107,7 @@ def create_app() -> Flask:
             _source_summaries(store, config_path),
             selected_regions,
         )
-        draft_groups = _group_drafts_by_recent_dates(pending_drafts)
+        draft_groups = _group_drafts_by_recent_dates(pending_drafts, include_older=bool(selected_regions))
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
         attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
@@ -853,17 +853,21 @@ def _group_drafts_by_recent_dates(
     drafts,
     today: date | None = None,
     days: int = 5,
+    include_older: bool = False,
 ) -> list[dict[str, object]]:
     today = today or datetime.now(LOCAL_TZ).date()
     dates = [today - timedelta(days=offset) for offset in range(days)]
     buckets = {target_date: [] for target_date in dates}
+    older_drafts = []
 
     for draft in drafts:
         draft_date = _draft_date(draft)
         if draft_date in buckets:
             buckets[draft_date].append(draft)
+        elif include_older:
+            older_drafts.append(draft)
 
-    return [
+    groups = [
         {
             "date": target_date,
             "iso_date": target_date.isoformat(),
@@ -872,6 +876,16 @@ def _group_drafts_by_recent_dates(
         }
         for target_date in dates
     ]
+    if include_older and older_drafts:
+        groups.append(
+            {
+                "date": None,
+                "iso_date": "",
+                "label": "이전 검수 대기",
+                "drafts": _sort_drafts_latest_first(older_drafts),
+            }
+        )
+    return groups
 
 
 def _filter_drafts_by_date(drafts, target_date: date):
@@ -923,52 +937,50 @@ def _selected_regions(config_path: Path) -> list[str]:
 def _filter_rows_by_regions(rows, selected_regions: list[str]):
     if not selected_regions:
         return list(rows)
-    selected = set(selected_regions)
-    return [row for row in rows if str(_row_value(row, "region") or "") in selected]
+    return [row for row in rows if _region_matches(str(_row_value(row, "region") or ""), selected_regions)]
 
 
 def _filter_source_summaries_by_regions(summaries: list[dict[str, object]], selected_regions: list[str]):
     if not selected_regions:
         return summaries
-    selected = set(selected_regions)
-    return [summary for summary in summaries if str(summary.get("region") or "") in selected]
+    return [summary for summary in summaries if _region_matches(str(summary.get("region") or ""), selected_regions)]
 
 
 def _counts_for_regions(store: Store, selected_regions: list[str]) -> dict[str, int]:
     if not selected_regions:
         return store.counts()
-    placeholders = ",".join("?" for _ in selected_regions)
+    region_condition, region_params = _region_sql_condition("pr.region", selected_regions)
     with store.connect() as conn:
         releases = conn.execute(
-            f"SELECT COUNT(*) AS count FROM press_releases WHERE region IN ({placeholders})",
-            selected_regions,
+            f"SELECT COUNT(*) AS count FROM press_releases pr WHERE {region_condition}",
+            region_params,
         ).fetchone()["count"]
         drafts = conn.execute(
             f"""
             SELECT COUNT(*) AS count
             FROM article_drafts ad
             JOIN press_releases pr ON pr.id = ad.press_release_id
-            WHERE pr.region IN ({placeholders})
+            WHERE {region_condition}
             """,
-            selected_regions,
+            region_params,
         ).fetchone()["count"]
         approved = conn.execute(
             f"""
             SELECT COUNT(*) AS count
             FROM article_drafts ad
             JOIN press_releases pr ON pr.id = ad.press_release_id
-            WHERE ad.status = 'approved' AND pr.region IN ({placeholders})
+            WHERE ad.status = 'approved' AND {region_condition}
             """,
-            selected_regions,
+            region_params,
         ).fetchone()["count"]
         needs_review = conn.execute(
             f"""
             SELECT COUNT(*) AS count
             FROM article_drafts ad
             JOIN press_releases pr ON pr.id = ad.press_release_id
-            WHERE ad.status = 'needs_review' AND pr.region IN ({placeholders})
+            WHERE ad.status = 'needs_review' AND {region_condition}
             """,
-            selected_regions,
+            region_params,
         ).fetchone()["count"]
     return {
         "press_releases": int(releases),
@@ -976,6 +988,34 @@ def _counts_for_regions(store: Store, selected_regions: list[str]) -> dict[str, 
         "approved": int(approved),
         "needs_review": int(needs_review),
     }
+
+
+def _region_matches(region: str, selected_regions: list[str]) -> bool:
+    region = region.strip()
+    for selected in selected_regions:
+        selected = selected.strip()
+        if not selected:
+            continue
+        if region == selected:
+            return True
+        if " " not in selected and region.startswith(f"{selected} "):
+            return True
+    return False
+
+
+def _region_sql_condition(column: str, selected_regions: list[str]) -> tuple[str, tuple[object, ...]]:
+    clauses = []
+    params: list[object] = []
+    for selected in selected_regions:
+        selected = selected.strip()
+        if not selected:
+            continue
+        clauses.append(f"{column} = ?")
+        params.append(selected)
+        if " " not in selected:
+            clauses.append(f"{column} LIKE ?")
+            params.append(f"{selected} %")
+    return " OR ".join(f"({clause})" for clause in clauses) or "1 = 1", tuple(params)
 
 
 def _clean_query_args(**values: object) -> dict[str, object]:
