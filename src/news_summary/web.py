@@ -107,7 +107,11 @@ def create_app() -> Flask:
             _source_summaries(store, config_path),
             selected_regions,
         )
-        draft_groups = _group_drafts_by_recent_dates(pending_drafts, include_older=bool(selected_regions))
+        draft_groups = _group_drafts_by_recent_dates(
+            pending_drafts,
+            include_older=bool(selected_regions),
+            date_source="created",
+        )
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
         attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
@@ -854,6 +858,7 @@ def _group_drafts_by_recent_dates(
     today: date | None = None,
     days: int = 5,
     include_older: bool = False,
+    date_source: str = "published",
 ) -> list[dict[str, object]]:
     today = today or datetime.now(LOCAL_TZ).date()
     dates = [today - timedelta(days=offset) for offset in range(days)]
@@ -861,7 +866,7 @@ def _group_drafts_by_recent_dates(
     older_drafts = []
 
     for draft in drafts:
-        draft_date = _draft_date(draft)
+        draft_date = _draft_group_date(draft, date_source)
         if draft_date in buckets:
             buckets[draft_date].append(draft)
         elif include_older:
@@ -873,6 +878,7 @@ def _group_drafts_by_recent_dates(
             "iso_date": target_date.isoformat(),
             "label": _date_group_label(target_date, today),
             "drafts": buckets[target_date],
+            "date_source": date_source,
         }
         for target_date in dates
     ]
@@ -883,6 +889,7 @@ def _group_drafts_by_recent_dates(
                 "iso_date": "",
                 "label": "이전 검수 대기",
                 "drafts": _sort_drafts_latest_first(older_drafts),
+                "date_source": date_source,
             }
         )
     return groups
@@ -1274,6 +1281,16 @@ def _source_release_date(published_at: object, collected_at: object) -> date | N
 
 def _draft_date(draft) -> date | None:
     return _parse_date(_row_value(draft, "published_at")) or _parse_date(_row_value(draft, "created_at"))
+
+
+def _draft_created_date(draft) -> date | None:
+    return _parse_date(_row_value(draft, "created_at")) or _parse_date(_row_value(draft, "published_at"))
+
+
+def _draft_group_date(draft, date_source: str) -> date | None:
+    if date_source == "created":
+        return _draft_created_date(draft)
+    return _draft_date(draft)
 
 
 def _next_review_draft_id(store: Store, current_id: int | None = None) -> int | None:
