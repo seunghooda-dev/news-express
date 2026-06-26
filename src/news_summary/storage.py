@@ -408,7 +408,9 @@ class Store:
                 SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
-                ORDER BY COALESCE(NULLIF(TRIM(pr.published_at), ''), pr.collected_at) DESC,
+                ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                         pr.published_at DESC,
+                         pr.collected_at DESC,
                          pr.id DESC
                 LIMIT ?
                 """,
@@ -423,7 +425,9 @@ class Store:
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE pr.source_id = ?
-                ORDER BY COALESCE(NULLIF(TRIM(pr.published_at), ''), pr.collected_at) DESC,
+                ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                         pr.published_at DESC,
+                         pr.collected_at DESC,
                          pr.id DESC
                 LIMIT ?
                 """,
@@ -458,7 +462,8 @@ class Store:
                 SELECT ad.*, pr.source_name, pr.url
                 FROM article_drafts ad
                 JOIN press_releases pr ON pr.id = ad.press_release_id
-                ORDER BY ad.id DESC
+                ORDER BY COALESCE(ad.updated_at, ad.created_at) DESC,
+                         ad.id DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -478,7 +483,7 @@ class Store:
             params = (status, limit)
         else:
             params = (limit,)
-        query += " ORDER BY ad.id DESC LIMIT ?"
+        query += " ORDER BY COALESCE(ad.updated_at, ad.created_at) DESC, ad.id DESC LIMIT ?"
         with self.connect() as conn:
             return conn.execute(query, params).fetchall()
 
@@ -502,7 +507,7 @@ class Store:
             params = (source_id, status, limit)
         else:
             params = (source_id, limit)
-        query += " ORDER BY ad.id DESC LIMIT ?"
+        query += " ORDER BY COALESCE(ad.updated_at, ad.created_at) DESC, ad.id DESC LIMIT ?"
         with self.connect() as conn:
             return conn.execute(query, params).fetchall()
 

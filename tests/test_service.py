@@ -322,6 +322,69 @@ def test_store_reuses_existing_draft_for_same_press_release():
     assert store.get_draft(first_id)["title"] == "첫 초안"
 
 
+def test_drafts_are_sorted_by_draft_activity_time_not_id():
+    db_path = Path(f"data/.test_storage_draft_sort_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    newer_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="먼저 저장된 원문",
+            url="https://example.com/draft-sort-newer",
+            content="테스트 군은 먼저 저장된 원문 내용을 안내한다고 밝혔다.",
+            published_at="2026-05-20",
+        )
+    )
+    older_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="나중에 저장된 원문",
+            url="https://example.com/draft-sort-older",
+            content="테스트 군은 나중에 저장된 원문 내용을 안내한다고 밝혔다.",
+            published_at="2026-05-20",
+        )
+    )
+    assert newer_release_id is not None
+    assert older_release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=newer_release_id,
+            title="생성일이 최신인 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+            created_at="2026-05-20T10:00:00+00:00",
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=older_release_id,
+            title="id는 크지만 생성일이 오래된 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+            created_at="2026-05-20T09:00:00+00:00",
+        )
+    )
+
+    assert [row["title"] for row in store.recent_drafts(limit=10)] == [
+        "생성일이 최신인 초안",
+        "id는 크지만 생성일이 오래된 초안",
+    ]
+    assert [row["title"] for row in store.drafts(limit=10)] == [
+        "생성일이 최신인 초안",
+        "id는 크지만 생성일이 오래된 초안",
+    ]
+    assert [row["title"] for row in store.drafts_by_source("sample", limit=10)] == [
+        "생성일이 최신인 초안",
+        "id는 크지만 생성일이 오래된 초안",
+    ]
+
+
 def test_store_keeps_existing_published_at_when_recrawl_has_no_date():
     db_path = Path(f"data/.test_storage_keep_date_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
@@ -385,12 +448,25 @@ def test_press_releases_are_sorted_by_published_time_not_collection_order():
             collected_at="2026-05-20T09:00:00+00:00",
         )
     )
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="게시일 없는 원문",
+            url="https://example.com/no-date",
+            content="테스트 군은 게시일이 없는 원문을 안내한다고 밝혔다.",
+            published_at=None,
+            collected_at="2026-05-21T09:00:00+00:00",
+        )
+    )
 
     releases = store.press_releases(limit=10)
     source_releases = store.press_releases_by_source("sample", limit=10)
 
-    assert [row["title"] for row in releases] == ["나중에 수집된 최신 보도자료", "먼저 수집된 오래된 보도자료"]
-    assert [row["title"] for row in source_releases] == ["나중에 수집된 최신 보도자료", "먼저 수집된 오래된 보도자료"]
+    expected = ["나중에 수집된 최신 보도자료", "먼저 수집된 오래된 보도자료", "게시일 없는 원문"]
+    assert [row["title"] for row in releases] == expected
+    assert [row["title"] for row in source_releases] == expected
 
 
 def test_repair_missing_published_dates_reads_detail_registration_date(monkeypatch):
