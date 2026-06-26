@@ -12,7 +12,13 @@ from news_summary.scheduler import (
     _next_hourly_run_at,
     _wait_seconds_until,
 )
-from news_summary.service import collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, repair_missing_published_dates
+from news_summary.service import (
+    collect_enabled_sources,
+    draft_pending_releases,
+    draft_pending_releases_for_date,
+    gemini_cooldown_until,
+    repair_missing_published_dates,
+)
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
 
@@ -320,6 +326,120 @@ def test_store_reuses_existing_draft_for_same_press_release():
     assert second_id == first_id
     assert store.counts()["drafts"] == 1
     assert store.get_draft(first_id)["title"] == "첫 초안"
+
+
+def test_pending_press_releases_are_sorted_by_published_time_not_id():
+    db_path = Path(f"data/.test_storage_pending_release_sort_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="먼저 저장된 오래된 원문",
+            url="https://example.com/pending-old",
+            content="테스트 군은 오래된 원문을 안내한다고 밝혔다.",
+            published_at="2026-05-20 09:00",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="나중에 저장된 최신 원문",
+            url="https://example.com/pending-new",
+            content="테스트 군은 최신 원문을 안내한다고 밝혔다.",
+            published_at="2026-05-20 10:00",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="게시일 없는 원문",
+            url="https://example.com/pending-no-date",
+            content="테스트 군은 게시일 없는 원문을 안내한다고 밝혔다.",
+            published_at=None,
+        )
+    )
+
+    assert [row["title"] for row in store.pending_press_releases(limit=10)] == [
+        "나중에 저장된 최신 원문",
+        "먼저 저장된 오래된 원문",
+        "게시일 없는 원문",
+    ]
+
+
+def test_draft_pending_releases_for_date_filters_date_and_supports_oldest_first(monkeypatch):
+    db_path = Path(f"data/.test_service_draft_date_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    older_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="오전 보도자료",
+            url="https://example.com/date-old",
+            content="테스트 군은 오전 보도자료를 안내한다고 밝혔다.",
+            published_at="2026-06-26 09:00",
+        )
+    )
+    newer_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="오후 보도자료",
+            url="https://example.com/date-new",
+            content="테스트 군은 오후 보도자료를 안내한다고 밝혔다.",
+            published_at="2026-06-26 15:00",
+        )
+    )
+    other_date_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="전날 보도자료",
+            url="https://example.com/date-other",
+            content="테스트 군은 전날 보도자료를 안내한다고 밝혔다.",
+            published_at="2026-06-25 17:00",
+        )
+    )
+    assert older_id is not None
+    assert newer_id is not None
+    assert other_date_id is not None
+    generated_titles = []
+
+    def fake_generate_draft(item_id, item, model=None, require_gemini=False):
+        assert require_gemini is True
+        generated_titles.append(item.title)
+        return ArticleDraft(
+            press_release_id=item_id,
+            title=f"{item.title} 초안",
+            body="첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+
+    monkeypatch.setattr("news_summary.service.generate_draft", fake_generate_draft)
+
+    messages = draft_pending_releases_for_date(
+        store,
+        "2026-06-26",
+        limit=10,
+        require_gemini=True,
+        oldest_first=True,
+    )
+
+    assert generated_titles == ["오전 보도자료", "오후 보도자료"]
+    assert messages == ["초안 #1 생성: 오전 보도자료 초안", "초안 #2 생성: 오후 보도자료 초안"]
+    assert store.count_pending_press_releases_for_date("2026-06-26") == 0
+    assert store.count_pending_press_releases_for_date("2026-06-25") == 1
 
 
 def test_drafts_are_sorted_by_draft_activity_time_not_id():

@@ -342,11 +342,52 @@ class Store:
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE ad.id IS NULL
-                ORDER BY pr.id DESC
+                ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                         pr.published_at DESC,
+                         pr.collected_at DESC,
+                         pr.id DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
+
+    def pending_press_releases_for_date(
+        self,
+        published_date: str,
+        limit: int,
+        *,
+        oldest_first: bool = False,
+    ) -> list[sqlite3.Row]:
+        direction = "ASC" if oldest_first else "DESC"
+        with self.connect() as conn:
+            return conn.execute(
+                f"""
+                SELECT pr.*
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                  AND pr.published_at LIKE ?
+                ORDER BY pr.published_at {direction},
+                         pr.collected_at {direction},
+                         pr.id {direction}
+                LIMIT ?
+                """,
+                (f"{published_date}%", limit),
+            ).fetchall()
+
+    def count_pending_press_releases_for_date(self, published_date: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                  AND pr.published_at LIKE ?
+                """,
+                (f"{published_date}%",),
+            ).fetchone()
+        return int(row["count"])
 
     def add_article_draft(self, draft: ArticleDraft) -> int:
         with self.connect() as conn:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import time
 
 from .ops_logging import configure_logging, get_logger
 from .settings import env_path, load_environment, load_sources
@@ -21,6 +23,15 @@ def main() -> None:
 
     draft = sub.add_parser("draft", help="수집 원문으로 기사 초안을 만듭니다.")
     draft.add_argument("--limit", type=int, default=5, help="최대 초안 생성 건수")
+
+    draft_date = sub.add_parser("draft-date", help="특정 게시일 원문으로 기사 초안을 만듭니다.")
+    draft_date.add_argument("date", help="초안을 만들 게시일. 예: 2026-06-26")
+    draft_date.add_argument("--limit", type=int, default=250, help="최대 초안 생성 건수")
+    draft_date.add_argument("--require-gemini", action="store_true", help="Gemini 성공 건만 초안으로 저장합니다.")
+    draft_date.add_argument("--sleep-seconds", type=float, default=0.0, help="초안 생성 사이 대기 초")
+    draft_date.add_argument("--wait-cooldown", action="store_true", help="Gemini 쿨다운이면 기다렸다가 재시도합니다.")
+    draft_date.add_argument("--quota-retry-limit", type=int, default=0, help="한도 초과 후 쿨다운 대기 재시도 횟수")
+    draft_date.add_argument("--newest-first", action="store_true", help="최신 원문부터 처리합니다.")
 
     run = sub.add_parser("run", help="원문 수집과 초안 생성을 함께 실행합니다.")
     run.add_argument("--limit", type=int, default=30, help="지자체별 최대 처리 건수")
@@ -59,6 +70,18 @@ def main() -> None:
     elif args.command == "draft":
         store.init_db()
         draft_command(store, args.limit)
+    elif args.command == "draft-date":
+        store.init_db()
+        draft_date_command(
+            store,
+            args.date,
+            args.limit,
+            require_gemini=args.require_gemini,
+            sleep_seconds=args.sleep_seconds,
+            wait_cooldown=args.wait_cooldown,
+            quota_retry_limit=args.quota_retry_limit,
+            newest_first=args.newest_first,
+        )
     elif args.command == "run":
         store.init_db()
         collect_command(store, config_path, args.limit)
@@ -90,6 +113,71 @@ def draft_command(store: Store, limit: int) -> None:
 
     for message in draft_pending_releases(store, limit):
         print(message)
+
+
+def draft_date_command(
+    store: Store,
+    published_date: str,
+    limit: int,
+    *,
+    require_gemini: bool,
+    sleep_seconds: float,
+    wait_cooldown: bool,
+    quota_retry_limit: int,
+    newest_first: bool,
+) -> None:
+    from .service import draft_pending_releases_for_date, gemini_cooldown_until
+
+    try:
+        datetime.strptime(published_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise SystemExit("게시일은 YYYY-MM-DD 형식으로 입력하세요.") from exc
+
+    attempts = 0
+    oldest_first = not newest_first
+    while True:
+        cooldown_until = gemini_cooldown_until(store) if require_gemini else None
+        if cooldown_until:
+            if not wait_cooldown:
+                print(f"Gemini 쿨다운 중: {cooldown_until.isoformat()}까지 초안 생성을 보류합니다.")
+                return
+            _wait_until(cooldown_until)
+
+        pending_before = store.count_pending_press_releases_for_date(published_date)
+        if pending_before <= 0:
+            print(f"{published_date} 미변환 원문이 없습니다.")
+            return
+
+        print(f"{published_date} 미변환 원문 {pending_before}건 처리 시작")
+        for message in draft_pending_releases_for_date(
+            store,
+            published_date,
+            limit=limit,
+            require_gemini=require_gemini,
+            oldest_first=oldest_first,
+            sleep_seconds=sleep_seconds,
+        ):
+            print(message)
+
+        pending_after = store.count_pending_press_releases_for_date(published_date)
+        print(f"{published_date} 남은 미변환 원문 {pending_after}건")
+        if pending_after <= 0:
+            return
+
+        cooldown_until = gemini_cooldown_until(store) if require_gemini else None
+        if not cooldown_until or not wait_cooldown or attempts >= quota_retry_limit:
+            return
+        attempts += 1
+
+
+def _wait_until(target: datetime) -> None:
+    target_utc = target.astimezone(timezone.utc)
+    while True:
+        remaining = (target_utc - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            return
+        print(f"Gemini 쿨다운 대기 중: {int(remaining)}초 남음")
+        time.sleep(min(60.0, max(1.0, remaining)))
 
 
 def show_drafts(store: Store, limit: int) -> None:

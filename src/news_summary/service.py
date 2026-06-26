@@ -330,9 +330,58 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
         logger.info("draft skipped no pending releases")
         return ["초안을 만들 새 원문이 없습니다."]
 
+    return _draft_rows(store, rows, limit=limit, require_gemini=require_gemini)
+
+
+def draft_pending_releases_for_date(
+    store: Store,
+    published_date: str,
+    limit: int = 250,
+    require_gemini: bool = False,
+    *,
+    oldest_first: bool = False,
+    sleep_seconds: float = 0.0,
+) -> list[str]:
+    if require_gemini:
+        cooldown_until = gemini_cooldown_until(store)
+        if cooldown_until:
+            logger.info("date draft skipped gemini cooldown until=%s date=%s", cooldown_until.isoformat(), published_date)
+            return [_gemini_cooldown_message(cooldown_until)]
+
+    rows = store.pending_press_releases_for_date(published_date, limit, oldest_first=oldest_first)
+    if not rows:
+        logger.info("date draft skipped no pending releases date=%s", published_date)
+        return [f"{published_date} 초안을 만들 새 원문이 없습니다."]
+
+    return _draft_rows(
+        store,
+        rows,
+        limit=limit,
+        require_gemini=require_gemini,
+        published_date=published_date,
+        sleep_seconds=sleep_seconds,
+    )
+
+
+def _draft_rows(
+    store: Store,
+    rows,
+    *,
+    limit: int,
+    require_gemini: bool,
+    published_date: str | None = None,
+    sleep_seconds: float = 0.0,
+) -> list[str]:
     messages = []
-    logger.info("draft pending started rows=%s limit=%s require_gemini=%s", len(rows), limit, require_gemini)
-    for row in rows:
+    logger.info(
+        "draft pending started rows=%s limit=%s require_gemini=%s published_date=%s sleep_seconds=%s",
+        len(rows),
+        limit,
+        require_gemini,
+        published_date,
+        sleep_seconds,
+    )
+    for index, row in enumerate(rows, start=1):
         item = PressRelease(
             source_id=row["source_id"],
             source_name=row["source_name"],
@@ -371,6 +420,8 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
             draft.model,
         )
         messages.append(f"초안 #{draft_id} 생성: {draft.title}")
+        if sleep_seconds > 0 and index < len(rows):
+            time.sleep(sleep_seconds)
     return messages
 
 
