@@ -15,6 +15,7 @@ from .ops_logging import get_logger
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; NewsSummaryBot/0.1; press-release-monitor)"
 }
+DEFAULT_TIMEOUT = httpx.Timeout(20.0, connect=8.0)
 logger = get_logger("collectors")
 
 
@@ -129,7 +130,7 @@ def collect_rss(source: Source, limit: int = 10) -> list[PressRelease]:
 
     with httpx.Client(
         headers=DEFAULT_HEADERS,
-        timeout=20,
+        timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
         verify=source.verify_ssl,
     ) as client:
@@ -168,7 +169,7 @@ def collect_json_board(source: Source, limit: int = 10) -> list[PressRelease]:
 
     with httpx.Client(
         headers=DEFAULT_HEADERS,
-        timeout=20,
+        timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
         verify=source.verify_ssl,
     ) as client:
@@ -225,7 +226,7 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
 
     with httpx.Client(
         headers=DEFAULT_HEADERS,
-        timeout=20,
+        timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
         verify=source.verify_ssl,
     ) as client:
@@ -330,6 +331,8 @@ def _get_with_retries(
             return response
         except httpx.HTTPError as exc:
             last_error = exc
+            if _is_connection_setup_error(exc) and attempt >= 2:
+                break
             if attempt >= attempts:
                 break
             logger.warning(
@@ -344,6 +347,10 @@ def _get_with_retries(
             time.sleep(0.6 * attempt)
     assert last_error is not None
     raise last_error
+
+
+def _is_connection_setup_error(exc: httpx.HTTPError) -> bool:
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
 
 
 def _xml_text(item: ElementTree.Element, tag: str) -> str:

@@ -211,6 +211,7 @@ sources:
     region: 전남 광양
     enabled: true
     type: html_board
+    verify_ssl: false
     list_url: "https://gwangyang.go.kr/board.es?mid=a11007000000&bid=0057"
     include_url_contains:
       - "board.es"

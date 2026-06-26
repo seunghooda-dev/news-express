@@ -421,10 +421,10 @@ def test_source_status_records_collection_failures(monkeypatch):
     dashboard_html = client.get("/").data.decode("utf-8")
     detail_html = client.get("/sources/gwangju-city").data.decode("utf-8")
 
-    assert "사이트 접속" in dashboard_html
+    assert "외부 사이트 응답 지연" in dashboard_html
     assert "응답 지연 또는 타임아웃" in dashboard_html
     assert "최근 수집 점검" in detail_html
-    assert "사이트 접속" in detail_html
+    assert "외부 사이트 응답 지연" in detail_html
     assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
 
 

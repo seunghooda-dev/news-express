@@ -270,13 +270,21 @@ def _report_progress(progress_callback: ProgressCallback | None, **event: object
 def classify_collection_failure(exc: Exception) -> tuple[str, str]:
     message = str(exc)
     lowered = message.lower()
+    if "certificate_verify_failed" in lowered or "certificate verify failed" in lowered:
+        return "SSL 인증서", "인증서 검증 실패"
+    if "getaddrinfo failed" in lowered or "could not resolve" in lowered:
+        return "DNS 조회", "도메인 주소를 찾지 못함"
+    if isinstance(exc, httpx.ConnectTimeout) or "handshake operation timed out" in lowered:
+        return "외부 사이트 응답 지연", "TLS 연결 시간 초과"
     if isinstance(exc, httpx.TimeoutException) or "timeout" in lowered or "timed out" in lowered or "타임아웃" in message:
-        return "사이트 접속", "응답 지연 또는 타임아웃"
+        return "외부 사이트 응답 지연", "응답 지연 또는 타임아웃"
+    if "10054" in message or "강제로 끊겼습니다" in message:
+        return "연결 강제 종료", "원격 서버가 연결을 끊음"
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code if exc.response else ""
-        return "사이트 접속", f"HTTP 상태 오류 {status_code}".strip()
+        return "HTTP 상태 오류", f"응답 코드 {status_code}".strip()
     if isinstance(exc, httpx.RequestError):
-        return "사이트 접속", "요청 실패 또는 SSL/연결 오류"
+        return "사이트 접속", "요청 실패 또는 연결 오류"
     if isinstance(exc, JSONDecodeError) or "json" in lowered:
         return "자료 파싱", "JSON 응답 해석 실패"
     if isinstance(exc, CollectionError):

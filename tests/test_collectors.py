@@ -230,6 +230,42 @@ def test_collect_html_board_retries_list_request(monkeypatch):
     assert items[0].title == "구례군 새 사업 추진"
 
 
+def test_collect_html_board_limits_connection_setup_retries(monkeypatch):
+    monkeypatch.setattr("news_summary.collectors.time.sleep", lambda seconds: None)
+
+    class FakeClient:
+        calls = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            type(self).calls += 1
+            raise httpx.ConnectTimeout("TLS 연결 시간 초과")
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="timeout-test",
+        name="응답 지연 기관",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+    )
+
+    try:
+        collect_html_board(source, limit=1)
+    except httpx.ConnectTimeout:
+        pass
+
+    assert FakeClient.calls == 2
+
+
 def test_collect_html_board_skips_failed_detail_and_continues(monkeypatch):
     monkeypatch.setattr("news_summary.collectors.time.sleep", lambda seconds: None)
 

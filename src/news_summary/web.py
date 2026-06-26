@@ -1142,6 +1142,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         last_message = status_row["message"] if status_row else ""
         failure_stage = status_row["failure_stage"] if status_row else ""
         failure_reason = status_row["failure_reason"] if status_row else ""
+        failure_stage, failure_reason = _source_failure_display(failure_stage, failure_reason, last_message)
         last_checked_datetime = _parse_datetime(last_checked_at)
         if last_status == "failed":
             issue = str(failure_stage or "수집 실패")
@@ -1191,6 +1192,26 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "failure_stage": "",
         "failure_reason": "",
     }
+
+
+def _source_failure_display(stage: object, reason: object, message: object) -> tuple[str, str]:
+    stage_text = str(stage or "").strip()
+    reason_text = str(reason or "").strip()
+    message_text = str(message or "")
+    lowered = message_text.lower()
+    if stage_text and stage_text != "사이트 접속":
+        return stage_text, reason_text
+    if "certificate_verify_failed" in lowered or "certificate verify failed" in lowered:
+        return "SSL 인증서", reason_text or "인증서 검증 실패"
+    if "getaddrinfo failed" in lowered or "could not resolve" in lowered:
+        return "DNS 조회", reason_text or "도메인 주소를 찾지 못함"
+    if "handshake operation timed out" in lowered:
+        return "외부 사이트 응답 지연", reason_text or "TLS 연결 시간 초과"
+    if "timed out" in lowered or "timeout" in lowered or "타임아웃" in message_text:
+        return "외부 사이트 응답 지연", reason_text or "응답 지연 또는 타임아웃"
+    if "10054" in message_text or "강제로 끊겼습니다" in message_text:
+        return "연결 강제 종료", reason_text or "원격 서버가 연결을 끊음"
+    return stage_text, reason_text
 
 
 def _source_by_id(config_path: Path, source_id: str):

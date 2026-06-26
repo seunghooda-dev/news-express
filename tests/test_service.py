@@ -128,7 +128,7 @@ def test_collect_enabled_sources_classifies_connection_failures(monkeypatch):
 
     assert "수집 실패" in messages[0]
     assert status["status"] == "failed"
-    assert status["failure_stage"] == "사이트 접속"
+    assert status["failure_stage"] == "외부 사이트 응답 지연"
     assert status["failure_reason"] == "응답 지연 또는 타임아웃"
 
 
