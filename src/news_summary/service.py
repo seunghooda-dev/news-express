@@ -25,10 +25,13 @@ DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
 TRANSIENT_DNS_RETRY_DELAY_SECONDS = 5.0
 
 
+DEFAULT_COLLECT_LIMIT = 30
+
+
 def collect_enabled_sources(
     store: Store,
     config_path: Path,
-    limit: int = 10,
+    limit: int = DEFAULT_COLLECT_LIMIT,
     progress_callback: ProgressCallback | None = None,
 ) -> list[str]:
     messages: list[str] = []
@@ -302,7 +305,7 @@ def _extract_detail_published_at(html: str, selectors: dict) -> str | None:
 def collect_and_draft_cycle(
     store: Store,
     config_path: Path,
-    collect_limit: int = 10,
+    collect_limit: int = DEFAULT_COLLECT_LIMIT,
     draft_limit: int = 250,
     require_gemini: bool = False,
     progress_callback: ProgressCallback | None = None,

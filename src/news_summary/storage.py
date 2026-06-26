@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .collectors import _normalize_published_at
+from .collectors import _canonical_url, _normalize_published_at
 from .models import ArticleDraft, PressRelease, Source
 
 
@@ -107,6 +107,7 @@ class Store:
             self._remove_news_brief_prefixes(conn)
             self._remove_leading_titles_from_bodies(conn)
             self._normalize_published_dates(conn)
+            self._normalize_press_release_urls(conn)
             self._ensure_single_draft_index(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id DESC)")
             conn.execute(
@@ -170,6 +171,66 @@ class Store:
                     (normalized, row["id"]),
                 )
 
+    def _normalize_press_release_urls(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("SELECT id, url FROM press_releases ORDER BY id").fetchall()
+        canonical_ids: dict[str, int] = {}
+        for row in rows:
+            release_id = int(row["id"])
+            canonical_url = _canonical_url(str(row["url"]))
+            existing_id = canonical_ids.get(canonical_url)
+            if existing_id is None:
+                canonical_ids[canonical_url] = release_id
+                if canonical_url != row["url"]:
+                    try:
+                        conn.execute("UPDATE press_releases SET url = ? WHERE id = ?", (canonical_url, release_id))
+                    except sqlite3.IntegrityError:
+                        duplicate = conn.execute(
+                            "SELECT id FROM press_releases WHERE url = ? AND id != ?",
+                            (canonical_url, release_id),
+                        ).fetchone()
+                        if duplicate:
+                            canonical_ids[canonical_url] = int(duplicate["id"])
+                            self._merge_press_release_duplicate(conn, int(duplicate["id"]), release_id)
+                continue
+
+            self._merge_press_release_duplicate(conn, existing_id, release_id)
+
+    def _merge_press_release_duplicate(
+        self,
+        conn: sqlite3.Connection,
+        keep_id: int,
+        duplicate_id: int,
+    ) -> None:
+        keep_draft = conn.execute("SELECT id FROM article_drafts WHERE press_release_id = ?", (keep_id,)).fetchone()
+        duplicate_draft = conn.execute(
+            "SELECT id FROM article_drafts WHERE press_release_id = ?",
+            (duplicate_id,),
+        ).fetchone()
+        if duplicate_draft and not keep_draft:
+            conn.execute("UPDATE article_drafts SET press_release_id = ? WHERE press_release_id = ?", (keep_id, duplicate_id))
+        elif duplicate_draft and keep_draft:
+            return
+
+        conn.execute(
+            """
+            UPDATE press_releases
+            SET source_id = duplicate.source_id,
+                source_name = duplicate.source_name,
+                region = duplicate.region,
+                title = duplicate.title,
+                content = duplicate.content,
+                published_at = COALESCE(duplicate.published_at, press_releases.published_at),
+                collected_at = duplicate.collected_at,
+                validation_status = duplicate.validation_status,
+                validation_note = duplicate.validation_note
+            FROM press_releases AS duplicate
+            WHERE press_releases.id = ?
+              AND duplicate.id = ?
+            """,
+            (keep_id, duplicate_id),
+        )
+        conn.execute("DELETE FROM press_releases WHERE id = ?", (duplicate_id,))
+
     def _ensure_single_draft_index(self, conn: sqlite3.Connection) -> None:
         duplicate = conn.execute(
             """
@@ -224,8 +285,9 @@ class Store:
                 )
 
     def add_press_release(self, item: PressRelease) -> int | None:
+        item_url = _canonical_url(item.url)
         with self.connect() as conn:
-            existing = conn.execute("SELECT id FROM press_releases WHERE url = ?", (item.url,)).fetchone()
+            existing = conn.execute("SELECT id FROM press_releases WHERE url = ?", (item_url,)).fetchone()
             if existing:
                 conn.execute(
                     """
@@ -245,7 +307,7 @@ class Store:
                         item.collected_at,
                         item.validation_status,
                         item.validation_note,
-                        item.url,
+                        item_url,
                     ),
                 )
                 return None
@@ -262,7 +324,7 @@ class Store:
                     item.source_name,
                     item.region,
                     item.title,
-                    item.url,
+                    item_url,
                     item.content,
                     item.published_at,
                     item.collected_at,

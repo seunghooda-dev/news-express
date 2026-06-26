@@ -17,13 +17,13 @@ def main() -> None:
     sub.add_parser("init-db", help="데이터베이스를 준비합니다.")
 
     collect = sub.add_parser("collect", help="보도자료 원문을 수집합니다.")
-    collect.add_argument("--limit", type=int, default=10, help="지자체별 최대 수집 건수")
+    collect.add_argument("--limit", type=int, default=30, help="지자체별 최대 수집 건수")
 
     draft = sub.add_parser("draft", help="수집 원문으로 기사 초안을 만듭니다.")
     draft.add_argument("--limit", type=int, default=5, help="최대 초안 생성 건수")
 
     run = sub.add_parser("run", help="원문 수집과 초안 생성을 함께 실행합니다.")
-    run.add_argument("--limit", type=int, default=10, help="지자체별 최대 처리 건수")
+    run.add_argument("--limit", type=int, default=30, help="지자체별 최대 처리 건수")
 
     show = sub.add_parser("show-drafts", help="최근 기사 초안을 보여줍니다.")
     show.add_argument("--limit", type=int, default=10, help="표시할 초안 수")

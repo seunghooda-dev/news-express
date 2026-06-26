@@ -542,7 +542,7 @@ def create_app() -> Flask:
 
     @app.post("/recrawl")
     def recrawl():
-        limit = _positive_int(request.form.get("limit"), default=10)
+        limit = _positive_int(request.form.get("limit"), default=30)
         source_count = max(1, len([source for source in load_sources(config_path) if source.enabled]))
         draft_limit = max(limit * source_count, 250)
         auto_collector = app.config.get("AUTO_COLLECTOR")

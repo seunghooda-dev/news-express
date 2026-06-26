@@ -32,7 +32,7 @@ sources:
     region: 광주
     enabled: true
     type: html_board
-    list_url: "https://www.gwangju.go.kr/boardList.do?boardId=BD_0000000027&pageId=www789"
+    list_url: "https://www.gwangju.go.kr/boardList.do?boardId=BD_0000000027&pageId=www789&recordCnt=30"
     base_url: "https://www.gwangju.go.kr"
     include_url_contains:
       - "boardView.do"

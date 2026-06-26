@@ -5,7 +5,13 @@ from uuid import uuid4
 import httpx
 
 from news_summary.models import ArticleDraft, PressRelease, Source
-from news_summary.scheduler import AutoCollector, build_auto_collector_from_env, _next_hourly_run_at, _wait_seconds_until
+from news_summary.scheduler import (
+    DEFAULT_AUTO_COLLECT_LIMIT,
+    AutoCollector,
+    build_auto_collector_from_env,
+    _next_hourly_run_at,
+    _wait_seconds_until,
+)
 from news_summary.service import collect_enabled_sources, draft_pending_releases, gemini_cooldown_until, repair_missing_published_dates
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
@@ -192,6 +198,76 @@ def test_store_normalizes_existing_published_at_metadata():
     with store.connect() as conn:
         row = conn.execute("SELECT published_at FROM press_releases WHERE id = ?", (release_id,)).fetchone()
     assert row["published_at"] == "2026-05-20 14:03"
+
+
+def test_store_canonicalizes_press_release_urls_for_duplicate_detection():
+    db_path = Path(f"data/.test_storage_canonical_urls_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    first_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangju-city",
+            source_name="광주광역시청 보도자료",
+            region="광주",
+            title="광주시 보도자료",
+            url="https://www.gwangju.go.kr/boardView.do?pageId=www789&boardId=BD_0000000027&seq=22205&movePage=1&recordCnt=15",
+            content="광주시는 시민 생활 안전을 위해 관련 교육과 현장 점검을 추진한다고 밝혔다.",
+            published_at="2026-06-26",
+        )
+    )
+    second_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangju-city",
+            source_name="광주광역시청 보도자료",
+            region="광주",
+            title="광주시 보도자료 수정",
+            url="https://www.gwangju.go.kr/boardView.do?pageId=www789&boardId=BD_0000000027&seq=22205&movePage=1&recordCnt=30",
+            content="광주시는 시민 생활 안전을 위해 관련 교육과 현장 점검을 추진한다고 설명했다.",
+            published_at="2026-06-26",
+        )
+    )
+
+    assert first_id is not None
+    assert second_id is None
+    with store.connect() as conn:
+        rows = conn.execute("SELECT title, url FROM press_releases").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "광주시 보도자료 수정"
+    assert "recordCnt" not in rows[0]["url"]
+    assert "movePage" not in rows[0]["url"]
+
+
+def test_store_merges_existing_press_release_urls_after_canonicalization():
+    db_path = Path(f"data/.test_storage_merge_canonical_urls_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    with store.connect() as conn:
+        for record_count in (15, 30):
+            conn.execute(
+                """
+                INSERT INTO press_releases
+                (source_id, source_name, region, title, url, content, published_at, collected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "gwangju-city",
+                    "광주광역시청 보도자료",
+                    "광주",
+                    f"광주시 보도자료 {record_count}",
+                    f"https://www.gwangju.go.kr/boardView.do?pageId=www789&boardId=BD_0000000027&seq=22205&movePage=1&recordCnt={record_count}",
+                    "광주시는 시민 생활 안전을 위해 관련 교육과 현장 점검을 추진한다고 밝혔다.",
+                    "2026-06-26",
+                    "2026-06-26T10:00:00+00:00",
+                ),
+            )
+
+    store.init_db()
+
+    with store.connect() as conn:
+        rows = conn.execute("SELECT title, url FROM press_releases").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "광주시 보도자료 30"
+    assert "recordCnt" not in rows[0]["url"]
 
 
 def test_store_configures_sqlite_for_concurrent_app_usage():
@@ -384,6 +460,20 @@ def test_auto_collector_interval_is_fixed_to_hourly_boundary(monkeypatch):
 
     assert collector is not None
     assert collector.snapshot().interval_seconds == 3600
+    assert collector.snapshot().collect_limit == DEFAULT_AUTO_COLLECT_LIMIT
+
+
+def test_auto_collector_default_collect_limit_covers_full_board_pages(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_default_limit_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    monkeypatch.delenv("NEWS_SUMMARY_AUTO_COLLECT_LIMIT", raising=False)
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = build_auto_collector_from_env(store, Path("unused.yaml"))
+
+    assert collector is not None
+    assert collector.snapshot().collect_limit == 30
 
 
 def test_auto_collector_enabled_state_can_be_persisted(monkeypatch):

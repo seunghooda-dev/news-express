@@ -65,7 +65,7 @@ PowerShell 스크립트로 수집과 초안 생성을 한 번에 실행하려면
 
 - 기본 주기: 매시간 정각마다 1회
 - 수집 범위: 설정에서 켜진 전체 기관
-- 기본 처리: 기관별 최근 10건 확인, 새 원문은 Gemini 초안으로 생성
+- 기본 처리: 기관별 최근 30건 확인, 새 원문은 Gemini 초안으로 생성
 - Gemini 실패 시: 규칙 기반 초안을 만들지 않고 원문을 보류해 다음 주기에 다시 시도
 - 수동 재수집: 홈 화면의 `수동 재수집` 버튼 하나로 전체 기관 확인과 Gemini 초안 생성을 함께 실행
 
@@ -73,7 +73,7 @@ PowerShell 스크립트로 수집과 초안 생성을 한 번에 실행하려면
 
 ```text
 NEWS_SUMMARY_AUTO_COLLECT=1
-NEWS_SUMMARY_AUTO_COLLECT_LIMIT=10
+NEWS_SUMMARY_AUTO_COLLECT_LIMIT=30
 NEWS_SUMMARY_AUTO_DRAFT_LIMIT=250
 NEWS_SUMMARY_AUTO_REQUIRE_GEMINI=1
 NEWS_SUMMARY_ADMIN_PASSWORD=

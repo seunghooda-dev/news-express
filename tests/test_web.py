@@ -663,10 +663,15 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     assert "초안 생성" not in dashboard_html
     assert "승인 기사 내보내기" not in dashboard_html
 
+    default_response = client.post("/recrawl", data={}, follow_redirects=True)
     response = client.post("/recrawl", data={"limit": "7"}, follow_redirects=True)
 
+    assert default_response.status_code == 200
     assert response.status_code == 200
-    assert calls == [{"collect_limit": 7, "draft_limit": 250, "require_gemini": True}]
+    assert calls[0]["collect_limit"] == 30
+    assert calls[0]["draft_limit"] >= 30
+    assert calls[0]["require_gemini"] is True
+    assert calls[1] == {"collect_limit": 7, "draft_limit": 250, "require_gemini": True}
 
 
 def test_ops_logs_page_shows_recent_warnings(monkeypatch, tmp_path):

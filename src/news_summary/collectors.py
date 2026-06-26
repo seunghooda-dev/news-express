@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import time
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 import httpx
@@ -16,6 +16,25 @@ DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; NewsSummaryBot/0.1; press-release-monitor)"
 }
 DEFAULT_TIMEOUT = httpx.Timeout(20.0, connect=8.0)
+VOLATILE_DETAIL_QUERY_PARAMS = {
+    "movePage",
+    "nPage",
+    "page",
+    "pageIndex",
+    "recordCnt",
+    "searchCategory1",
+    "searchCategory2",
+    "searchCategory3",
+    "searchCondition",
+    "searchEndDt",
+    "searchEnDate",
+    "searchKeyword",
+    "searchStartDt",
+    "searchStDate",
+    "searchText",
+    "searchType",
+    "vlist_no_npage",
+}
 logger = get_logger("collectors")
 
 
@@ -455,7 +474,15 @@ def _is_allowed_link(source: Source, url: str, title: str) -> bool:
 def _canonical_url(url: str) -> str:
     parts = urlsplit(url)
     path = re.sub(r";[^/?#]*", "", parts.path)
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+    query = urlencode(
+        [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key not in VOLATILE_DETAIL_QUERY_PARAMS
+        ],
+        doseq=True,
+    )
+    return urlunsplit((parts.scheme, parts.netloc, path, query, parts.fragment))
 
 
 def _validated_release(

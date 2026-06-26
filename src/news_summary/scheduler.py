@@ -13,6 +13,7 @@ from .storage import Store
 
 
 DEFAULT_AUTO_INTERVAL_SECONDS = 3600
+DEFAULT_AUTO_COLLECT_LIMIT = 30
 AUTO_COLLECT_ENABLED_KEY = "auto_collect_enabled"
 LAST_AUTO_COLLECT_FINISHED_AT_KEY = "last_auto_collect_finished_at"
 logger = get_logger("scheduler")
@@ -38,7 +39,7 @@ class AutoCollectorStatus:
     enabled: bool = False
     running: bool = False
     interval_seconds: int = DEFAULT_AUTO_INTERVAL_SECONDS
-    collect_limit: int = 10
+    collect_limit: int = DEFAULT_AUTO_COLLECT_LIMIT
     draft_limit: int = 250
     require_gemini: bool = True
     run_count: int = 0
@@ -62,7 +63,7 @@ class AutoCollector:
         store: Store,
         config_path: Path,
         interval_seconds: int = DEFAULT_AUTO_INTERVAL_SECONDS,
-        collect_limit: int = 10,
+        collect_limit: int = DEFAULT_AUTO_COLLECT_LIMIT,
         draft_limit: int = 250,
         require_gemini: bool = True,
         enabled: bool = True,
@@ -295,7 +296,7 @@ class AutoCollector:
 
 
 def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollector | None:
-    collect_limit = env_int("NEWS_SUMMARY_AUTO_COLLECT_LIMIT", 10)
+    collect_limit = env_int("NEWS_SUMMARY_AUTO_COLLECT_LIMIT", DEFAULT_AUTO_COLLECT_LIMIT)
     source_count = max(1, len([source for source in load_sources(config_path) if source.enabled]))
     default_draft_limit = max(collect_limit * source_count, 250)
     return AutoCollector(
