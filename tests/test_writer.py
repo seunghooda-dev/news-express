@@ -246,7 +246,7 @@ def test_refine_draft_with_gemini_passes_reporter_instruction(monkeypatch):
     assert refined.title == "신안군, 교육 프로그램 운영"
 
 
-def test_refine_draft_with_gemini_uses_only_non_lite_flash_models(monkeypatch):
+def test_refine_draft_with_gemini_uses_only_35_flash(monkeypatch):
     draft_row = {
         "press_release_id": 7,
         "source_name": "신안군청 보도자료",
@@ -260,23 +260,22 @@ def test_refine_draft_with_gemini_uses_only_non_lite_flash_models(monkeypatch):
 
     def fake_refinement(draft, instruction, current_title, current_body, current_review_note, api_key, model_name):
         calls.append(model_name)
-        if model_name == "gemini-3.5-flash":
-            raise RuntimeError("503 overloaded")
-        return _parse_model_output(
-            draft["press_release_id"],
-            "제목: [뉴스 단신] Gemini 3 Flash 성공\n\n본문:\n첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.\n\n검수 메모:\n- non-lite 모델",
-            f"{model_name}:gemini-refine",
-        )
+        raise RuntimeError("503 overloaded")
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("GEMINI_MODEL", "quota-model")
     monkeypatch.delenv("GEMINI_MODELS", raising=False)
     monkeypatch.setattr("news_summary.writer._generate_gemini_refinement", fake_refinement)
 
-    refined = refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
+    try:
+        refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
+    except GeminiRefineError as exc:
+        assert "일시적으로 과부하" in str(exc)
+        assert exc.attempted_models == ["gemini-3.5-flash"]
+    else:
+        raise AssertionError("GeminiRefineError가 발생해야 합니다.")
 
-    assert calls == ["gemini-3.5-flash", "gemini-3-flash-preview"]
-    assert refined.model == "gemini-3-flash-preview:gemini-refine"
+    assert calls == ["gemini-3.5-flash"]
 
 
 def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
