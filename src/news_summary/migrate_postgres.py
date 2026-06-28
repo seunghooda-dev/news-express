@@ -65,8 +65,8 @@ def _copy_table(source: sqlite3.Connection, target: Any, table: str) -> int:
     column_sql = ", ".join(columns)
     placeholders = ", ".join("?" for _ in columns)
     sql = f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})"
-    for row in rows:
-        target.execute(sql, tuple(row[column] for column in columns))
+    values = [tuple(row[column] for column in columns) for row in rows]
+    target.executemany(sql, values)
     return len(rows)
 
 

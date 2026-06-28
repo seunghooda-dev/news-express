@@ -183,6 +183,13 @@ class _PostgresConnection:
         cursor = self._conn.execute(translated, params)
         return _PostgresCursor(cursor)
 
+    def executemany(self, sql: str, rows: list[tuple[object, ...]]) -> None:
+        if not rows:
+            return
+        translated = _postgres_sql(sql)
+        with self._conn.cursor() as cursor:
+            cursor.executemany(translated, rows)
+
     def executescript(self, script: str) -> None:
         for statement in _split_sql_script(script):
             self.execute(statement)
