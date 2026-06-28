@@ -595,6 +595,31 @@ def test_admin_setup_enables_login_without_env_password(monkeypatch):
     assert "/login" in protected.headers["Location"]
 
 
+def test_admin_setup_is_accessible_when_auth_required_without_password(monkeypatch):
+    db_path = Path(f"data/.test_admin_required_setup_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    setup_page = client.get("/admin/setup", follow_redirects=False)
+    assert setup_page.status_code == 200
+    assert "관리자 비밀번호" in setup_page.data.decode("utf-8")
+
+    setup = client.post(
+        "/admin/setup",
+        data={"password": "secret1234", "confirm_password": "secret1234"},
+        follow_redirects=True,
+    )
+    assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
+
+
 def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     db_path = Path(f"data/.test_source_detail_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

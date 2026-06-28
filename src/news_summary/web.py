@@ -165,7 +165,7 @@ def create_app() -> Flask:
         if config.source == "environment":
             flash(".env의 관리자 비밀번호 설정이 우선 적용 중입니다.")
             return redirect(url_for("dashboard") if session.get("admin_authenticated") else url_for("login"))
-        if config.enabled and not session.get("admin_authenticated"):
+        if config.enabled and not config.setup_required and not session.get("admin_authenticated"):
             return redirect(url_for("login", next=url_for("admin_setup")))
         if request.method == "POST":
             password = request.form.get("password") or ""
