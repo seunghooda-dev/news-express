@@ -108,6 +108,29 @@ news-summary migrate-sqlite-to-postgres --sqlite-db data/news_summary.sqlite --d
 
 PostgreSQL 모드에서는 앱의 SQLite zip 백업 기능 대신 클라우드 DB 제공자의 백업/스냅샷 기능을 사용합니다.
 
+## 외부 접속: Cloudflare Tunnel
+
+회사 기자들과 함께 쓰려면 아래 순서로 설정합니다.
+
+1. 로컬 앱 로그인 보호를 먼저 켭니다.
+   - `.env`에 `NEWS_SUMMARY_AUTH_REQUIRED=1`을 설정합니다.
+   - 로컬에서 `http://127.0.0.1:5000/admin/setup`에 접속해 관리자 비밀번호를 먼저 만듭니다.
+2. Cloudflare 계정에 도메인을 연결합니다.
+3. `cloudflared tunnel login`을 실행해 Cloudflare 계정과 도메인을 승인합니다.
+4. 정식 호스트명을 정한 뒤 터널을 설치합니다.
+
+```powershell
+.\scripts\install_cloudflare_named_tunnel.ps1 -Hostname news.example.com
+```
+
+도메인을 아직 연결하지 않았거나 임시 테스트 링크만 필요하면 아래 명령을 사용할 수 있습니다.
+
+```powershell
+.\scripts\start_cloudflare_quick_tunnel.ps1
+```
+
+정식 공유 전에는 Cloudflare Zero Trust의 Access 애플리케이션에서 허용할 기자 이메일만 등록해야 합니다.
+
 ## 백업과 자동 실행
 
 ```powershell
