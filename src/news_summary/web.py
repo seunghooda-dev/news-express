@@ -21,7 +21,7 @@ from .service import (
     gemini_cooldown_until,
     mark_gemini_cooldown,
 )
-from .settings import PROJECT_ROOT, env_path, load_environment, load_sources
+from .settings import PROJECT_ROOT, env_database, env_path, load_environment, load_sources
 from .storage import Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
 from .writer import GeminiRefineError, current_gemini_models, refine_draft_with_gemini
@@ -59,7 +59,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["file_size_label"] = file_size_label
     app.jinja_env.filters["date_label"] = format_datetime_label
 
-    store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
+    store = Store(env_database())
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
     export_dir = env_path("NEWS_SUMMARY_EXPORT_DIR", "exports")
     backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
@@ -203,7 +203,7 @@ def create_app() -> Flask:
             auto_collector_status=auto_status,
             backup_dir=backup_dir,
             backup_files=_backup_files(backup_dir),
-            db_path=store.path,
+            db_path=store.display_location,
             log_path=Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
         )
 
@@ -221,6 +221,9 @@ def create_app() -> Flask:
 
     @app.post("/operations/backup")
     def create_backup_route():
+        if store.is_postgres:
+            flash("PostgreSQL 모드에서는 SQLite zip 백업 대신 클라우드 DB 백업/스냅샷을 사용하세요.")
+            return redirect(url_for("operations"))
         backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")

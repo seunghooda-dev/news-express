@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import os
 import time
 
 from .ops_logging import configure_logging, get_logger
-from .settings import env_path, load_environment, load_sources
+from .settings import env_database, env_path, load_environment, load_sources
 from .storage import Store
 
 
@@ -50,6 +51,11 @@ def main() -> None:
     restore.add_argument("--yes", action="store_true", help="확인 질문 없이 복구합니다.")
     restore.add_argument("--dry-run", action="store_true", help="복구 대상 파일만 확인합니다.")
 
+    migrate_pg = sub.add_parser("migrate-sqlite-to-postgres", help="SQLite 데이터를 PostgreSQL로 이관합니다.")
+    migrate_pg.add_argument("--sqlite-db", default=None, help="이관할 SQLite DB 경로")
+    migrate_pg.add_argument("--database-url", default=None, help="대상 PostgreSQL DATABASE_URL")
+    migrate_pg.add_argument("--replace", action="store_true", help="대상 PostgreSQL 데이터를 비우고 다시 이관합니다.")
+
     serve = sub.add_parser("serve", help="로컬 검수 화면을 실행합니다.")
     serve.add_argument("--host", default="127.0.0.1", help="실행할 호스트")
     serve.add_argument("--port", type=int, default=5000, help="실행할 포트")
@@ -57,13 +63,13 @@ def main() -> None:
     sub.add_parser("show-sources", help="설정된 수집 소스를 보여줍니다.")
     args = parser.parse_args()
 
-    store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
+    store = Store(env_database())
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
 
     if args.command == "init-db":
         store.init_db()
-        logger.info("database initialized path=%s", store.path)
-        print(f"데이터베이스 준비 완료: {store.path}")
+        logger.info("database initialized path=%s", store.display_location)
+        print(f"데이터베이스 준비 완료: {store.display_location}")
     elif args.command == "collect":
         store.init_db()
         collect_command(store, config_path, args.limit)
@@ -96,6 +102,10 @@ def main() -> None:
         backup_command(store, env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"), env_path("NEWS_SUMMARY_BACKUP_DIR", args.output_dir))
     elif args.command == "restore":
         restore_command(args.backup_path, args.yes, args.dry_run)
+    elif args.command == "migrate-sqlite-to-postgres":
+        sqlite_db = env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite") if args.sqlite_db is None else args.sqlite_db
+        database_url = args.database_url or os.getenv("DATABASE_URL") or os.getenv("NEWS_SUMMARY_DATABASE_URL")
+        migrate_sqlite_to_postgres_command(sqlite_db, database_url, replace=args.replace)
     elif args.command == "serve":
         logger.info("serve command host=%s port=%s", args.host, args.port)
         serve_command(args.host, args.port)
@@ -210,6 +220,8 @@ def backup_command(store: Store, db_path, output_dir) -> None:
 
     from .backup import create_backup
 
+    if store.is_postgres:
+        raise SystemExit("PostgreSQL 모드에서는 이 SQLite zip 백업 명령을 사용할 수 없습니다. 클라우드 DB 백업/스냅샷을 사용하세요.")
     store.init_db()
     backup_path = create_backup(Path.cwd(), Path(db_path), Path(output_dir))
     print(f"백업 완료: {backup_path}")
@@ -231,13 +243,26 @@ def restore_command(backup_path: str, yes: bool, dry_run: bool) -> None:
         print(f"- {name}")
 
 
+def migrate_sqlite_to_postgres_command(sqlite_db, database_url: str | None, *, replace: bool) -> None:
+    from pathlib import Path
+
+    from .migrate_postgres import migrate_sqlite_to_postgres
+
+    if not database_url:
+        raise SystemExit("DATABASE_URL 또는 NEWS_SUMMARY_DATABASE_URL을 설정하거나 --database-url을 지정하세요.")
+    counts = migrate_sqlite_to_postgres(Path(sqlite_db), database_url, replace=replace)
+    print("PostgreSQL 이관 완료:")
+    for table, count in counts.items():
+        print(f"- {table}: {count}건")
+
+
 def serve_command(host: str, port: int) -> None:
     from .scheduler import build_auto_collector_from_env
     from .web import create_app
 
     load_environment()
     logger = get_logger("cli")
-    store = Store(env_path("NEWS_SUMMARY_DB", "data/news_summary.sqlite"))
+    store = Store(env_database())
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
     store.init_db()
     auto_collector = build_auto_collector_from_env(store, config_path)

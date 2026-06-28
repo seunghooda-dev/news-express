@@ -81,11 +81,32 @@ NEWS_SUMMARY_ADMIN_PASSWORD=
 NEWS_SUMMARY_AUTH_REQUIRED=0
 NEWS_SUMMARY_BACKUP_DIR=data/backups
 NEWS_SUMMARY_LOG_DIR=data/logs
+DATABASE_URL=
 ```
 
 `NEWS_SUMMARY_GEMINI_LITE_UNTIL=YYYY-MM-DD`를 설정하면 해당 날짜까지 `gemini-3.5-flash` 실패 시 `gemini-3.1-flash-lite`를 함께 시도합니다. 날짜가 지나면 자동으로 3.5 Flash만 사용합니다.
 
 `NEWS_SUMMARY_ADMIN_PASSWORD` 값을 설정하면 관리자 로그인이 강제됩니다. 운영 로그는 홈 화면에 표시하지 않고 `/ops-logs` 경로에서 확인합니다.
+
+## PostgreSQL 전환
+
+기본값은 기존처럼 SQLite 파일(`NEWS_SUMMARY_DB`)입니다. 클라우드 PostgreSQL을 사용하려면 `.env`에 `DATABASE_URL`을 추가합니다.
+
+```text
+DATABASE_URL=postgresql://kbcnews:비밀번호@발급받은호스트:5432/kbcnews?sslmode=require
+```
+
+`DATABASE_URL`이 있으면 웹앱과 CLI는 PostgreSQL을 우선 사용합니다. URL에는 비밀번호가 들어가므로 GitHub에 올리면 안 됩니다.
+
+기존 SQLite 데이터를 PostgreSQL로 옮기려면 먼저 SQLite 백업을 만든 뒤 아래 명령을 실행합니다.
+
+```powershell
+news-summary migrate-sqlite-to-postgres --sqlite-db data/news_summary.sqlite --database-url "postgresql://kbcnews:비밀번호@발급받은호스트:5432/kbcnews?sslmode=require"
+```
+
+대상 PostgreSQL DB에 이미 데이터가 있으면 명령은 중단됩니다. 기존 데이터를 비우고 다시 넣어야 할 때만 `--replace`를 추가합니다.
+
+PostgreSQL 모드에서는 앱의 SQLite zip 백업 기능 대신 클라우드 DB 제공자의 백업/스냅샷 기능을 사용합니다.
 
 ## 백업과 자동 실행
 

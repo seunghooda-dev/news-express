@@ -23,6 +23,15 @@ def env_path(name: str, default: str) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def env_database(default: str = "data/news_summary.sqlite") -> str:
+    value = os.getenv("DATABASE_URL") or os.getenv("NEWS_SUMMARY_DATABASE_URL") or os.getenv("NEWS_SUMMARY_DB", default)
+    if value.startswith(("postgresql://", "postgres://")):
+        return value
+    path = Path(value)
+    resolved = path if path.is_absolute() else PROJECT_ROOT / path
+    return str(resolved)
+
+
 def load_sources(config_path: Path) -> list[Source]:
     try:
         import yaml

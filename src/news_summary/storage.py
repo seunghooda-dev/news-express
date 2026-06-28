@@ -3,9 +3,19 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from .collectors import _canonical_url, _normalize_published_at
 from .models import ArticleDraft, PressRelease, Source
+
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ModuleNotFoundError:  # pragma: no cover - exercised only when PostgreSQL is configured without psycopg.
+    psycopg = None
+    dict_row = None
 
 
 SCHEMA = """
@@ -76,12 +86,142 @@ CREATE TABLE IF NOT EXISTS source_collection_runs (
 """
 
 
-class Store:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+POSTGRES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS press_releases (
+    id BIGSERIAL PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    region TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL UNIQUE,
+    content TEXT NOT NULL,
+    published_at TEXT,
+    collected_at TEXT NOT NULL,
+    validation_status TEXT NOT NULL DEFAULT '검증 완료',
+    validation_note TEXT NOT NULL DEFAULT '기존 수집 원문입니다.'
+);
 
-    def connect(self) -> sqlite3.Connection:
+CREATE TABLE IF NOT EXISTS article_drafts (
+    id BIGSERIAL PRIMARY KEY,
+    press_release_id BIGINT NOT NULL REFERENCES press_releases(id),
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    review_note TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    initial_title TEXT,
+    initial_body TEXT,
+    initial_review_note TEXT,
+    initial_model TEXT,
+    status TEXT NOT NULL DEFAULT 'needs_review',
+    updated_at TEXT,
+    exported_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS draft_history (
+    id BIGSERIAL PRIMARY KEY,
+    draft_id BIGINT NOT NULL REFERENCES article_drafts(id),
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    review_note TEXT NOT NULL,
+    status TEXT NOT NULL,
+    model TEXT NOT NULL,
+    change_type TEXT NOT NULL,
+    changed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS source_collection_runs (
+    id BIGSERIAL PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL,
+    failure_stage TEXT NOT NULL DEFAULT '',
+    failure_reason TEXT NOT NULL DEFAULT '',
+    releases_found INTEGER NOT NULL DEFAULT 0,
+    inserted_count INTEGER NOT NULL DEFAULT 0,
+    repaired_dates INTEGER NOT NULL DEFAULT 0,
+    checked_at TEXT NOT NULL
+);
+"""
+
+
+class _PostgresCursor:
+    def __init__(self, cursor: Any, lastrowid: int | None = None) -> None:
+        self._cursor = cursor
+        self.lastrowid = lastrowid
+
+    def fetchone(self) -> Any:
+        return self._cursor.fetchone()
+
+    def fetchall(self) -> list[Any]:
+        return self._cursor.fetchall()
+
+
+class _PostgresConnection:
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def __enter__(self) -> "_PostgresConnection":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+
+    def execute(self, sql: str, params: tuple[object, ...] | list[object] = ()) -> _PostgresCursor:
+        translated = _postgres_sql(sql)
+        cursor = self._conn.execute(translated, params)
+        return _PostgresCursor(cursor)
+
+    def executescript(self, script: str) -> None:
+        for statement in _split_sql_script(script):
+            self.execute(statement)
+
+
+def _split_sql_script(script: str) -> list[str]:
+    return [statement.strip() for statement in script.split(";") if statement.strip()]
+
+
+def _postgres_sql(sql: str) -> str:
+    return sql.replace("?", "%s")
+
+
+def _redact_database_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if not parsed.password:
+        return url
+    username = parsed.username or ""
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    userinfo = f"{username}:***@" if username else ""
+    return urlunsplit((parsed.scheme, f"{userinfo}{host}{port}", parsed.path, parsed.query, parsed.fragment))
+
+
+class Store:
+    def __init__(self, path: Path | str) -> None:
+        self.location = str(path)
+        self.is_postgres = self.location.startswith(("postgresql://", "postgres://"))
+        self.path = path if self.is_postgres else Path(path)
+        self.display_location = _redact_database_url(self.location) if self.is_postgres else str(self.path)
+        if isinstance(self.path, Path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def connect(self) -> Any:
+        if self.is_postgres:
+            if psycopg is None:
+                raise RuntimeError("PostgreSQL을 사용하려면 psycopg 패키지가 필요합니다. python -m pip install -e .")
+            conn = psycopg.connect(self.location, row_factory=dict_row)
+            return _PostgresConnection(conn)
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -92,7 +232,7 @@ class Store:
 
     def init_db(self) -> None:
         with self.connect() as conn:
-            conn.executescript(SCHEMA)
+            conn.executescript(POSTGRES_SCHEMA if self.is_postgres else SCHEMA)
             self._ensure_column(conn, "article_drafts", "initial_title", "TEXT")
             self._ensure_column(conn, "article_drafts", "initial_body", "TEXT")
             self._ensure_column(conn, "article_drafts", "initial_review_note", "TEXT")
@@ -114,8 +254,22 @@ class Store:
                 "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id DESC)"
             )
 
-    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    def _ensure_column(self, conn: Any, table: str, column: str, definition: str) -> None:
+        if self.is_postgres:
+            columns = {
+                row["column_name"]
+                for row in conn.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = ?
+                    """,
+                    (table,),
+                ).fetchall()
+            }
+        else:
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
@@ -181,16 +335,15 @@ class Store:
             if existing_id is None:
                 canonical_ids[canonical_url] = release_id
                 if canonical_url != row["url"]:
-                    try:
+                    duplicate = conn.execute(
+                        "SELECT id FROM press_releases WHERE url = ? AND id != ?",
+                        (canonical_url, release_id),
+                    ).fetchone()
+                    if duplicate:
+                        canonical_ids[canonical_url] = int(duplicate["id"])
+                        self._merge_press_release_duplicate(conn, int(duplicate["id"]), release_id)
+                    else:
                         conn.execute("UPDATE press_releases SET url = ? WHERE id = ?", (canonical_url, release_id))
-                    except sqlite3.IntegrityError:
-                        duplicate = conn.execute(
-                            "SELECT id FROM press_releases WHERE url = ? AND id != ?",
-                            (canonical_url, release_id),
-                        ).fetchone()
-                        if duplicate:
-                            canonical_ids[canonical_url] = int(duplicate["id"])
-                            self._merge_press_release_duplicate(conn, int(duplicate["id"]), release_id)
                 continue
 
             self._merge_press_release_duplicate(conn, existing_id, release_id)
@@ -312,13 +465,16 @@ class Store:
                 )
                 return None
 
-            cur = conn.execute(
-                """
+            insert_sql = """
                 INSERT INTO press_releases
                 (source_id, source_name, region, title, url, content, published_at, collected_at,
                  validation_status, validation_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """
+            if self.is_postgres:
+                insert_sql += " RETURNING id"
+            cur = conn.execute(
+                insert_sql,
                 (
                     item.source_id,
                     item.source_name,
@@ -332,6 +488,9 @@ class Store:
                     item.validation_note,
                 ),
             )
+            if self.is_postgres:
+                row = cur.fetchone()
+                return int(row["id"]) if row else None
             return int(cur.lastrowid) if cur.lastrowid else None
 
     def pending_press_releases(self, limit: int) -> list[sqlite3.Row]:
@@ -397,13 +556,24 @@ class Store:
             ).fetchone()
             if existing:
                 return int(existing["id"])
-            cur = conn.execute(
+            if self.is_postgres:
+                insert_sql = """
+                INSERT INTO article_drafts
+                (press_release_id, title, body, review_note, model, created_at,
+                 initial_title, initial_body, initial_review_note, initial_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (press_release_id) DO NOTHING
+                RETURNING id
                 """
+            else:
+                insert_sql = """
                 INSERT OR IGNORE INTO article_drafts
                 (press_release_id, title, body, review_note, model, created_at,
                  initial_title, initial_body, initial_review_note, initial_model)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """
+            cur = conn.execute(
+                insert_sql,
                 (
                     draft.press_release_id,
                     draft.title,
@@ -417,6 +587,15 @@ class Store:
                     draft.model,
                 ),
             )
+            if self.is_postgres:
+                row = cur.fetchone()
+                if row:
+                    return int(row["id"])
+                existing = conn.execute(
+                    "SELECT id FROM article_drafts WHERE press_release_id = ?",
+                    (draft.press_release_id,),
+                ).fetchone()
+                return int(existing["id"]) if existing else 0
             if cur.lastrowid:
                 return int(cur.lastrowid)
             existing = conn.execute(
