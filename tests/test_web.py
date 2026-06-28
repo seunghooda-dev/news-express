@@ -790,6 +790,7 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
 def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
     db_path = Path(f"data/.test_gemini_usage_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL", "")
     from news_summary.web import create_app
 
     store = Store(db_path)

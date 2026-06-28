@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import ArticleDraft, PressRelease
@@ -10,8 +11,11 @@ from .writing_settings import custom_prompt_section
 
 
 PROMPT_PATH = Path(__file__).resolve().parents[2] / "templates" / "broadcast_shortform_prompt.md"
-GEMINI_FLASH_MODELS = ("gemini-3.5-flash",)
-DEFAULT_GEMINI_MODELS = GEMINI_FLASH_MODELS
+LOCAL_TZ = timezone(timedelta(hours=9))
+GEMINI_PRIMARY_MODELS = ("gemini-3.5-flash",)
+GEMINI_LITE_MODELS = ("gemini-3.1-flash-lite",)
+GEMINI_FLASH_MODELS = GEMINI_PRIMARY_MODELS
+DEFAULT_GEMINI_MODELS = GEMINI_PRIMARY_MODELS
 logger = get_logger("writer")
 
 
@@ -51,7 +55,7 @@ def generate_draft(
                     type(exc).__name__,
                     _shorten(str(exc), 240),
                 )
-                if _is_gemini_quota_error(exc):
+                if _is_gemini_quota_error(exc) and gemini_model == gemini_models[-1]:
                     break
                 continue
         if require_gemini:
@@ -102,7 +106,8 @@ def refine_draft_with_gemini(
         raise RuntimeError("Gemini API 키가 설정되어 있지 않습니다.")
     attempted = []
     last_error: Exception | None = None
-    for gemini_model in _gemini_model_candidates(model):
+    gemini_models = _gemini_model_candidates(model)
+    for gemini_model in gemini_models:
         attempted.append(gemini_model)
         try:
             return _generate_gemini_refinement(
@@ -123,7 +128,7 @@ def refine_draft_with_gemini(
                 type(exc).__name__,
                 _shorten(str(exc), 240),
             )
-            if _is_gemini_quota_error(exc):
+            if _is_gemini_quota_error(exc) and gemini_model == gemini_models[-1]:
                 break
             continue
     raise GeminiRefineError(_summarize_gemini_error(last_error), attempted)
@@ -224,9 +229,30 @@ def _draft_value(draft, key: str):
 
 
 def _gemini_model_candidates(model: str | None = None) -> list[str]:
-    if model and model in GEMINI_FLASH_MODELS:
+    enabled_models = current_gemini_models()
+    if model and model in enabled_models:
         return [model]
-    return list(DEFAULT_GEMINI_MODELS)
+    return enabled_models
+
+
+def current_gemini_models(today: date | None = None) -> list[str]:
+    models = list(DEFAULT_GEMINI_MODELS)
+    if _gemini_lite_enabled(today):
+        models.extend(model for model in GEMINI_LITE_MODELS if model not in models)
+    return models
+
+
+def _gemini_lite_enabled(today: date | None = None) -> bool:
+    raw_until = (os.getenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL") or "").strip()
+    if not raw_until:
+        return False
+    try:
+        until = date.fromisoformat(raw_until)
+    except ValueError:
+        logger.warning("invalid NEWS_SUMMARY_GEMINI_LITE_UNTIL=%s", raw_until)
+        return False
+    today = today or datetime.now(LOCAL_TZ).date()
+    return today <= until
 
 
 def _summarize_gemini_error(exc: Exception | None) -> str:
@@ -235,6 +261,8 @@ def _summarize_gemini_error(exc: Exception | None) -> str:
     message = str(exc)
     lowered = message.lower()
     if "429" in message or "resource_exhausted" in lowered or "quota" in lowered:
+        if _gemini_lite_enabled():
+            return "Gemini 요청 한도가 찼습니다. 설정된 Gemini 모델을 모두 시도했지만 초안 생성을 보류했습니다."
         return "Gemini 3.5 Flash 요청 한도가 찼습니다. 낮은 모델은 사용하지 않도록 설정되어 있어 초안 생성을 보류했습니다."
     if "503" in message or "unavailable" in lowered:
         return "Gemini 모델이 일시적으로 과부하 상태입니다. 잠시 뒤 다시 시도하세요."

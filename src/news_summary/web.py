@@ -24,7 +24,7 @@ from .service import (
 from .settings import PROJECT_ROOT, env_path, load_environment, load_sources
 from .storage import Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
-from .writer import GEMINI_FLASH_MODELS, GeminiRefineError, refine_draft_with_gemini
+from .writer import GeminiRefineError, current_gemini_models, refine_draft_with_gemini
 
 
 VALID_STATUSES = {"needs_review", "approved", "rejected"}
@@ -1097,11 +1097,12 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
                 today_drafts += 1
 
     top_models = sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:3]
-    current_models = [(model, model_counts.get(model, 0)) for model in GEMINI_FLASH_MODELS if model_counts.get(model, 0)]
+    current_model_names = current_gemini_models()
+    current_models = [(model, model_counts.get(model, 0)) for model in current_model_names if model_counts.get(model, 0)]
     legacy_models = [
         (model, count)
         for model, count in sorted(model_counts.items(), key=lambda item: item[1], reverse=True)
-        if model not in GEMINI_FLASH_MODELS
+        if model not in current_model_names
     ]
     cooldown_until = gemini_cooldown_until(store)
     return {
