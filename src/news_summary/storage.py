@@ -200,7 +200,7 @@ def _split_sql_script(script: str) -> list[str]:
 
 
 def _postgres_sql(sql: str) -> str:
-    return sql.replace("?", "%s")
+    return sql.replace("%", "%%").replace("?", "%s")
 
 
 def _redact_database_url(url: str) -> str:

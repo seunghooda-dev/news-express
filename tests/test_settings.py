@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from news_summary.settings import env_database
-from news_summary.storage import Store
+from news_summary.storage import Store, _postgres_sql
 
 
 def test_env_database_prefers_database_url(monkeypatch):
@@ -23,3 +23,9 @@ def test_store_redacts_postgres_password_in_display_location():
     store = Store("postgresql://kbcnews:newsexpress1@example.com:5432/kbcnews?sslmode=require")
 
     assert store.display_location == "postgresql://kbcnews:***@example.com:5432/kbcnews?sslmode=require"
+
+
+def test_postgres_sql_escapes_literal_percent_patterns():
+    sql = _postgres_sql("SELECT COUNT(*) FROM article_drafts WHERE model LIKE '%:gemini%' AND id = ?")
+
+    assert sql == "SELECT COUNT(*) FROM article_drafts WHERE model LIKE '%%:gemini%%' AND id = %s"
