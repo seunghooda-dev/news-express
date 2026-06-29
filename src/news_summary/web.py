@@ -847,16 +847,26 @@ def status_badge_class(status: str | None) -> str:
 def model_label(model: str | None) -> str:
     if not model:
         return "모델 미상"
-    if ":gemini" in model:
+    normalized = model.split(":", 1)[0].lower()
+    if "gemini" in normalized:
+        if "lite" in normalized:
+            return "Gemini Lite"
+        if "flash" in normalized:
+            return "Gemini Flash"
         return "Gemini"
     if ":rule-based" in model:
         return "규칙 기반"
-    if "gpt" in model.lower():
+    if "gpt" in normalized:
         return "OpenAI"
     return model.split(":", 1)[0]
 
 
 def model_badge_class(model: str | None) -> str:
+    normalized = (model or "").split(":", 1)[0].lower()
+    if "gemini" in normalized and "lite" in normalized:
+        return "badge-gemini-lite"
+    if "gemini" in normalized and "flash" in normalized:
+        return "badge-gemini-flash"
     if model and ":gemini" in model:
         return "badge-gemini"
     if model and ":rule-based" in model:

@@ -777,7 +777,7 @@ class Store:
         with self.connect() as conn:
             return conn.execute(
                 """
-                SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status
+                SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
@@ -793,7 +793,7 @@ class Store:
         with self.connect() as conn:
             return conn.execute(
                 """
-                SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status
+                SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE pr.source_id = ?

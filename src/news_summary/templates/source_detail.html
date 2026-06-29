@@ -45,6 +45,7 @@
           <strong>{{ draft.title }}</strong>
           <span class="row-meta">
             <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
+            <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
             <span>{{ draft.published_at|date_label }}</span>
             {% for flag in review_flags(draft, duplicate_titles)[:3] %}
               <span class="badge badge-warning">{{ flag }}</span>
@@ -70,6 +71,7 @@
             <span>{{ item.published_at|date_label }}</span>
             {% if item.draft_id %}
               <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
+              <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
             {% else %}
               <span class="badge badge-neutral">초안 없음</span>
             {% endif %}

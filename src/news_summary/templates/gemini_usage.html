@@ -30,7 +30,7 @@
   <p class="gemini-models">
     현재 사용 모델:
     {% for model, count in gemini_usage.current_models %}
-      <span>{{ model }} {{ count }}회</span>
+      <span class="badge {{ model_badge_class(model) }}">{{ model_label(model) }} {{ count }}회</span>
     {% else %}
       <span>아직 사용 기록 없음</span>
     {% endfor %}
@@ -39,7 +39,7 @@
     <p class="gemini-models">
       과거 사용 기록:
       {% for model, count in gemini_usage.legacy_models %}
-        <span>{{ model }} {{ count }}회</span>
+        <span class="badge {{ model_badge_class(model) }}">{{ model_label(model) }} {{ count }}회</span>
       {% endfor %}
     </p>
   {% endif %}

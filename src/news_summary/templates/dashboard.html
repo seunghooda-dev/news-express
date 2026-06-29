@@ -141,6 +141,7 @@
             <span>{{ draft.source_name }}</span>
             <span>승인 {{ (draft.approved_time or draft.updated_at or draft.created_at)|date_label }}</span>
             <span class="badge badge-approved">{{ status_label(draft.status) }}</span>
+            <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
           </span>
         </a>
       {% else %}
@@ -156,6 +157,7 @@
                 <span>{{ draft.source_name }}</span>
                 <span>승인 {{ (draft.approved_time or draft.updated_at or draft.created_at)|date_label }}</span>
                 <span class="badge badge-approved">{{ status_label(draft.status) }}</span>
+                <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
               </span>
             </a>
           {% endfor %}

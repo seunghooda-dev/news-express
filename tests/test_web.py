@@ -17,6 +17,7 @@ from news_summary.web import (
     body_character_count,
     format_datetime_label,
     interval_label,
+    model_badge_class,
     model_label,
     review_flags,
 )
@@ -223,7 +224,10 @@ def test_display_helpers_make_labels_readable():
     assert format_datetime_label("2026-05-20T07:30:00+00:00") == "2026.05.20 16:30"
     assert format_datetime_label("2026-05-20") == "2026.05.20"
     assert format_datetime_label("2026.05.14 13:56") == "2026.05.14 13:56"
-    assert model_label("gemini-3.5-flash:gemini") == "Gemini"
+    assert model_label("gemini-3.5-flash:gemini") == "Gemini Flash"
+    assert model_label("gemini-3.1-flash-lite:gemini") == "Gemini Lite"
+    assert model_badge_class("gemini-3.5-flash:gemini") == "badge-gemini-flash"
+    assert model_badge_class("gemini-3.1-flash-lite:gemini") == "badge-gemini-lite"
     assert model_label("gpt-4.1-mini:rule-based") == "규칙 기반"
     assert interval_label(3600) == "매시간 정각"
     assert interval_label(7200) == "2시간마다"
@@ -697,7 +701,7 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     store = Store(db_path)
     store.init_db()
-    store.add_press_release(
+    release_id = store.add_press_release(
         PressRelease(
             source_id="jindo-county",
             source_name="진도군 농업기술센터 보도자료",
@@ -706,6 +710,16 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
             url="https://example.com/jindo-news",
             content="진도군은 군정 소식을 안내한다고 밝혔다.",
             published_at="2026-05-20",
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="진도군 군정뉴스",
+            body="진도군이 군정 소식을 안내했습니다.",
+            review_note="",
+            model="gemini-3.1-flash-lite:gemini",
         )
     )
 
@@ -719,6 +733,8 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     releases_html = client.get("/press-releases").data.decode("utf-8")
 
     assert "진도군청 보도자료" in html
+    assert "Gemini Lite" in html
+    assert "Gemini Lite" in releases_html
     assert "진도군 농업기술센터 보도자료" not in releases_html
 
 
@@ -1007,9 +1023,9 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
     assert 'class="gemini-usage"' in html
     assert "전체 2회" in html
     assert "현재 사용 모델:" in html
-    assert "gemini-3.5-flash 1회" in html
+    assert "Gemini Flash 1회" in html
     assert "과거 사용 기록:" not in html
-    assert "gemini-3.1-flash-lite 1회" in html
+    assert "Gemini Lite 1회" in html
     assert "많이 쓴 모델" not in html
     assert "사용량 초기화" in html
     assert "Google AI Studio 사용량 확인" in html
