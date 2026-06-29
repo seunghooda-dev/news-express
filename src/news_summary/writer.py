@@ -16,7 +16,63 @@ GEMINI_PRIMARY_MODELS = ("gemini-3.5-flash",)
 GEMINI_LITE_MODELS = ("gemini-3.1-flash-lite",)
 GEMINI_FLASH_MODELS = GEMINI_PRIMARY_MODELS
 DEFAULT_GEMINI_MODELS = GEMINI_PRIMARY_MODELS
+GEMINI_SOURCE_MAX_CHARS_ENV = "NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS"
+DEFAULT_GEMINI_SOURCE_MAX_CHARS = 2400
+MIN_GEMINI_SOURCE_MAX_CHARS = 1200
+MAX_GEMINI_SOURCE_MAX_CHARS = 6000
 logger = get_logger("writer")
+
+
+GEMINI_SOURCE_PRIORITY_TOKENS = (
+    "대상",
+    "기간",
+    "일시",
+    "장소",
+    "금액",
+    "예산",
+    "규모",
+    "신청",
+    "접수",
+    "모집",
+    "지원",
+    "환급",
+    "선정",
+    "운영",
+    "추진",
+    "개최",
+    "교육",
+    "행사",
+    "사업",
+    "협약",
+    "개선",
+    "확대",
+    "계획",
+    "예정",
+    "부터",
+    "까지",
+    "만원",
+    "억원",
+    "명",
+    "가구",
+    "개소",
+)
+
+GEMINI_SOURCE_NOISE_TOKENS = (
+    "다운로드",
+    "미리보기",
+    "첨부파일",
+    "첨부 파일",
+    "파일명",
+    "바로보기",
+    "목록",
+    "이전글",
+    "다음글",
+    "공유하기",
+    "인쇄",
+    "저작권",
+    "무단전재",
+    "copyright",
+)
 
 
 class GeminiRefineError(RuntimeError):
@@ -185,13 +241,15 @@ def _generate_gemini_refinement(
 
 
 def _user_prompt(item: PressRelease) -> str:
+    source_excerpt = _gemini_source_excerpt(item.content, item.title)
     return (
         f"출처: {item.source_name}\n"
         f"지역: {item.region}\n"
         f"원문 제목: {item.title}\n"
         f"원문 URL: {item.url}\n"
         f"게시일: {item.published_at or '미상'}\n\n"
-        f"원문 본문:\n{item.content}"
+        "원문 본문(기사 작성에 필요한 핵심 문단만 발췌):\n"
+        f"{source_excerpt}"
     )
 
 
@@ -202,17 +260,22 @@ def _refine_user_prompt(
     current_body: str,
     current_review_note: str,
 ) -> str:
+    original_content = _gemini_source_excerpt(
+        str(_draft_value(draft, "original_content") or ""),
+        str(_draft_value(draft, "original_title") or ""),
+    )
     return (
         "아래 원문과 현재 기사 초안을 바탕으로, 사용자가 적은 방향에 맞게 초안을 다시 다듬어라.\n"
         "사용자 지시는 문장 흐름, 제목 방향, 강조점 조정에만 반영하고 원문에 없는 사실은 추가하지 않는다.\n"
         "출력 형식은 반드시 기존 기사 작성 규칙의 '제목/본문/검수 메모' 형식을 따른다.\n\n"
-        f"사용자 다듬기 방향:\n{instruction[:1200].strip()}\n\n"
+        f"사용자 다듬기 방향:\n{instruction[:900].strip()}\n\n"
         f"출처: {_draft_value(draft, 'source_name')}\n"
         f"지역: {_draft_value(draft, 'region')}\n"
         f"원문 제목: {_draft_value(draft, 'original_title')}\n"
         f"원문 URL: {_draft_value(draft, 'url')}\n"
         f"게시일: {_draft_value(draft, 'published_at') or '미상'}\n\n"
-        f"원문 본문:\n{_draft_value(draft, 'original_content')}\n\n"
+        "원문 본문(기사 작성에 필요한 핵심 문단만 발췌):\n"
+        f"{original_content}\n\n"
         f"현재 제목:\n{current_title}\n\n"
         f"현재 본문:\n{current_body}\n\n"
         f"현재 검수 메모:\n{current_review_note}"
@@ -240,6 +303,95 @@ def current_gemini_models(today: date | None = None) -> list[str]:
     if _gemini_lite_enabled(today):
         models.extend(model for model in GEMINI_LITE_MODELS if model not in models)
     return models
+
+
+def gemini_source_max_chars() -> int:
+    try:
+        parsed = int(os.getenv(GEMINI_SOURCE_MAX_CHARS_ENV, str(DEFAULT_GEMINI_SOURCE_MAX_CHARS)))
+    except ValueError:
+        return DEFAULT_GEMINI_SOURCE_MAX_CHARS
+    return min(MAX_GEMINI_SOURCE_MAX_CHARS, max(MIN_GEMINI_SOURCE_MAX_CHARS, parsed))
+
+
+def _gemini_source_excerpt(content: str, title: str = "", max_chars: int | None = None) -> str:
+    max_chars = max_chars or gemini_source_max_chars()
+    cleaned = _clean_gemini_source_content(content, title)
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    sentences = _dedupe_sentences(_split_sentences(cleaned))
+    if not sentences:
+        return _trim_text_to_boundary(cleaned, max_chars)
+
+    selected = set(range(min(3, len(sentences))))
+    scored = sorted(
+        (
+            (_gemini_sentence_score(sentence, index), index)
+            for index, sentence in enumerate(sentences)
+            if index not in selected
+        ),
+        reverse=True,
+    )
+    for score, index in scored:
+        if score <= 0 and len(selected) >= 6:
+            break
+        candidate = selected | {index}
+        candidate_text = _join_sentences([sentences[item] for item in sorted(candidate)])
+        if len(candidate_text) <= max_chars:
+            selected.add(index)
+
+    excerpt = _join_sentences([sentences[index] for index in sorted(selected)])
+    return _trim_text_to_boundary(excerpt, max_chars)
+
+
+def _clean_gemini_source_content(content: str, title: str) -> str:
+    lines = []
+    for raw_line in str(content or "").replace("\r\n", "\n").splitlines():
+        line = " ".join(raw_line.split())
+        if not line or _is_gemini_noise_line(line):
+            continue
+        lines.append(line)
+    text = "\n".join(lines) if lines else str(content or "")
+    return _strip_press_release_noise(text, title)
+
+
+def _is_gemini_noise_line(line: str) -> bool:
+    lowered = line.lower()
+    if any(token in lowered for token in GEMINI_SOURCE_NOISE_TOKENS):
+        return True
+    has_contact = bool(re.search(r"\d{2,4}-\d{3,4}-?\d{0,4}|[\w.+-]+@[\w.-]+", line))
+    if has_contact and len(line) <= 180:
+        return True
+    if re.match(r"^(담당|문의|자료제공|제공부서|작성자|전화|연락처)\s*[:：]", line):
+        return True
+    return False
+
+
+def _gemini_sentence_score(sentence: str, index: int) -> int:
+    score = max(0, 24 - index)
+    score += sum(8 for token in GEMINI_SOURCE_PRIORITY_TOKENS if token in sentence)
+    score += min(len(re.findall(r"\d", sentence)), 10) * 3
+    if re.search(r"[“”\"']", sentence):
+        score += 8
+    if "밝혔다" in sentence or "말했다" in sentence or "전했다" in sentence:
+        score += 4
+    if _is_gemini_noise_line(sentence):
+        score -= 80
+    if "군 관계자" in sentence or "시 관계자" in sentence or "구 관계자" in sentence:
+        score -= 8
+    return score
+
+
+def _trim_text_to_boundary(text: str, max_chars: int) -> str:
+    text = " ".join(str(text or "").split())
+    if len(text) <= max_chars:
+        return text
+    clipped = text[:max_chars].rstrip()
+    boundaries = [(clipped.rfind(token), len(token)) for token in (".", "다.", "요.", "음.")]
+    boundary, token_length = max(boundaries, key=lambda item: item[0])
+    if boundary >= int(max_chars * 0.72):
+        clipped = clipped[: boundary + token_length].rstrip()
+    return clipped.rstrip(" ,;:-") + "..."
 
 
 def _gemini_lite_enabled(today: date | None = None) -> bool:

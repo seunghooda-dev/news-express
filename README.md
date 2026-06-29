@@ -78,6 +78,7 @@ NEWS_SUMMARY_AUTO_COLLECT_LIMIT=30
 NEWS_SUMMARY_AUTO_DRAFT_LIMIT=250
 NEWS_SUMMARY_AUTO_REQUIRE_GEMINI=1
 NEWS_SUMMARY_GEMINI_LITE_UNTIL=
+NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS=2400
 NEWS_SUMMARY_ADMIN_PASSWORD=
 NEWS_SUMMARY_AUTH_REQUIRED=0
 NEWS_SUMMARY_BACKUP_DIR=data/backups
@@ -88,6 +89,8 @@ DATABASE_URL=
 ```
 
 `NEWS_SUMMARY_GEMINI_LITE_UNTIL=YYYY-MM-DD`를 설정하면 해당 날짜까지 `gemini-3.5-flash` 실패 시 `gemini-3.1-flash-lite`를 함께 시도합니다. 날짜가 지나면 자동으로 3.5 Flash만 사용합니다.
+
+`NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS`는 Gemini에 보내는 원문 본문 발췌 길이입니다. 기본값은 2400자이며, 품질 저하를 막기 위해 1200자 미만으로는 내려가지 않습니다.
 
 `NEWS_SUMMARY_RETENTION_HOLIDAYS`에는 추가 공휴일을 `YYYY-MM-DD,YYYY-MM-DD` 형식으로 넣을 수 있습니다. 공휴일과 주말은 최근 3일 계산에서 제외되어 그만큼 보관 범위가 늘어납니다.
 

@@ -5,8 +5,12 @@ from news_summary.writer import (
     GeminiRefineError,
     current_gemini_models,
     generate_draft,
+    gemini_source_max_chars,
     refine_draft_with_gemini,
+    _gemini_source_excerpt,
     _parse_model_output,
+    _refine_user_prompt,
+    _user_prompt,
 )
 from news_summary.models import PressRelease
 from news_summary.writer import _fallback_draft, _rule_based_broadcast_body, _strip_press_release_noise
@@ -69,6 +73,86 @@ def test_strip_press_release_noise_keeps_first_article_sentence_after_subtitles(
     cleaned = _strip_press_release_noise(content, title)
 
     assert cleaned.startswith("전라남도가 2027년 국고 확보를 위해")
+
+
+def test_gemini_source_excerpt_reduces_noise_but_keeps_key_details(monkeypatch):
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS", "1200")
+    filler = "군은 주민 의견을 반영해 현장 중심 행정을 이어가겠다고 설명했다. " * 30
+    content = (
+        "다운로드 첨부파일 보도자료.hwp\n"
+        "담당자: 홍길동 061-123-4567\n"
+        "해남군은 청년 창업 지원사업 참여자를 모집한다고 밝혔다. "
+        "지원 대상은 만 19세부터 45세까지 지역 청년이다. "
+        f"{filler}"
+        "사업비는 총 3억 원이며 선정된 팀에는 최대 2천만 원을 지원한다. "
+        "신청은 7월 10일부터 7월 24일까지 군청 누리집에서 접수한다."
+    )
+
+    excerpt = _gemini_source_excerpt(content, "해남군, 청년 창업 지원사업", max_chars=700)
+
+    assert len(excerpt) <= 700 + 3
+    assert "청년 창업 지원사업" in excerpt
+    assert "만 19세부터 45세" in excerpt
+    assert "최대 2천만 원" in excerpt
+    assert "7월 10일부터 7월 24일까지" in excerpt
+    assert "다운로드" not in excerpt
+    assert "061-123-4567" not in excerpt
+
+
+def test_user_prompt_sends_excerpt_instead_of_full_long_source():
+    content = (
+        "광주시는 시민 안전 교육을 확대한다고 밝혔다. "
+        "교육 대상은 어린이와 노인 등 안전 취약계층이다. "
+        + ("반복 안내 문장입니다. " * 260)
+        + "교육은 7월부터 12월까지 20개 동에서 진행된다."
+    )
+    item = PressRelease(
+        source_id="gwangju",
+        source_name="광주광역시청 보도자료",
+        region="광주",
+        title="광주시, 시민 안전 교육 확대",
+        url="https://example.com/safety",
+        content=content,
+        published_at="2026-06-29",
+    )
+
+    prompt = _user_prompt(item)
+
+    assert "원문 본문(기사 작성에 필요한 핵심 문단만 발췌)" in prompt
+    assert "광주시는 시민 안전 교육을 확대" in prompt
+    assert "7월부터 12월까지" in prompt
+    assert len(prompt) < len(content)
+
+
+def test_refine_prompt_also_uses_source_excerpt():
+    draft_row = {
+        "press_release_id": 7,
+        "source_name": "장성군청 보도자료",
+        "region": "전남 장성",
+        "original_title": "장성군, 농업 교육 운영",
+        "url": "https://example.com/jangseong",
+        "published_at": "2026-06-29",
+        "original_content": (
+            "장성군은 농업인 교육을 운영한다고 밝혔다. "
+            + ("반복 설명입니다. " * 300)
+            + "교육은 8월 1일부터 8월 20일까지 농업기술센터에서 진행된다."
+        ),
+    }
+
+    prompt = _refine_user_prompt(draft_row, "내용 90%", "제목", "본문", "메모")
+
+    assert "원문 본문(기사 작성에 필요한 핵심 문단만 발췌)" in prompt
+    assert "장성군은 농업인 교육을 운영" in prompt
+    assert "8월 1일부터 8월 20일까지" in prompt
+    assert len(prompt) < len(draft_row["original_content"]) + 300
+
+
+def test_gemini_source_max_chars_is_quality_guarded(monkeypatch):
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS", "200")
+    assert gemini_source_max_chars() == 1200
+
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS", "99999")
+    assert gemini_source_max_chars() == 6000
 
 
 def test_rule_based_broadcast_body_writes_three_paragraph_news_brief():
