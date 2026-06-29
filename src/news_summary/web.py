@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import os
+import subprocess
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
+    collection_retention_cutoff_date,
+    collection_retention_days,
     collect_and_draft_cycle,
     collect_enabled_sources,
     draft_pending_releases,
@@ -37,8 +40,9 @@ STATUS_LABELS = {
 LOCAL_TZ = timezone(timedelta(hours=9))
 DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
+CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
-AUTH_EXEMPT_ENDPOINTS = {"favicon", "login", "logout", "admin_setup", "static"}
+AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
 
 
 def create_app() -> Flask:
@@ -135,6 +139,16 @@ def create_app() -> Flask:
     def favicon():
         return Response(status=204)
 
+    @app.get("/healthz")
+    def healthz():
+        try:
+            with store.connect() as conn:
+                conn.execute("SELECT 1").fetchone()
+        except Exception as exc:  # noqa: BLE001 - health endpoint should return a clear degraded state.
+            logger.warning("health check failed error=%s", exc)
+            return jsonify({"ok": False, "database": "error"}), 503
+        return jsonify({"ok": True, "database": "ok"})
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         config = auth_config(store)
@@ -201,6 +215,9 @@ def create_app() -> Flask:
         return render_template(
             "operations.html",
             auto_collector_status=auto_status,
+            retention_policy=_retention_policy_summary(),
+            pending_queue=store.pending_press_release_summary(),
+            cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
             backup_dir=backup_dir,
             backup_files=_backup_files(backup_dir),
             db_path=store.display_location,
@@ -307,6 +324,7 @@ def create_app() -> Flask:
         return render_template(
             "gemini_usage.html",
             gemini_usage=_gemini_usage_summary(store, auto_status),
+            pending_queue=store.pending_press_release_summary(),
         )
 
     @app.post("/gemini-usage/reset")
@@ -614,12 +632,14 @@ def create_app() -> Flask:
                     "last_error": None,
                     "last_finished_at": None,
                     "last_auto_finished_at": None,
-                    "next_run_at": None,
-                    "gemini_cooldown_until": None,
-                }
-            )
+                "next_run_at": None,
+                "gemini_cooldown_until": None,
+                "pending_draft_count": store.pending_press_release_summary()["total"],
+            }
+        )
         status = auto_collector.snapshot()
         cooldown_until = gemini_cooldown_until(store)
+        pending_queue = store.pending_press_release_summary()
         return jsonify(
             {
                 "enabled": status.enabled,
@@ -636,6 +656,7 @@ def create_app() -> Flask:
                 "next_run_at": status.next_run_at,
                 "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
                 "run_count": status.run_count,
+                "pending_draft_count": pending_queue["total"],
             }
         )
 
@@ -671,6 +692,71 @@ def create_app() -> Flask:
         return redirect(url_for("dashboard"))
 
     return app
+
+
+def _retention_policy_summary() -> dict[str, object]:
+    cutoff = collection_retention_cutoff_date()
+    return {
+        "days": collection_retention_days(),
+        "cutoff_date": cutoff.isoformat(),
+        "description": "주말과 공휴일을 제외한 최근 운영일 기준입니다.",
+    }
+
+
+def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, object]:
+    log_path = log_path or PROJECT_ROOT / "data" / "tmp" / "cloudflare_quick_tunnel.err.log"
+    public_url = ""
+    updated_at = None
+    if log_path.exists():
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            matches = CLOUDFLARE_URL_RE.findall(text)
+            public_url = matches[-1] if matches else ""
+            updated_at = datetime.fromtimestamp(log_path.stat().st_mtime, tz=LOCAL_TZ).isoformat()
+        except OSError:
+            public_url = ""
+    running = _cloudflared_running()
+    if running and public_url:
+        label = "접속 대기 중"
+    elif running:
+        label = "터널 실행 중"
+    else:
+        label = "터널 미감지"
+    return {
+        "running": running,
+        "public_url": public_url,
+        "log_path": str(log_path),
+        "updated_at": updated_at,
+        "label": label,
+    }
+
+
+def _cloudflared_running() -> bool:
+    try:
+        if os.name == "nt":
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "@(Get-Process cloudflared -ErrorAction SilentlyContinue).Count",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            return int((result.stdout or "0").strip() or "0") > 0
+        result = subprocess.run(
+            ["pgrep", "-f", "cloudflared"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        return result.returncode == 0
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
 
 
 def _positive_int(value: str | None, default: int) -> int:

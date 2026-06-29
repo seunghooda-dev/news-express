@@ -23,10 +23,14 @@ def configure_logging(log_dir: str | Path | None = None) -> Path:
     root.propagate = False
 
     resolved = str(log_path.resolve())
-    for handler in root.handlers:
+    for handler in list(root.handlers):
         if isinstance(handler, RotatingFileHandler) and handler.baseFilename == resolved:
             handler.setLevel(level)
+            handler.setFormatter(logging.Formatter(LOG_FORMAT))
             return log_path
+        if isinstance(handler, RotatingFileHandler):
+            root.removeHandler(handler)
+            handler.close()
 
     handler = RotatingFileHandler(
         log_path,

@@ -51,4 +51,28 @@
   {% endif %}
   <p class="meta">무료 key의 정확한 남은 한도와 분당/일일 제한은 Google AI Studio의 Usage and Limits에서 확인합니다. 이 화면은 News Express가 로컬 DB에 저장한 성공 호출 기준입니다.</p>
 </section>
+
+<section class="gemini-usage">
+  <div>
+    <h1>미변환 큐</h1>
+    <p>Gemini 초안 대기 원문 {{ pending_queue.total }}건</p>
+  </div>
+  {% if pending_queue.total %}
+    <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
+    <p class="gemini-models">
+      날짜별:
+      {% for item in pending_queue.by_date %}
+        <span>{{ item.date }} {{ item.count }}건</span>
+      {% endfor %}
+    </p>
+    <p class="gemini-models">
+      기관별:
+      {% for item in pending_queue.by_source %}
+        <span>{{ item.source_name }} {{ item.count }}건</span>
+      {% endfor %}
+    </p>
+  {% else %}
+    <p class="meta">자동 수집에서 추가로 변환할 원문이 없습니다.</p>
+  {% endif %}
+</section>
 {% endblock %}

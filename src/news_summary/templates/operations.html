@@ -46,6 +46,53 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>수집 보관 기준</h2>
+      <span class="badge badge-gemini">최근 {{ retention_policy.days }}일</span>
+    </div>
+    <p class="meta">{{ retention_policy.cutoff_date|date_label }} 이후 원문과 초안을 보관합니다.</p>
+    <p class="meta">{{ retention_policy.description }} 공휴일이 있으면 그 일자만큼 보관 범위가 자동으로 늘어납니다.</p>
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>Gemini 미변환 큐</h2>
+      <span class="badge {% if pending_queue.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ pending_queue.total }}건</span>
+    </div>
+    {% if pending_queue.total %}
+      <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
+      <p class="gemini-models">
+        날짜별:
+        {% for item in pending_queue.by_date %}
+          <span>{{ item.date }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+      <p class="gemini-models">
+        기관별:
+        {% for item in pending_queue.by_source %}
+          <span>{{ item.source_name }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+    {% else %}
+      <p class="meta">Gemini 초안으로 변환할 대기 원문이 없습니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>외부 접속</h2>
+      <span class="badge {% if cloudflare_tunnel.running %}badge-gemini{% else %}badge-warning{% endif %}">{{ cloudflare_tunnel.label }}</span>
+    </div>
+    {% if cloudflare_tunnel.public_url %}
+      <p class="meta">공유 주소: <a href="{{ cloudflare_tunnel.public_url }}" target="_blank" rel="noopener noreferrer">{{ cloudflare_tunnel.public_url }}</a></p>
+    {% else %}
+      <p class="meta">Cloudflare 임시 주소를 아직 찾지 못했습니다.</p>
+    {% endif %}
+    <p class="meta">터널 로그: {{ cloudflare_tunnel.log_path }}</p>
+    <p class="meta">최근 갱신: {{ cloudflare_tunnel.updated_at|date_label }}</p>
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>DB 백업</h2>
       <span class="badge badge-neutral">{{ backup_files|length }}개</span>
     </div>

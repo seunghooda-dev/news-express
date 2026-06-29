@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +14,7 @@ from news_summary.scheduler import (
 )
 from news_summary.service import (
     collect_enabled_sources,
+    collection_retention_cutoff_date,
     draft_pending_releases,
     draft_pending_releases_for_date,
     gemini_cooldown_until,
@@ -121,6 +122,122 @@ def test_collect_enabled_sources_reports_source_progress(monkeypatch):
     assert any(event["message"].startswith("1/2 첫 기관") for event in events)
     assert any(event["message"].startswith("2/2 둘째 기관") for event in events)
     assert events[-1]["message"] == "수집 완료"
+
+
+def test_collection_retention_cutoff_skips_weekends_and_holidays(monkeypatch):
+    monkeypatch.setenv("NEWS_SUMMARY_RETENTION_DAYS", "3")
+    monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "")
+
+    assert collection_retention_cutoff_date(today=date(2026, 6, 29)) == date(2026, 6, 25)
+
+    monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "2026-06-26")
+
+    assert collection_retention_cutoff_date(today=date(2026, 6, 29)) == date(2026, 6, 24)
+
+
+def test_collect_enabled_sources_keeps_only_retention_window(monkeypatch):
+    db_path = Path(f"data/.test_service_retention_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id="sample", name="테스트 기관", region="전남", type="html_board")]
+
+    def fake_collect(source, limit):
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="보관 기준 이전 원문",
+                url="https://example.com/retention-old",
+                content="기준 이전 원문입니다.",
+                published_at="2026-06-24",
+            ),
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="보관 기준 안 원문",
+                url="https://example.com/retention-new",
+                content="기준 안 원문입니다.",
+                published_at="2026-06-25",
+            ),
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="게시일 없는 원문",
+                url="https://example.com/retention-no-date",
+                content="게시일 없는 원문입니다.",
+                published_at=None,
+            ),
+        ]
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", fake_collect)
+    monkeypatch.setattr("news_summary.service.collection_retention_cutoff_date", lambda: date(2026, 6, 25))
+    monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
+
+    messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+
+    with store.connect() as conn:
+        titles = [row["title"] for row in conn.execute("SELECT title FROM press_releases ORDER BY title").fetchall()]
+    status = store.latest_source_collection_statuses()["sample"]
+
+    assert titles == ["게시일 없는 원문", "보관 기준 안 원문"]
+    assert any("보관 기준 제외 1건" in message for message in messages)
+    assert status["releases_found"] == 3
+    assert status["inserted_count"] == 2
+
+
+def test_store_deletes_old_press_releases_with_linked_drafts():
+    db_path = Path(f"data/.test_storage_retention_delete_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    old_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="오래된 원문",
+            url="https://example.com/delete-old",
+            content="오래된 원문입니다.",
+            published_at="2026.06.24 10:00",
+        )
+    )
+    new_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="보관할 원문",
+            url="https://example.com/delete-new",
+            content="보관할 원문입니다.",
+            published_at="2026-06-25",
+        )
+    )
+    assert old_id is not None
+    assert new_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=old_id,
+            title="오래된 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.update_draft(draft_id, "오래된 초안 수정", "본문 수정", "메모", "needs_review")
+
+    deleted = store.delete_press_releases_before("2026-06-25")
+
+    assert deleted == {"press_releases": 1, "drafts": 1, "draft_history": 1}
+    with store.connect() as conn:
+        releases = conn.execute("SELECT title FROM press_releases").fetchall()
+        drafts = conn.execute("SELECT title FROM article_drafts").fetchall()
+        history = conn.execute("SELECT * FROM draft_history").fetchall()
+    assert [row["title"] for row in releases] == ["보관할 원문"]
+    assert drafts == []
+    assert history == []
 
 
 def test_collect_enabled_sources_classifies_connection_failures(monkeypatch):

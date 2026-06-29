@@ -555,6 +555,151 @@ class Store:
             ).fetchone()
         return int(row["count"])
 
+    def pending_press_release_summary(self, limit: int = 5) -> dict[str, object]:
+        published_date_expr = _published_date_expr("pr.published_at")
+        with self.connect() as conn:
+            total = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                """
+            ).fetchone()["count"]
+            by_date = conn.execute(
+                f"""
+                SELECT
+                    CASE
+                        WHEN {published_date_expr} = '' THEN '게시일 없음'
+                        ELSE {published_date_expr}
+                    END AS published_date,
+                    COUNT(*) AS count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                GROUP BY
+                    CASE
+                        WHEN {published_date_expr} = '' THEN '게시일 없음'
+                        ELSE {published_date_expr}
+                    END
+                ORDER BY published_date DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            by_source = conn.execute(
+                """
+                SELECT pr.source_name, COUNT(*) AS count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                GROUP BY pr.source_name
+                ORDER BY count DESC, pr.source_name ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            latest = conn.execute(
+                f"""
+                SELECT pr.published_at
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                  AND {published_date_expr} != ''
+                ORDER BY {published_date_expr} DESC, pr.collected_at DESC, pr.id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            oldest = conn.execute(
+                f"""
+                SELECT pr.published_at
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                  AND {published_date_expr} != ''
+                ORDER BY {published_date_expr} ASC, pr.collected_at ASC, pr.id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+        return {
+            "total": int(total),
+            "by_date": [
+                {"date": str(row["published_date"]), "count": int(row["count"])}
+                for row in by_date
+            ],
+            "by_source": [
+                {"source_name": str(row["source_name"]), "count": int(row["count"])}
+                for row in by_source
+            ],
+            "latest_published_at": str(latest["published_at"]) if latest else None,
+            "oldest_published_at": str(oldest["published_at"]) if oldest else None,
+        }
+
+    def delete_press_releases_before(self, cutoff_date: str) -> dict[str, int]:
+        published_date_expr = _published_date_expr("published_at")
+        press_where = f"TRIM(COALESCE(published_at, '')) != '' AND {published_date_expr} < ?"
+        joined_where = f"TRIM(COALESCE(pr.published_at, '')) != '' AND {_published_date_expr('pr.published_at')} < ?"
+        with self.connect() as conn:
+            press_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS count FROM press_releases WHERE {press_where}",
+                    (cutoff_date,),
+                ).fetchone()["count"]
+            )
+            draft_count = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS count
+                    FROM article_drafts ad
+                    JOIN press_releases pr ON pr.id = ad.press_release_id
+                    WHERE {joined_where}
+                    """,
+                    (cutoff_date,),
+                ).fetchone()["count"]
+            )
+            history_count = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS count
+                    FROM draft_history dh
+                    JOIN article_drafts ad ON ad.id = dh.draft_id
+                    JOIN press_releases pr ON pr.id = ad.press_release_id
+                    WHERE {joined_where}
+                    """,
+                    (cutoff_date,),
+                ).fetchone()["count"]
+            )
+            if press_count <= 0:
+                return {"press_releases": 0, "drafts": 0, "draft_history": 0}
+            conn.execute(
+                f"""
+                DELETE FROM draft_history
+                WHERE draft_id IN (
+                    SELECT ad.id
+                    FROM article_drafts ad
+                    JOIN press_releases pr ON pr.id = ad.press_release_id
+                    WHERE {joined_where}
+                )
+                """,
+                (cutoff_date,),
+            )
+            conn.execute(
+                f"""
+                DELETE FROM article_drafts
+                WHERE press_release_id IN (
+                    SELECT id
+                    FROM press_releases
+                    WHERE {press_where}
+                )
+                """,
+                (cutoff_date,),
+            )
+            conn.execute(
+                f"DELETE FROM press_releases WHERE {press_where}",
+                (cutoff_date,),
+            )
+        return {"press_releases": press_count, "drafts": draft_count, "draft_history": history_count}
+
     def add_article_draft(self, draft: ArticleDraft) -> int:
         with self.connect() as conn:
             existing = conn.execute(
@@ -940,6 +1085,10 @@ class Store:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _published_date_expr(column: str) -> str:
+    return f"REPLACE(REPLACE(SUBSTR(TRIM(COALESCE({column}, '')), 1, 10), '.', '-'), '/', '-')"
 
 
 def _draft_changed(

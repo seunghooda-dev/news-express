@@ -66,6 +66,7 @@ PowerShell 스크립트로 수집과 초안 생성을 한 번에 실행하려면
 - 기본 주기: 매시간 정각마다 1회
 - 수집 범위: 설정에서 켜진 전체 기관
 - 기본 처리: 기관별 최근 30건 확인, 새 원문은 Gemini 초안으로 생성
+- 보관 기준: 주말과 공휴일을 제외한 최근 3운영일 범위의 원문과 초안만 유지
 - Gemini 실패 시: 규칙 기반 초안을 만들지 않고 원문을 보류해 다음 주기에 다시 시도
 - 수동 재수집: 홈 화면의 `수동 재수집` 버튼 하나로 전체 기관 확인과 Gemini 초안 생성을 함께 실행
 
@@ -81,10 +82,14 @@ NEWS_SUMMARY_ADMIN_PASSWORD=
 NEWS_SUMMARY_AUTH_REQUIRED=0
 NEWS_SUMMARY_BACKUP_DIR=data/backups
 NEWS_SUMMARY_LOG_DIR=data/logs
+NEWS_SUMMARY_RETENTION_DAYS=3
+NEWS_SUMMARY_RETENTION_HOLIDAYS=
 DATABASE_URL=
 ```
 
 `NEWS_SUMMARY_GEMINI_LITE_UNTIL=YYYY-MM-DD`를 설정하면 해당 날짜까지 `gemini-3.5-flash` 실패 시 `gemini-3.1-flash-lite`를 함께 시도합니다. 날짜가 지나면 자동으로 3.5 Flash만 사용합니다.
+
+`NEWS_SUMMARY_RETENTION_HOLIDAYS`에는 추가 공휴일을 `YYYY-MM-DD,YYYY-MM-DD` 형식으로 넣을 수 있습니다. 공휴일과 주말은 최근 3일 계산에서 제외되어 그만큼 보관 범위가 늘어납니다.
 
 `NEWS_SUMMARY_ADMIN_PASSWORD` 값을 설정하면 관리자 로그인이 강제됩니다. 운영 로그는 홈 화면에 표시하지 않고 `/ops-logs` 경로에서 확인합니다.
 
@@ -127,6 +132,12 @@ PostgreSQL 모드에서는 앱의 SQLite zip 백업 기능 대신 클라우드 D
 
 ```powershell
 .\scripts\start_cloudflare_quick_tunnel.ps1
+```
+
+임시 링크가 살아 있는지 확인하려면 아래 점검 스크립트를 실행합니다.
+
+```powershell
+.\scripts\check_cloudflare_quick_tunnel.ps1
 ```
 
 정식 공유 전에는 Cloudflare Zero Trust의 Access 애플리케이션에서 허용할 기자 이메일만 등록해야 합니다.

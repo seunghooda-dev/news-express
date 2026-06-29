@@ -832,6 +832,67 @@ def test_operations_page_toggles_auto_collection(monkeypatch):
     assert collector.calls == [True, False]
 
 
+def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
+    db_path = Path(f"data/.test_operations_status_cards_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="Gemini 대기 원문",
+            url="https://example.com/pending-queue",
+            content="Gemini 초안을 기다리는 원문입니다.",
+            published_at="2026-06-26 09:00",
+        )
+    )
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflare_quick_tunnel_status",
+        lambda: {
+            "running": True,
+            "public_url": "https://sample.trycloudflare.com",
+            "log_path": "data/tmp/cloudflare_quick_tunnel.err.log",
+            "updated_at": "2026-06-29T10:00:00+09:00",
+            "label": "접속 대기 중",
+        },
+    )
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/operations").data.decode("utf-8")
+
+    assert "수집 보관 기준" in html
+    assert "공휴일이 있으면" in html
+    assert "Gemini 미변환 큐" in html
+    assert "Gemini 대기 원문" not in html
+    assert "테스트 기관 1건" in html
+    assert "외부 접속" in html
+    assert "https://sample.trycloudflare.com" in html
+
+
+def test_healthz_reports_database_status(monkeypatch):
+    db_path = Path(f"data/.test_healthz_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"database": "ok", "ok": True}
+
+
 def test_operations_page_creates_and_restores_backup(monkeypatch):
     db_path = Path(f"data/.test_operations_backup_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_operations_backups_{uuid4().hex}").resolve()

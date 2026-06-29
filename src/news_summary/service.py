@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from json import JSONDecodeError
+import os
 from pathlib import Path
+import re
 import time
 
 import httpx
@@ -23,6 +25,36 @@ GEMINI_COOLDOWN_UNTIL_KEY = "gemini_cooldown_until"
 GEMINI_COOLDOWN_REASON_KEY = "gemini_cooldown_reason"
 DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
 TRANSIENT_DNS_RETRY_DELAY_SECONDS = 5.0
+RETENTION_DAYS_ENV = "NEWS_SUMMARY_RETENTION_DAYS"
+RETENTION_HOLIDAYS_ENV = "NEWS_SUMMARY_RETENTION_HOLIDAYS"
+DEFAULT_RETENTION_DAYS = 3
+
+
+DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
+
+
+BUILT_IN_KOREA_PUBLIC_HOLIDAYS = {
+    # 2026년 운영 기준. 추가/수정은 NEWS_SUMMARY_RETENTION_HOLIDAYS=YYYY-MM-DD,... 로 보강할 수 있습니다.
+    date(2026, 1, 1),
+    date(2026, 2, 16),
+    date(2026, 2, 17),
+    date(2026, 2, 18),
+    date(2026, 3, 1),
+    date(2026, 3, 2),
+    date(2026, 5, 5),
+    date(2026, 5, 24),
+    date(2026, 5, 25),
+    date(2026, 6, 3),
+    date(2026, 6, 6),
+    date(2026, 8, 15),
+    date(2026, 8, 17),
+    date(2026, 10, 3),
+    date(2026, 10, 5),
+    date(2026, 10, 6),
+    date(2026, 10, 7),
+    date(2026, 10, 9),
+    date(2026, 12, 25),
+}
 
 
 DEFAULT_COLLECT_LIMIT = 30
@@ -36,6 +68,7 @@ def collect_enabled_sources(
 ) -> list[str]:
     messages: list[str] = []
     sources = [source for source in load_sources(config_path) if source.enabled]
+    retention_cutoff = collection_retention_cutoff_date()
     if not sources:
         _report_progress(progress_callback, phase="done", current=0, total=0, message="수집 완료")
         logger.warning("collect skipped no enabled sources config=%s", config_path)
@@ -106,30 +139,38 @@ def collect_enabled_sources(
             )
             continue
 
+        retained_releases, source_skipped = filter_releases_by_retention(releases, retention_cutoff)
         source_inserted = 0
-        for release in releases:
+        for release in retained_releases:
             if store.add_press_release(release):
                 inserted += 1
                 source_inserted += 1
         repaired_dates = repair_missing_published_dates(store, source, limit=max(5, limit))
-        messages.append(f"{source.name}: 원문 검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건")
+        source_message = _collection_source_message(
+            source.name,
+            len(releases),
+            source_inserted,
+            source_skipped,
+        )
+        messages.append(source_message)
         if repaired_dates:
             messages.append(f"{source.name}: 누락 게시일 {repaired_dates}건 보정")
         store.record_source_collection_status(
             source.id,
             source.name,
             "ok",
-            f"원문 검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건",
+            source_message.removeprefix(f"{source.name}: "),
             releases_found=len(releases),
             inserted_count=source_inserted,
             repaired_dates=repaired_dates,
         )
         logger.info(
-            "source collection succeeded source_id=%s source_name=%s releases=%s inserted=%s repaired_dates=%s",
+            "source collection succeeded source_id=%s source_name=%s releases=%s inserted=%s skipped_retention=%s repaired_dates=%s",
             source.id,
             source.name,
             len(releases),
             source_inserted,
+            source_skipped,
             repaired_dates,
         )
         _report_progress(
@@ -151,8 +192,14 @@ def collect_enabled_sources(
         inserted += retry_inserted
         messages.extend(retry_messages)
 
+    pruned = prune_press_releases_outside_retention(store, retention_cutoff)
+    if pruned["press_releases"]:
+        messages.append(
+            "보관 기준 이전 원문 "
+            f"{pruned['press_releases']}건, 초안 {pruned['drafts']}건을 정리했습니다."
+        )
     messages.append(f"새 원문 {inserted}건을 저장했습니다.")
-    logger.info("collect finished sources=%s inserted=%s", total, inserted)
+    logger.info("collect finished sources=%s inserted=%s pruned=%s cutoff=%s", total, inserted, pruned, retention_cutoff)
     _report_progress(progress_callback, phase="collected", current=total, total=total, message="수집 완료")
     return messages
 
@@ -214,13 +261,21 @@ def retry_transient_dns_failures(
             logger.exception("transient dns retry unexpected failure source_id=%s source_name=%s", source.id, source.name)
             continue
 
+        retention_cutoff = collection_retention_cutoff_date()
+        retained_releases, source_skipped = filter_releases_by_retention(releases, retention_cutoff)
         source_inserted = 0
-        for release in releases:
+        for release in retained_releases:
             if store.add_press_release(release):
                 source_inserted += 1
                 inserted_total += 1
         repaired_dates = repair_missing_published_dates(store, source, limit=max(5, limit))
-        message = f"{source.name}: DNS 자동 재검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건"
+        message = _collection_source_message(
+            source.name,
+            len(releases),
+            source_inserted,
+            source_skipped,
+            prefix="DNS 자동 재검증 통과",
+        )
         messages.append(message)
         if repaired_dates:
             messages.append(f"{source.name}: 누락 게시일 {repaired_dates}건 보정")
@@ -228,21 +283,115 @@ def retry_transient_dns_failures(
             source.id,
             source.name,
             "ok",
-            f"DNS 자동 재검증 통과 {len(releases)}건, 새로 저장 {source_inserted}건",
+            message.removeprefix(f"{source.name}: "),
             releases_found=len(releases),
             inserted_count=source_inserted,
             repaired_dates=repaired_dates,
         )
         logger.info(
-            "transient dns retry succeeded source_id=%s source_name=%s releases=%s inserted=%s repaired_dates=%s",
+            "transient dns retry succeeded source_id=%s source_name=%s releases=%s inserted=%s skipped_retention=%s repaired_dates=%s",
             source.id,
             source.name,
             len(releases),
             source_inserted,
+            source_skipped,
             repaired_dates,
         )
 
     return inserted_total, messages
+
+
+def collection_retention_days() -> int:
+    try:
+        return max(1, int(os.getenv(RETENTION_DAYS_ENV, str(DEFAULT_RETENTION_DAYS))))
+    except ValueError:
+        return DEFAULT_RETENTION_DAYS
+
+
+def collection_retention_cutoff_date(today: date | None = None) -> date:
+    today = today or datetime.now(timezone(timedelta(hours=9))).date()
+    holidays = retention_holidays({today.year - 1, today.year, today.year + 1})
+    remaining = collection_retention_days()
+    cursor = today
+    while True:
+        if is_collection_business_day(cursor, holidays):
+            remaining -= 1
+            if remaining <= 0:
+                return cursor
+        cursor -= timedelta(days=1)
+
+
+def retention_holidays(years: set[int] | None = None) -> set[date]:
+    years = years or set()
+    holidays = {holiday for holiday in BUILT_IN_KOREA_PUBLIC_HOLIDAYS if not years or holiday.year in years}
+    holidays.update(_env_holidays())
+    return holidays
+
+
+def is_collection_business_day(target: date, holidays: set[date] | None = None) -> bool:
+    holidays = holidays or retention_holidays({target.year})
+    return target.weekday() < 5 and target not in holidays
+
+
+def filter_releases_by_retention(
+    releases: list[PressRelease],
+    cutoff_date: date,
+) -> tuple[list[PressRelease], int]:
+    retained: list[PressRelease] = []
+    skipped = 0
+    for release in releases:
+        published_date = press_release_published_date(release)
+        if published_date and published_date < cutoff_date:
+            skipped += 1
+            continue
+        retained.append(release)
+    return retained, skipped
+
+
+def prune_press_releases_outside_retention(store: Store, cutoff_date: date) -> dict[str, int]:
+    return store.delete_press_releases_before(cutoff_date.isoformat())
+
+
+def press_release_published_date(release: PressRelease) -> date | None:
+    raw_value = _normalize_published_at(release.published_at)
+    if not raw_value:
+        raw_value = release.published_at
+    if not raw_value:
+        return None
+    match = DATE_RE.search(str(raw_value))
+    if not match:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _env_holidays() -> set[date]:
+    values = os.getenv(RETENTION_HOLIDAYS_ENV, "")
+    holidays: set[date] = set()
+    for value in values.split(","):
+        value = value.strip()
+        if not value:
+            continue
+        try:
+            holidays.add(date.fromisoformat(value))
+        except ValueError:
+            logger.warning("invalid retention holiday ignored value=%s", value)
+    return holidays
+
+
+def _collection_source_message(
+    source_name: str,
+    releases_found: int,
+    inserted_count: int,
+    skipped_count: int,
+    *,
+    prefix: str = "원문 검증 통과",
+) -> str:
+    skipped_part = f", 보관 기준 제외 {skipped_count}건" if skipped_count else ""
+    return f"{source_name}: {prefix} {releases_found}건{skipped_part}, 새로 저장 {inserted_count}건"
 
 
 def _should_retry_transient_dns_failure(failure_stage: str) -> bool:
