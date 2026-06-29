@@ -1,4 +1,4 @@
-<form class="region-filter" method="get" data-auto-submit>
+<form class="region-filter" method="get">
   {% for key, value in region_filter_hidden.items() %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
   {% endfor %}
@@ -17,13 +17,20 @@
     {% endfor %}
   </div>
   <div class="region-filter-actions">
+    <span class="region-filter-status" aria-live="polite" hidden>선택 변경됨. 적용을 눌러 반영하세요.</span>
     <button type="submit">적용</button>
   </div>
 </form>
 <script>
   (() => {
-    document.querySelectorAll("[data-auto-submit] input[type='checkbox']").forEach((checkbox) => {
-      checkbox.addEventListener("change", () => checkbox.form.requestSubmit());
+    document.querySelectorAll(".region-filter input[type='checkbox']").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const label = checkbox.closest(".region-check");
+        label?.classList.toggle("active", checkbox.checked);
+        const status = checkbox.form?.querySelector(".region-filter-status");
+        if (status) status.hidden = false;
+        checkbox.form?.classList.add("has-pending-region-change");
+      });
     });
   })();
 </script>

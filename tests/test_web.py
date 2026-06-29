@@ -412,6 +412,8 @@ def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch
 
     dashboard_html = client.get("/?region=전남+진도").data.decode("utf-8")
     assert 'name="region" value="전남 진도" checked' in dashboard_html
+    assert "data-auto-submit" not in dashboard_html
+    assert "선택 변경됨. 적용을 눌러 반영하세요." in dashboard_html
     assert "진도군청 보도자료" in dashboard_html
     assert "진도 지역 초안" in dashboard_html
     assert "광주광역시청 보도자료" not in dashboard_html
