@@ -23,13 +23,32 @@
 </form>
 <script>
   (() => {
-    document.querySelectorAll(".region-filter input[type='checkbox']").forEach((checkbox) => {
-      checkbox.addEventListener("change", () => {
-        const label = checkbox.closest(".region-check");
-        label?.classList.toggle("active", checkbox.checked);
-        const status = checkbox.form?.querySelector(".region-filter-status");
-        if (status) status.hidden = false;
-        checkbox.form?.classList.add("has-pending-region-change");
+    document.querySelectorAll(".region-filter").forEach((form) => {
+      const status = form.querySelector(".region-filter-status");
+      const submit = form.querySelector("button[type='submit']");
+      const checkboxes = Array.from(form.querySelectorAll("input[type='checkbox']"));
+      const updateStatus = () => {
+        if (!status) return;
+        const selectedCount = checkboxes.filter((item) => item.checked).length;
+        status.textContent = selectedCount
+          ? `${selectedCount}개 지역 선택됨. 적용을 눌러 반영하세요.`
+          : "전체 지역으로 변경됨. 적용을 눌러 반영하세요.";
+        status.hidden = false;
+        form.classList.add("has-pending-region-change");
+      };
+
+      checkboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const label = checkbox.closest(".region-check");
+          label?.classList.toggle("active", checkbox.checked);
+          updateStatus();
+        });
+      });
+
+      form.addEventListener("submit", () => {
+        if (!submit) return;
+        submit.disabled = true;
+        submit.textContent = "불러오는 중...";
       });
     });
   })();
