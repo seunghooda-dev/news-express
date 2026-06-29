@@ -219,6 +219,33 @@ def create_app() -> Flask:
         flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
         return redirect(url_for("operations"))
 
+    @app.post("/operations/admin-password")
+    def change_admin_password():
+        config = auth_config(store)
+        if config.source == "environment":
+            flash(".env의 관리자 비밀번호 설정이 우선 적용 중이라 화면에서 변경할 수 없습니다.")
+            return redirect(url_for("operations"))
+        if config.setup_required:
+            flash("관리자 비밀번호를 먼저 설정하세요.")
+            return redirect(url_for("admin_setup"))
+
+        current_password = request.form.get("current_password") or ""
+        new_password = request.form.get("new_password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
+        if not verify_admin_password(store, current_password):
+            logger.warning("admin password change failed remote_addr=%s reason=current_password", request.remote_addr)
+            flash("현재 관리자 비밀번호가 올바르지 않습니다.")
+        elif len(new_password) < 8:
+            flash("새 관리자 비밀번호는 8자 이상이어야 합니다.")
+        elif new_password != confirm_password:
+            flash("새 비밀번호 확인이 일치하지 않습니다.")
+        else:
+            set_admin_password(store, new_password)
+            session["admin_authenticated"] = True
+            logger.info("admin password changed remote_addr=%s", request.remote_addr)
+            flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
+        return redirect(url_for("operations"))
+
     @app.post("/operations/backup")
     def create_backup_route():
         if store.is_postgres:

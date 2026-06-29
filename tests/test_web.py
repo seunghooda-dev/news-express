@@ -620,6 +620,78 @@ def test_admin_setup_is_accessible_when_auth_required_without_password(monkeypat
     assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
 
 
+def test_operations_page_changes_database_admin_password(monkeypatch):
+    db_path = Path(f"data/.test_admin_password_change_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
+
+    from news_summary.auth import set_admin_password
+    from news_summary.web import create_app
+
+    store = Store(db_path)
+    store.init_db()
+    set_admin_password(store, "oldpass123")
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    client.post("/login", data={"password": "oldpass123", "next": "/"})
+    operations_html = client.get("/operations").data.decode("utf-8")
+    assert "관리자 비밀번호" in operations_html
+    assert "비밀번호 변경" in operations_html
+
+    wrong_current = client.post(
+        "/operations/admin-password",
+        data={"current_password": "wrong", "new_password": "newpass123", "confirm_password": "newpass123"},
+        follow_redirects=True,
+    )
+    assert "현재 관리자 비밀번호가 올바르지 않습니다." in wrong_current.data.decode("utf-8")
+
+    changed = client.post(
+        "/operations/admin-password",
+        data={"current_password": "oldpass123", "new_password": "newpass123", "confirm_password": "newpass123"},
+        follow_redirects=True,
+    )
+    assert "관리자 비밀번호를 변경했습니다." in changed.data.decode("utf-8")
+
+    client.post("/logout")
+    old_login = client.post("/login", data={"password": "oldpass123"}, follow_redirects=True)
+    assert "관리자 비밀번호가 올바르지 않습니다." in old_login.data.decode("utf-8")
+
+    new_login = client.post("/login", data={"password": "newpass123", "next": "/"}, follow_redirects=True)
+    assert "로그아웃" in new_login.data.decode("utf-8")
+
+
+def test_operations_page_does_not_override_environment_admin_password(monkeypatch):
+    db_path = Path(f"data/.test_env_admin_password_change_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "envpass123")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    client.post("/login", data={"password": "envpass123", "next": "/"})
+    operations_html = client.get("/operations").data.decode("utf-8")
+    assert ".env 관리" in operations_html
+
+    response = client.post(
+        "/operations/admin-password",
+        data={"current_password": "envpass123", "new_password": "newpass123", "confirm_password": "newpass123"},
+        follow_redirects=True,
+    )
+    html = response.data.decode("utf-8")
+    assert ".env의 관리자 비밀번호 설정이 우선 적용 중" in html
+
+    client.post("/logout")
+    new_login = client.post("/login", data={"password": "newpass123"}, follow_redirects=True)
+    assert "관리자 비밀번호가 올바르지 않습니다." in new_login.data.decode("utf-8")
+
+
 def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     db_path = Path(f"data/.test_source_detail_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

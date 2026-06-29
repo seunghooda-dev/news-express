@@ -55,6 +55,30 @@
       <button type="submit">지금 백업 생성</button>
     </form>
   </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>관리자 비밀번호</h2>
+      <span class="badge {% if auth_state.source == 'environment' %}badge-neutral{% else %}badge-gemini{% endif %}">
+        {% if auth_state.source == 'environment' %}.env 관리{% else %}변경 가능{% endif %}
+      </span>
+    </div>
+    {% if auth_state.source == 'environment' %}
+      <p class="meta">현재 .env에 설정된 관리자 비밀번호가 우선 적용 중입니다.</p>
+      <p class="meta">변경하려면 .env 값을 수정한 뒤 프로그램을 다시 실행해야 합니다.</p>
+    {% else %}
+      <p class="meta">현재 비밀번호 확인 후 새 비밀번호를 저장합니다.</p>
+      <form class="ops-form" method="post" action="{{ url_for('change_admin_password') }}">
+        <label for="current_password">현재 비밀번호</label>
+        <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+        <label for="new_password">새 비밀번호</label>
+        <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="8" required>
+        <label for="confirm_password">새 비밀번호 확인</label>
+        <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
+        <button type="submit">비밀번호 변경</button>
+      </form>
+    {% endif %}
+  </article>
 </section>
 
 <section class="ops-log-view">

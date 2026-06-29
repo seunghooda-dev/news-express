@@ -895,7 +895,8 @@ h3 {
   margin: 0;
 }
 
-.restore-form {
+.restore-form,
+.ops-form {
   display: grid;
   gap: 10px;
 }
