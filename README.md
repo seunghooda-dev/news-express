@@ -77,7 +77,6 @@ NEWS_SUMMARY_AUTO_COLLECT=1
 NEWS_SUMMARY_AUTO_COLLECT_LIMIT=30
 NEWS_SUMMARY_AUTO_DRAFT_LIMIT=250
 NEWS_SUMMARY_AUTO_REQUIRE_GEMINI=1
-NEWS_SUMMARY_GEMINI_LITE_UNTIL=
 NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS=2400
 NEWS_SUMMARY_ADMIN_PASSWORD=
 NEWS_SUMMARY_AUTH_REQUIRED=0
@@ -88,7 +87,7 @@ NEWS_SUMMARY_RETENTION_HOLIDAYS=
 DATABASE_URL=
 ```
 
-`NEWS_SUMMARY_GEMINI_LITE_UNTIL=YYYY-MM-DD`를 설정하면 해당 날짜까지 `gemini-3.5-flash` 실패 시 `gemini-3.1-flash-lite`를 함께 시도합니다. 날짜가 지나면 자동으로 3.5 Flash만 사용합니다.
+초안 생성 모델은 원문 난이도에 따라 자동으로 고릅니다. 지원사업·신청·금액·기간 정보가 많은 원문은 `gemini-3.5-flash`, 단순 행사·캠페인성 원문은 `gemini-3.1-flash-lite`를 우선 사용합니다. 수동 다듬기는 품질 유지를 위해 `gemini-3.5-flash`를 사용합니다.
 
 `NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS`는 Gemini에 보내는 원문 본문 발췌 길이입니다. 기본값은 2400자이며, 품질 저하를 막기 위해 1200자 미만으로는 내려가지 않습니다.
 

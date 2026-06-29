@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from pathlib import Path
 
 from .models import ArticleDraft, PressRelease
@@ -11,11 +11,10 @@ from .writing_settings import custom_prompt_section
 
 
 PROMPT_PATH = Path(__file__).resolve().parents[2] / "templates" / "broadcast_shortform_prompt.md"
-LOCAL_TZ = timezone(timedelta(hours=9))
 GEMINI_PRIMARY_MODELS = ("gemini-3.5-flash",)
 GEMINI_LITE_MODELS = ("gemini-3.1-flash-lite",)
 GEMINI_FLASH_MODELS = GEMINI_PRIMARY_MODELS
-DEFAULT_GEMINI_MODELS = GEMINI_PRIMARY_MODELS
+DEFAULT_GEMINI_MODELS = GEMINI_PRIMARY_MODELS + GEMINI_LITE_MODELS
 GEMINI_SOURCE_MAX_CHARS_ENV = "NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS"
 DEFAULT_GEMINI_SOURCE_MAX_CHARS = 2400
 MIN_GEMINI_SOURCE_MAX_CHARS = 1200
@@ -96,7 +95,7 @@ def generate_draft(
     gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if gemini_api_key:
         last_error: Exception | None = None
-        gemini_models = _gemini_model_candidates(model)
+        gemini_models = _gemini_draft_model_candidates(item, model)
         attempted: list[str] = []
         for gemini_model in gemini_models:
             attempted.append(gemini_model)
@@ -162,7 +161,7 @@ def refine_draft_with_gemini(
         raise RuntimeError("Gemini API 키가 설정되어 있지 않습니다.")
     attempted = []
     last_error: Exception | None = None
-    gemini_models = _gemini_model_candidates(model)
+    gemini_models = _gemini_refine_model_candidates(model)
     for gemini_model in gemini_models:
         attempted.append(gemini_model)
         try:
@@ -291,18 +290,76 @@ def _draft_value(draft, key: str):
         return ""
 
 
-def _gemini_model_candidates(model: str | None = None) -> list[str]:
+def _gemini_draft_model_candidates(item: PressRelease, model: str | None = None) -> list[str]:
     enabled_models = current_gemini_models()
     if model and model in enabled_models:
         return [model]
-    return enabled_models
+    if _needs_flash_for_draft(item):
+        return list(GEMINI_PRIMARY_MODELS)
+    return _dedupe_models([*GEMINI_LITE_MODELS, *GEMINI_PRIMARY_MODELS])
+
+
+def _gemini_refine_model_candidates(model: str | None = None) -> list[str]:
+    enabled_models = current_gemini_models()
+    if model and model in enabled_models:
+        return [model]
+    return list(GEMINI_PRIMARY_MODELS)
+
+
+def _dedupe_models(models: list[str]) -> list[str]:
+    deduped = []
+    for model in models:
+        if model not in deduped:
+            deduped.append(model)
+    return deduped
+
+
+def _needs_flash_for_draft(item: PressRelease) -> bool:
+    return _draft_complexity_score(item) >= 12
+
+
+def _draft_complexity_score(item: PressRelease) -> int:
+    text = f"{item.title}\n{_clean_gemini_source_content(item.content, item.title)}"
+    score = 0
+    if len(text) >= 1800:
+        score += 3
+    if len(text) >= 3200:
+        score += 3
+    score += min(len(re.findall(r"\d", text)), 18) // 3
+
+    complex_tokens = (
+        "신청",
+        "접수",
+        "모집",
+        "공모",
+        "대상",
+        "자격",
+        "조건",
+        "지원",
+        "환급",
+        "보조",
+        "사업비",
+        "예산",
+        "금액",
+        "만원",
+        "억원",
+        "기간",
+        "부터",
+        "까지",
+        "선정",
+        "심사",
+    )
+    matched_tokens = {token for token in complex_tokens if token in text}
+    score += len(matched_tokens) * 2
+    if len(matched_tokens) >= 4:
+        score += 4
+    if re.search(r"\d+\s*(?:만|억)?\s*원|\d{1,2}월\s*\d{1,2}일|20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
+        score += 3
+    return score
 
 
 def current_gemini_models(today: date | None = None) -> list[str]:
-    models = list(DEFAULT_GEMINI_MODELS)
-    if _gemini_lite_enabled(today):
-        models.extend(model for model in GEMINI_LITE_MODELS if model not in models)
-    return models
+    return _dedupe_models(list(DEFAULT_GEMINI_MODELS))
 
 
 def gemini_source_max_chars() -> int:
@@ -394,28 +451,13 @@ def _trim_text_to_boundary(text: str, max_chars: int) -> str:
     return clipped.rstrip(" ,;:-") + "..."
 
 
-def _gemini_lite_enabled(today: date | None = None) -> bool:
-    raw_until = (os.getenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL") or "").strip()
-    if not raw_until:
-        return False
-    try:
-        until = date.fromisoformat(raw_until)
-    except ValueError:
-        logger.warning("invalid NEWS_SUMMARY_GEMINI_LITE_UNTIL=%s", raw_until)
-        return False
-    today = today or datetime.now(LOCAL_TZ).date()
-    return today <= until
-
-
 def _summarize_gemini_error(exc: Exception | None) -> str:
     if exc is None:
         return "Gemini 호출에 실패했습니다."
     message = str(exc)
     lowered = message.lower()
     if "429" in message or "resource_exhausted" in lowered or "quota" in lowered:
-        if _gemini_lite_enabled():
-            return "Gemini 요청 한도가 찼습니다. 설정된 Gemini 모델을 모두 시도했지만 초안 생성을 보류했습니다."
-        return "Gemini 3.5 Flash 요청 한도가 찼습니다. 낮은 모델은 사용하지 않도록 설정되어 있어 초안 생성을 보류했습니다."
+        return "Gemini 요청 한도가 찼습니다. 원문 난이도에 맞는 모델을 시도했지만 초안 생성을 보류했습니다."
     if "503" in message or "unavailable" in lowered:
         return "Gemini 모델이 일시적으로 과부하 상태입니다. 잠시 뒤 다시 시도하세요."
     if "api key" in lowered or "401" in message or "unauthorized" in lowered:

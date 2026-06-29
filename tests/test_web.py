@@ -1008,7 +1008,7 @@ def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
     assert "전체 2회" in html
     assert "현재 사용 모델:" in html
     assert "gemini-3.5-flash 1회" in html
-    assert "과거 사용 기록:" in html
+    assert "과거 사용 기록:" not in html
     assert "gemini-3.1-flash-lite 1회" in html
     assert "많이 쓴 모델" not in html
     assert "사용량 초기화" in html

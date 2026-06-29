@@ -7,6 +7,8 @@ from news_summary.writer import (
     generate_draft,
     gemini_source_max_chars,
     refine_draft_with_gemini,
+    _draft_complexity_score,
+    _gemini_draft_model_candidates,
     _gemini_source_excerpt,
     _parse_model_output,
     _refine_user_prompt,
@@ -224,7 +226,7 @@ def test_generate_draft_prefers_gemini_when_key_exists(monkeypatch):
 
     draft = generate_draft(1, item)
 
-    assert draft.model == "gemini-3.5-flash:gemini"
+    assert draft.model == "gemini-3.1-flash-lite:gemini"
     assert draft.title == "광주시, 사업 추진"
     assert len(draft.body.split("\n\n")) == 3
 
@@ -276,9 +278,13 @@ def test_generate_draft_stops_model_fallback_after_quota(monkeypatch):
         source_id="test",
         source_name="테스트",
         region="광주",
-        title="광주시, 사업 추진",
+        title="광주시, 청년 지원사업 참여자 모집",
         url="https://example.com",
-        content="광주시는 새 사업을 추진한다고 밝혔다.",
+        content=(
+            "광주시는 청년 지원사업 참여자를 모집한다고 밝혔다. "
+            "신청 대상은 만 19세부터 39세까지 청년이며, 사업비는 총 3억 원이다. "
+            "선정된 대상자에게는 최대 200만 원을 지원하고, 접수 기간은 7월 1일부터 7월 20일까지다."
+        ),
     )
     calls = []
 
@@ -287,7 +293,6 @@ def test_generate_draft_stops_model_fallback_after_quota(monkeypatch):
         raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL", "")
     monkeypatch.setattr("news_summary.writer._generate_gemini_draft", always_quota)
 
     try:
@@ -301,29 +306,25 @@ def test_generate_draft_stops_model_fallback_after_quota(monkeypatch):
     assert calls == ["gemini-3.5-flash"]
 
 
-def test_current_gemini_models_enables_lite_until_configured_date(monkeypatch):
-    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL", "2026-06-29")
-
+def test_current_gemini_models_include_lite_for_auto_routing():
     assert current_gemini_models(date(2026, 6, 28)) == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
     assert current_gemini_models(date(2026, 6, 29)) == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
-    assert current_gemini_models(date(2026, 6, 30)) == ["gemini-3.5-flash"]
+    assert current_gemini_models(date(2026, 6, 30)) == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
 
-def test_generate_draft_tries_lite_after_quota_when_enabled(monkeypatch):
+def test_generate_draft_uses_lite_first_for_simple_article(monkeypatch):
     item = PressRelease(
         source_id="test",
         source_name="테스트",
         region="광주",
-        title="광주시, 사업 추진",
+        title="광주시, 캠페인 추진",
         url="https://example.com",
-        content="광주시는 새 사업을 추진한다고 밝혔다.",
+        content="광주시는 시민 참여 캠페인을 추진한다고 밝혔다. 캠페인은 다음 달 시청 앞에서 열린다.",
     )
     calls = []
 
-    def fallback_to_lite(item_id, press_release, api_key, model_name):
+    def fake_gemini(item_id, press_release, api_key, model_name):
         calls.append(model_name)
-        if model_name == "gemini-3.5-flash":
-            raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
         return _parse_model_output(
             item_id,
             "제목: 광주시, 사업 추진\n\n본문:\n광주시가 새 사업을 추진합니다.\n\n대상은 시민입니다.\n\n시는 다음 달부터 접수합니다.\n\n검수 메모:\n- lite 테스트",
@@ -331,13 +332,70 @@ def test_generate_draft_tries_lite_after_quota_when_enabled(monkeypatch):
         )
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL", "2999-12-31")
-    monkeypatch.setattr("news_summary.writer._generate_gemini_draft", fallback_to_lite)
+    monkeypatch.setattr("news_summary.writer._generate_gemini_draft", fake_gemini)
 
     draft = generate_draft(1, item, require_gemini=True)
 
-    assert calls == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    assert calls == ["gemini-3.1-flash-lite"]
     assert draft.model == "gemini-3.1-flash-lite:gemini"
+
+
+def test_generate_draft_falls_back_to_flash_when_simple_lite_fails(monkeypatch):
+    item = PressRelease(
+        source_id="test",
+        source_name="테스트",
+        region="광주",
+        title="광주시, 캠페인 추진",
+        url="https://example.com",
+        content="광주시는 시민 참여 캠페인을 추진한다고 밝혔다. 캠페인은 다음 달 시청 앞에서 열린다.",
+    )
+    calls = []
+
+    def fallback_to_flash(item_id, press_release, api_key, model_name):
+        calls.append(model_name)
+        if model_name == "gemini-3.1-flash-lite":
+            raise RuntimeError("503 overloaded")
+        return _parse_model_output(
+            item_id,
+            "제목: 광주시, 캠페인 추진\n\n본문:\n광주시가 시민 참여 캠페인을 추진합니다.\n\n캠페인은 다음 달 시청 앞에서 열립니다.\n\n시는 시민 참여를 당부했습니다.\n\n검수 메모:\n- flash 대체",
+            f"{model_name}:gemini",
+        )
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("news_summary.writer._generate_gemini_draft", fallback_to_flash)
+
+    draft = generate_draft(1, item, require_gemini=True)
+
+    assert calls == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    assert draft.model == "gemini-3.5-flash:gemini"
+
+
+def test_complex_article_uses_flash_without_lite_fallback():
+    simple = PressRelease(
+        source_id="test",
+        source_name="테스트",
+        region="광주",
+        title="광주시, 캠페인 추진",
+        url="https://example.com/simple",
+        content="광주시는 시민 참여 캠페인을 추진한다고 밝혔다. 캠페인은 다음 달 시청 앞에서 열린다.",
+    )
+    complex_item = PressRelease(
+        source_id="test",
+        source_name="테스트",
+        region="광주",
+        title="광주시, 청년 지원사업 참여자 모집",
+        url="https://example.com/complex",
+        content=(
+            "광주시는 청년 지원사업 참여자를 모집한다고 밝혔다. "
+            "신청 대상은 만 19세부터 39세까지 청년이며, 사업비는 총 3억 원이다. "
+            "선정된 대상자에게는 최대 200만 원을 지원하고, 접수 기간은 7월 1일부터 7월 20일까지다."
+        ),
+    )
+
+    assert _draft_complexity_score(simple) < 12
+    assert _gemini_draft_model_candidates(simple) == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    assert _draft_complexity_score(complex_item) >= 12
+    assert _gemini_draft_model_candidates(complex_item) == ["gemini-3.5-flash"]
 
 
 def test_refine_draft_with_gemini_passes_reporter_instruction(monkeypatch):
@@ -397,7 +455,6 @@ def test_refine_draft_with_gemini_uses_only_35_flash(monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("GEMINI_MODEL", "quota-model")
-    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL", "")
     monkeypatch.delenv("GEMINI_MODELS", raising=False)
     monkeypatch.setattr("news_summary.writer._generate_gemini_refinement", fake_refinement)
 
@@ -428,7 +485,6 @@ def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("GEMINI_MODELS", "quota-a,quota-b")
-    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_LITE_UNTIL", "")
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setattr("news_summary.writer._generate_gemini_refinement", always_fail)
 
