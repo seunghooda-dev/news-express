@@ -9,20 +9,40 @@
 <body>
   <header class="topbar">
     <a class="brand{% if request.endpoint == 'dashboard' %} active{% endif %}" href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>Home</a>
-    <nav>
-      <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
-      <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
-      <a href="{{ url_for('writing_settings') }}" {% if request.endpoint == 'writing_settings' %}class="active" aria-current="page"{% endif %}>기사 설정</a>
-      <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
-      {% if auth_state.enabled %}
-        {% if admin_authenticated %}
-          <form class="nav-form" method="post" action="{{ url_for('logout') }}">
-            <button type="submit">로그아웃</button>
-          </form>
-        {% else %}
-          <a href="{{ url_for('login') }}">로그인</a>
+    <nav class="topnav" aria-label="주요 메뉴">
+      <div class="desktop-nav-links">
+        <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
+        <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
+        <a href="{{ url_for('writing_settings') }}" {% if request.endpoint == 'writing_settings' %}class="active" aria-current="page"{% endif %}>기사 설정</a>
+        <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
+        {% if auth_state.enabled %}
+          {% if admin_authenticated %}
+            <form class="nav-form" method="post" action="{{ url_for('logout') }}">
+              <button type="submit">로그아웃</button>
+            </form>
+          {% else %}
+            <a href="{{ url_for('login') }}">로그인</a>
+          {% endif %}
         {% endif %}
-      {% endif %}
+      </div>
+      <details class="mobile-dash-menu">
+        <summary>대시 모드</summary>
+        <div class="mobile-dash-panel">
+          <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
+          <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
+          <a href="{{ url_for('writing_settings') }}" {% if request.endpoint == 'writing_settings' %}class="active" aria-current="page"{% endif %}>기사 설정</a>
+          <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
+          {% if auth_state.enabled %}
+            {% if admin_authenticated %}
+              <form class="nav-form mobile-nav-form" method="post" action="{{ url_for('logout') }}">
+                <button type="submit">로그아웃</button>
+              </form>
+            {% else %}
+              <a href="{{ url_for('login') }}">로그인</a>
+            {% endif %}
+          {% endif %}
+        </div>
+      </details>
     </nav>
   </header>
 

@@ -56,10 +56,21 @@ a {
 .topbar nav {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.desktop-nav-links {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 18px;
   min-width: 0;
+}
+
+.mobile-dash-menu {
+  display: none;
 }
 
 .topbar nav a {
@@ -1148,6 +1159,17 @@ h3 {
   font-weight: 700;
 }
 
+@keyframes mobile-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-4px) scale(1);
+  }
+}
+
 .check-ok {
   color: #2f6b33;
 }
@@ -1158,9 +1180,12 @@ h3 {
 
 @media (max-width: 820px) {
   .topbar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    align-items: center;
+    flex-direction: row;
+    gap: 12px;
     min-height: 0;
     padding: 12px 16px;
   }
@@ -1171,31 +1196,116 @@ h3 {
   }
 
   .topbar nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    width: 100%;
-    gap: 8px;
+    position: relative;
+    width: auto;
+    margin-left: auto;
   }
 
-  .topbar nav a,
-  .nav-form button {
+  .desktop-nav-links {
+    display: none;
+  }
+
+  .mobile-dash-menu {
+    display: block;
+    position: relative;
+  }
+
+  .mobile-dash-menu summary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 38px;
-    padding: 8px 10px;
+    min-height: 36px;
+    padding: 8px 12px;
     border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 6px;
+    border-radius: 999px;
     background: rgba(255, 255, 255, 0.08);
+    color: #f5f7fb;
     font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
     text-align: center;
+    cursor: pointer;
+    list-style: none;
+    transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  }
+
+  .mobile-dash-menu summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-dash-menu summary::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-left: 8px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.16s ease;
+  }
+
+  .mobile-dash-menu summary:hover,
+  .mobile-dash-menu summary:focus-visible,
+  .mobile-dash-menu[open] summary {
+    border-color: rgba(255, 255, 255, 0.36);
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  .mobile-dash-menu[open] summary::after {
+    transform: translateY(2px) rotate(225deg);
+  }
+
+  .mobile-dash-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    display: grid;
+    width: min(240px, calc(100vw - 32px));
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    background: #111827;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+    transform: translateY(-4px);
+    transform-origin: top right;
+    animation: mobile-menu-in 0.16s ease-out;
+  }
+
+  .mobile-dash-panel a,
+  .mobile-dash-panel .nav-form button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #f5f7fb;
+    font-size: 14px;
+    text-align: left;
+    text-decoration: none;
+  }
+
+  .mobile-dash-panel a:hover,
+  .mobile-dash-panel a:focus-visible,
+  .mobile-dash-panel .nav-form button:hover,
+  .mobile-dash-panel .nav-form button:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .mobile-dash-panel a.active {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font-weight: 800;
   }
 
   .nav-form {
-    display: contents;
+    margin: 0;
   }
 
-  .nav-form button {
+  .mobile-nav-form {
     width: 100%;
   }
 
