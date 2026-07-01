@@ -28,6 +28,7 @@ TRANSIENT_DNS_RETRY_DELAY_SECONDS = 5.0
 RETENTION_DAYS_ENV = "NEWS_SUMMARY_RETENTION_DAYS"
 RETENTION_HOLIDAYS_ENV = "NEWS_SUMMARY_RETENTION_HOLIDAYS"
 DEFAULT_RETENTION_DAYS = 3
+LOCAL_TZ = timezone(timedelta(hours=9))
 
 
 DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
@@ -472,7 +473,7 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
         cooldown_until = gemini_cooldown_until(store)
         if cooldown_until:
             logger.info("draft skipped gemini cooldown until=%s", cooldown_until.isoformat())
-            return [_gemini_cooldown_message(cooldown_until)]
+            return [gemini_cooldown_message(cooldown_until)]
 
     rows = store.pending_press_releases(limit)
     if not rows:
@@ -495,7 +496,7 @@ def draft_pending_releases_for_date(
         cooldown_until = gemini_cooldown_until(store)
         if cooldown_until:
             logger.info("date draft skipped gemini cooldown until=%s date=%s", cooldown_until.isoformat(), published_date)
-            return [_gemini_cooldown_message(cooldown_until)]
+            return [gemini_cooldown_message(cooldown_until)]
 
     rows = store.pending_press_releases_for_date(published_date, limit, oldest_first=oldest_first)
     if not rows:
@@ -556,7 +557,7 @@ def _draft_rows(
             )
             if _is_gemini_quota_message(str(exc)):
                 cooldown_until = mark_gemini_cooldown(store, reason=f"자동 초안 생성 한도 초과: {exc}")
-                messages.append(_gemini_cooldown_message(cooldown_until))
+                messages.append(gemini_cooldown_message(cooldown_until))
                 logger.warning("gemini cooldown started until=%s", cooldown_until.isoformat())
                 break
             continue
@@ -633,8 +634,14 @@ def mark_gemini_cooldown(
     return cooldown_until
 
 
-def _gemini_cooldown_message(cooldown_until: datetime) -> str:
-    return f"Gemini 요청 한도 감지로 {cooldown_until.astimezone(timezone.utc).strftime('%H:%M')} UTC까지 초안 생성을 보류합니다."
+def gemini_cooldown_message(cooldown_until: datetime) -> str:
+    return f"Gemini 요청 한도 감지로 한국 시간 {_format_local_datetime(cooldown_until)}까지 초안 생성을 보류합니다."
+
+
+def _format_local_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=LOCAL_TZ)
+    return value.astimezone(LOCAL_TZ).strftime("%Y.%m.%d %H:%M")
 
 
 def _is_gemini_quota_message(message: str) -> bool:

@@ -136,7 +136,7 @@ def draft_date_command(
     quota_retry_limit: int,
     newest_first: bool,
 ) -> None:
-    from .service import draft_pending_releases_for_date, gemini_cooldown_until
+    from .service import draft_pending_releases_for_date, gemini_cooldown_message, gemini_cooldown_until
 
     try:
         datetime.strptime(published_date, "%Y-%m-%d")
@@ -149,7 +149,7 @@ def draft_date_command(
         cooldown_until = gemini_cooldown_until(store) if require_gemini else None
         if cooldown_until:
             if not wait_cooldown:
-                print(f"Gemini 쿨다운 중: {cooldown_until.isoformat()}까지 초안 생성을 보류합니다.")
+                print(gemini_cooldown_message(cooldown_until))
                 return
             _wait_until(cooldown_until)
 

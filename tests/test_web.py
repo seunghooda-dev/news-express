@@ -568,6 +568,7 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     db_path = Path(f"data/.test_admin_login_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
 
     from news_summary.web import create_app
 
@@ -595,6 +596,7 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
 def test_admin_setup_enables_login_without_env_password(monkeypatch):
     db_path = Path(f"data/.test_admin_setup_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
     monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
     monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
 
@@ -621,6 +623,7 @@ def test_admin_setup_is_accessible_when_auth_required_without_password(monkeypat
     db_path = Path(f"data/.test_admin_required_setup_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
     monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
     monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
 
@@ -645,6 +648,7 @@ def test_admin_setup_is_accessible_when_auth_required_without_password(monkeypat
 def test_operations_page_changes_database_admin_password(monkeypatch):
     db_path = Path(f"data/.test_admin_password_change_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
     monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
     monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
 
@@ -703,6 +707,7 @@ def test_operations_page_does_not_override_environment_admin_password(monkeypatc
     db_path = Path(f"data/.test_env_admin_password_change_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "envpass123")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
 
     from news_summary.web import create_app
 

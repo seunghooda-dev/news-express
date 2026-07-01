@@ -17,6 +17,7 @@ from news_summary.service import (
     collection_retention_cutoff_date,
     draft_pending_releases,
     draft_pending_releases_for_date,
+    gemini_cooldown_message,
     gemini_cooldown_until,
     repair_missing_published_dates,
 )
@@ -89,6 +90,16 @@ def test_draft_pending_releases_starts_cooldown_after_gemini_quota(monkeypatch):
     assert "초안 생성을 보류" in second_messages[0]
     assert gemini_cooldown_until(store) is not None
     assert len(store.pending_press_releases(5)) == 2
+
+
+def test_gemini_cooldown_message_uses_korean_time_label():
+    cooldown_until = datetime(2026, 7, 1, 21, 39, tzinfo=timezone.utc)
+
+    message = gemini_cooldown_message(cooldown_until)
+
+    assert "UTC" not in message
+    assert "한국 시간 2026.07.02 06:39" in message
+    assert "초안 생성을 보류합니다." in message
 
 
 def test_collect_enabled_sources_reports_source_progress(monkeypatch):
