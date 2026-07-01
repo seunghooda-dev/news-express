@@ -1,5 +1,5 @@
-# 광주·전남 공식 지자체 보도자료 기본 소스입니다.
-# 광주 자치구청과 전남 시군청 보도자료/군정소식 게시판까지 함께 수집합니다.
+# 전남광주통합특별시 공식 지자체 보도자료 기본 소스입니다.
+# 광주권 자치구청과 전남권 시군청 보도자료/군정소식 게시판까지 함께 수집합니다.
 
 common_content: &common_content
   - ".board_view"
@@ -28,8 +28,8 @@ common_content: &common_content
 
 sources:
   - id: gwangju-city
-    name: 광주광역시청 보도자료
-    region: 광주
+    name: 전남광주통합특별시 광주청사 보도자료
+    region: 전남광주통합특별시 광주
     enabled: true
     type: html_board
     list_url: "https://www.gwangju.go.kr/boardList.do?boardId=BD_0000000027&pageId=www789&recordCnt=30"
@@ -46,7 +46,7 @@ sources:
 
   - id: gwangju-donggu
     name: 광주 동구청 보도자료
-    region: 광주 동구
+    region: 전남광주통합특별시 광주 동구
     enabled: true
     type: html_board
     list_url: "https://www.donggu.kr/board.es?mid=a10102040100&bid=0243"
@@ -63,7 +63,7 @@ sources:
 
   - id: gwangju-seogu
     name: 광주 서구청 보도자료
-    region: 광주 서구
+    region: 전남광주통합특별시 광주 서구
     enabled: true
     type: html_board
     verify_ssl: false
@@ -78,7 +78,7 @@ sources:
 
   - id: gwangju-namgu
     name: 광주 남구청 보도자료
-    region: 광주 남구
+    region: 전남광주통합특별시 광주 남구
     enabled: true
     type: html_board
     verify_ssl: false
@@ -97,7 +97,7 @@ sources:
 
   - id: gwangju-bukgu
     name: 광주 북구청 보도자료
-    region: 광주 북구
+    region: 전남광주통합특별시 광주 북구
     enabled: true
     type: html_board
     list_url: "https://eminwon.bukgu.gwangju.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do?pageIndex=&jndinm=OfrBcAdvNewsEJB&context=NTIS&method=selectListOfrNews&methodnm=selectListOfrNewsHomepage&news_epct_no=&subCheck=N&ofr_pageSize=10&news_epct_yn=1&title=%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C&data_open_yn=1&initValue=&countYn=Y"
@@ -115,7 +115,7 @@ sources:
 
   - id: gwangju-gwangsan
     name: 광주 광산구청 보도자료
-    region: 광주 광산구
+    region: 전남광주통합특별시 광주 광산구
     enabled: true
     type: html_board
     list_url: "https://www.gwangsan.go.kr/boardList.do?boardId=REPORT_NEW&pageId=www16"
@@ -127,13 +127,13 @@ sources:
       content: *common_content
 
   - id: jeonnam-province
-    name: 전라남도청 보도자료
-    region: 전남
+    name: 전남광주통합특별시청 보도자료
+    region: 전남광주통합특별시
     enabled: true
     type: html_board
     verify_ssl: false
-    list_url: "https://www.jeonnam.go.kr/M7116/boardList.do?menuId=jeonnam0202000000"
-    base_url: "https://www.jeonnam.go.kr"
+    list_url: "https://governor.jeonnam.go.kr/M7116/boardList.do?displayHeader=&infoReturn=&menuId=jeonnam0202000000"
+    base_url: "https://governor.jeonnam.go.kr"
     include_url_contains:
       - "boardView.do"
       - "M7116"
@@ -143,12 +143,11 @@ sources:
       - "마지막 목록"
     selectors:
       link: "a[href*='boardView.do']"
-      content:
-        - ".bbs_view_contnet"
+      content: *common_content
 
   - id: mokpo-city
     name: 목포시청 보도자료
-    region: 전남 목포
+    region: 전남광주통합특별시 목포
     enabled: true
     type: html_board
     verify_ssl: false
@@ -165,7 +164,7 @@ sources:
 
   - id: yeosu-city
     name: 여수시청 보도자료
-    region: 전남 여수
+    region: 전남광주통합특별시 여수
     enabled: true
     type: html_board
     verify_ssl: false
@@ -180,7 +179,7 @@ sources:
 
   - id: suncheon-city
     name: 순천시청 보도자료
-    region: 전남 순천
+    region: 전남광주통합특별시 순천
     enabled: true
     type: html_board
     list_url: "https://www.suncheon.go.kr/kr/news/0006/0001"
@@ -199,7 +198,7 @@ sources:
 
   - id: naju-city
     name: 나주시청 보도자료
-    region: 전남 나주
+    region: 전남광주통합특별시 나주
     enabled: true
     type: html_board
     list_url: "https://www.naju.go.kr/www/administration/reporting/coverage"
@@ -213,7 +212,7 @@ sources:
 
   - id: gwangyang-city
     name: 광양시청 보도자료
-    region: 전남 광양
+    region: 전남광주통합특별시 광양
     enabled: true
     type: html_board
     verify_ssl: false
@@ -228,7 +227,7 @@ sources:
 
   - id: damyang-county
     name: 담양군청 보도자료
-    region: 전남 담양
+    region: 전남광주통합특별시 담양
     enabled: true
     type: json_board
     list_url: "https://www.damyang.go.kr/board/getContentsList"
@@ -254,7 +253,7 @@ sources:
 
   - id: gokseong-county
     name: 곡성군청 보도자료
-    region: 전남 곡성
+    region: 전남광주통합특별시 곡성
     enabled: true
     type: html_board
     verify_ssl: false
@@ -268,7 +267,7 @@ sources:
 
   - id: gurye-county
     name: 구례군청 보도자료
-    region: 전남 구례
+    region: 전남광주통합특별시 구례
     enabled: true
     type: html_board
     list_url: "https://www.gurye.go.kr/board/list.do?bbsId=BBS_0000000000000300&menuNo=115004006000"
@@ -281,7 +280,7 @@ sources:
 
   - id: goheung-county
     name: 고흥군청 보도자료
-    region: 전남 고흥
+    region: 전남광주통합특별시 고흥
     enabled: true
     type: html_board
     list_url: "https://www.goheung.go.kr/boardList.do?boardId=BD_00025&pageId=www102"
@@ -294,7 +293,7 @@ sources:
 
   - id: boseong-county
     name: 보성군청 보도자료
-    region: 전남 보성
+    region: 전남광주통합특별시 보성
     enabled: true
     type: html_board
     verify_ssl: false
@@ -309,7 +308,7 @@ sources:
 
   - id: hwasun-county
     name: 화순군청 화순포커스
-    region: 전남 화순
+    region: 전남광주통합특별시 화순
     enabled: true
     type: html_board
     verify_ssl: false
@@ -330,7 +329,7 @@ sources:
 
   - id: jangheung-county
     name: 장흥군청 장흥소식
-    region: 전남 장흥
+    region: 전남광주통합특별시 장흥
     enabled: true
     type: html_board
     list_url: "https://www.jangheung.go.kr/www/organization/news/jh_news"
@@ -344,7 +343,7 @@ sources:
 
   - id: gangjin-county
     name: 강진군청 보도자료
-    region: 전남 강진
+    region: 전남광주통합특별시 강진
     enabled: true
     type: html_board
     verify_ssl: false
@@ -359,7 +358,7 @@ sources:
 
   - id: haenam-county
     name: 해남군청 보도자료
-    region: 전남 해남
+    region: 전남광주통합특별시 해남
     enabled: true
     type: html_board
     verify_ssl: false
@@ -374,7 +373,7 @@ sources:
 
   - id: yeongam-county
     name: 영암군청 보도/해명자료
-    region: 전남 영암
+    region: 전남광주통합특별시 영암
     enabled: true
     type: html_board
     verify_ssl: false
@@ -390,7 +389,7 @@ sources:
 
   - id: muan-county
     name: 무안군청 보도자료
-    region: 전남 무안
+    region: 전남광주통합특별시 무안
     enabled: true
     type: html_board
     verify_ssl: false
@@ -405,7 +404,7 @@ sources:
 
   - id: hampyeong-county
     name: 함평군청 보도/해명
-    region: 전남 함평
+    region: 전남광주통합특별시 함평
     enabled: true
     type: html_board
     list_url: "https://www.hampyeong.go.kr/boardList.do?boardId=NEWS&pageId=www275"
@@ -418,7 +417,7 @@ sources:
 
   - id: yeonggwang-county
     name: 영광군청 보도자료
-    region: 전남 영광
+    region: 전남광주통합특별시 영광
     enabled: true
     type: html_board
     verify_ssl: false
@@ -435,7 +434,7 @@ sources:
 
   - id: jangseong-county
     name: 장성군청 보도자료
-    region: 전남 장성
+    region: 전남광주통합특별시 장성
     enabled: true
     type: html_board
     list_url: "https://www.jangseong.go.kr/home/www/news/jangseong/bodo"
@@ -447,7 +446,7 @@ sources:
 
   - id: wando-county
     name: 완도군청 보도자료
-    region: 전남 완도
+    region: 전남광주통합특별시 완도
     enabled: true
     type: html_board
     list_url: "https://www.wando.go.kr/wando/sub.cs?m=299"
@@ -461,7 +460,7 @@ sources:
 
   - id: jindo-county
     name: 진도군청 보도자료
-    region: 전남 진도
+    region: 전남광주통합특별시 진도
     enabled: true
     type: html_board
     verify_ssl: false
@@ -480,7 +479,7 @@ sources:
 
   - id: shinan-county
     name: 신안군청 보도자료/해명
-    region: 전남 신안
+    region: 전남광주통합특별시 신안
     enabled: true
     type: html_board
     list_url: "https://www.shinan.go.kr/home/www/openinfo/participation_07/participation_07_03"

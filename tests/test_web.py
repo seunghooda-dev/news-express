@@ -360,10 +360,10 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
 
     assert '<details class="source-board">' in dashboard_html
     assert '<details class="source-board" open' not in dashboard_html
-    assert "광주 · 누적 2건 · 오늘 1건" in dashboard_html
+    assert "전남광주통합특별시 광주 · 누적 2건 · 오늘 1건" in dashboard_html
     assert '<details class="mobile-source-board">' in dashboard_html
     assert '<details class="mobile-source-board" open' not in dashboard_html
-    assert "광주광역시청 보도자료" in dashboard_html
+    assert "전남광주통합특별시 광주청사 보도자료" in dashboard_html
     assert "비정상" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
@@ -424,23 +424,23 @@ def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch
     app.testing = True
     client = app.test_client()
 
-    dashboard_html = client.get("/?region=전남+진도").data.decode("utf-8")
-    assert 'name="region" value="전남 진도" checked' in dashboard_html
+    dashboard_html = client.get("/?region=전남광주통합특별시+진도").data.decode("utf-8")
+    assert 'name="region" value="전남광주통합특별시 진도" checked' in dashboard_html
     assert '<details class="region-filter-panel">' in dashboard_html
     assert '<details class="region-filter-panel" open' not in dashboard_html
     assert "data-auto-submit" not in dashboard_html
     assert "선택 변경됨. 적용을 눌러 반영하세요." in dashboard_html
     assert "진도군청 보도자료" in dashboard_html
     assert "진도 지역 초안" in dashboard_html
-    assert "광주광역시청 보도자료" not in dashboard_html
+    assert "전남광주통합특별시 광주청사 보도자료" not in dashboard_html
     assert "광주 지역 초안" not in dashboard_html
     assert "/press-releases?region=" in dashboard_html
 
-    drafts_html = client.get("/drafts?region=전남+진도").data.decode("utf-8")
+    drafts_html = client.get("/drafts?region=전남광주통합특별시+진도").data.decode("utf-8")
     assert "진도 지역 초안" in drafts_html
     assert "광주 지역 초안" not in drafts_html
 
-    releases_html = client.get("/press-releases?region=전남+진도").data.decode("utf-8")
+    releases_html = client.get("/press-releases?region=전남광주통합특별시+진도").data.decode("utf-8")
     assert "진도 지역 원문" in releases_html
     assert "광주 지역 원문" not in releases_html
 
@@ -479,14 +479,14 @@ def test_parent_region_filter_shows_child_region_pending_drafts_on_dashboard(mon
     app.testing = True
     client = app.test_client()
 
-    dashboard_html = client.get("/?region=전남").data.decode("utf-8")
+    dashboard_html = client.get("/?region=전남광주통합특별시").data.decode("utf-8")
 
-    assert 'name="region" value="전남" checked' in dashboard_html
+    assert 'name="region" value="전남광주통합특별시" checked' in dashboard_html
     assert "진도 오래된 검수 대기 초안" in dashboard_html
     assert "초안 " in dashboard_html
     assert "게시 2026.05.10" in dashboard_html
 
-    drafts_html = client.get("/drafts?status=needs_review&region=전남").data.decode("utf-8")
+    drafts_html = client.get("/drafts?status=needs_review&region=전남광주통합특별시").data.decode("utf-8")
     assert "진도 오래된 검수 대기 초안" in drafts_html
 
 
