@@ -673,14 +673,59 @@ h3 {
   margin-bottom: 12px;
 }
 
-.region-filter {
-  display: grid;
-  gap: 10px;
+.region-filter-panel {
   margin-bottom: 16px;
-  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+  overflow: hidden;
+}
+
+.region-filter-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.region-filter-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.region-filter-toggle::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--accent-strong);
+  border-bottom: 2px solid var(--accent-strong);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.16s ease;
+}
+
+.region-filter-panel[open] .region-filter-toggle::after {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.region-filter-toggle:hover,
+.region-filter-toggle:focus-visible {
+  background: #f4fbf9;
+}
+
+.region-filter-toggle b {
+  margin-left: auto;
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.region-filter {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
 }
 
 .region-filter-head,
@@ -1376,8 +1421,7 @@ h3 {
   }
 
   .dashboard-summary {
-    justify-content: flex-start;
-    margin: -2px 0 14px;
+    display: none;
   }
 
   .metric-link {
@@ -1406,7 +1450,12 @@ h3 {
   }
 
   .region-filter {
-    padding: 10px;
+    padding: 0 10px 10px;
+  }
+
+  .region-filter-toggle {
+    min-height: 42px;
+    padding: 9px 10px;
   }
 
   .region-filter-head,

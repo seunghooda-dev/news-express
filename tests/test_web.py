@@ -412,6 +412,8 @@ def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch
 
     dashboard_html = client.get("/?region=전남+진도").data.decode("utf-8")
     assert 'name="region" value="전남 진도" checked' in dashboard_html
+    assert '<details class="region-filter-panel">' in dashboard_html
+    assert '<details class="region-filter-panel" open' not in dashboard_html
     assert "data-auto-submit" not in dashboard_html
     assert "선택 변경됨. 적용을 눌러 반영하세요." in dashboard_html
     assert "진도군청 보도자료" in dashboard_html
@@ -778,6 +780,8 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     dashboard = client.get("/")
     dashboard_html = dashboard.data.decode("utf-8")
     assert "수동 재수집" in dashboard_html
+    assert "<summary>설정</summary>" in dashboard_html
+    assert "대시 모드" not in dashboard_html
     assert "초안 검수" in dashboard_html
     assert "Gemini 사용량" in dashboard_html
     assert 'href="/gemini-usage"' in dashboard_html

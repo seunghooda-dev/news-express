@@ -1,26 +1,32 @@
-<form class="region-filter" method="get">
-  {% for key, value in region_filter_hidden.items() %}
-    <input type="hidden" name="{{ key }}" value="{{ value }}">
-  {% endfor %}
-  <div class="region-filter-head">
-    <strong>지역</strong>
-    {% if selected_regions %}
-      <a class="source-link" href="{{ region_reset_url }}">전체</a>
-    {% endif %}
-  </div>
-  <div class="region-checks">
-    {% for region in region_options %}
-      <label class="region-check {% if region in selected_regions %}active{% endif %}">
-        <input type="checkbox" name="region" value="{{ region }}" {% if region in selected_regions %}checked{% endif %}>
-        <span>{{ region }}</span>
-      </label>
+<details class="region-filter-panel">
+  <summary class="region-filter-toggle">
+    <span>지역 선택</span>
+    <b>{% if selected_regions %}{{ selected_regions|length }}개 선택{% else %}전체{% endif %}</b>
+  </summary>
+  <form class="region-filter" method="get">
+    {% for key, value in region_filter_hidden.items() %}
+      <input type="hidden" name="{{ key }}" value="{{ value }}">
     {% endfor %}
-  </div>
-  <div class="region-filter-actions">
-    <span class="region-filter-status" aria-live="polite" hidden>선택 변경됨. 적용을 눌러 반영하세요.</span>
-    <button type="submit">적용</button>
-  </div>
-</form>
+    <div class="region-filter-head">
+      <strong>지역</strong>
+      {% if selected_regions %}
+        <a class="source-link" href="{{ region_reset_url }}">전체</a>
+      {% endif %}
+    </div>
+    <div class="region-checks">
+      {% for region in region_options %}
+        <label class="region-check {% if region in selected_regions %}active{% endif %}">
+          <input type="checkbox" name="region" value="{{ region }}" {% if region in selected_regions %}checked{% endif %}>
+          <span>{{ region }}</span>
+        </label>
+      {% endfor %}
+    </div>
+    <div class="region-filter-actions">
+      <span class="region-filter-status" aria-live="polite" hidden>선택 변경됨. 적용을 눌러 반영하세요.</span>
+      <button type="submit">적용</button>
+    </div>
+  </form>
+</details>
 <script>
   (() => {
     document.querySelectorAll(".region-filter").forEach((form) => {

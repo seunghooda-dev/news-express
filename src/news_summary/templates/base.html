@@ -26,7 +26,7 @@
         {% endif %}
       </div>
       <details class="mobile-dash-menu">
-        <summary>대시 모드</summary>
+        <summary>설정</summary>
         <div class="mobile-dash-panel">
           <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
           <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
