@@ -86,6 +86,21 @@
   </div>
 </section>
 
+<details class="mobile-source-board">
+  <summary class="mobile-source-toggle">
+    <span>기관별 수집 상태</span>
+    <b>{{ source_summaries|length }}개</b>
+  </summary>
+  <div class="mobile-source-list">
+    {% for source in source_summaries %}
+      <a class="mobile-source-row {% if source.issue %}is-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
+        <span>{{ source.name }}</span>
+        <b>{% if source.issue %}비정상{% else %}정상{% endif %}</b>
+      </a>
+    {% endfor %}
+  </div>
+</details>
+
 <section class="split">
   <div>
     <h1>검수 대기 초안</h1>
