@@ -936,6 +936,62 @@ h3 {
 
 .source-board {
   margin-bottom: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.source-board-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 12px 14px;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.source-board-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.source-board-toggle::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--accent-strong);
+  border-bottom: 2px solid var(--accent-strong);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.16s ease;
+}
+
+.source-board[open] .source-board-toggle::after {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.source-board-toggle:hover,
+.source-board-toggle:focus-visible {
+  background: #f4fbf9;
+}
+
+.source-board-toggle span {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.source-board-toggle b {
+  margin-left: auto;
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.source-board-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 14px;
 }
 
 .mobile-source-board {

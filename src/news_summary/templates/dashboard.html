@@ -61,30 +61,36 @@
 
 {% include "_region_filter.html" %}
 
-<section class="source-board">
-  <div class="section-head compact">
-    <h1>기관별 수집 상태</h1>
-    <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}">주의 필요 보기</a>
-  </div>
-  <div class="source-grid">
-    {% for source in source_summaries %}
-      <a class="source-card {% if source.issue %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
-        <strong>{{ source.name }}</strong>
-        <span>{{ source.region }} · 누적 {{ source.releases }}건 · 오늘 {{ source.today_releases }}건</span>
-        <span>최근 수집 {{ source.last_collected|date_label }}</span>
-        <span>마지막 점검 {{ source.last_checked_at|date_label }}</span>
-        {% if source.issue %}
-          <em>{{ source.issue }}</em>
-          {% if source.failure_reason %}
-            <span>원인 {{ source.failure_reason }}</span>
+<details class="source-board">
+  <summary class="source-board-toggle">
+    <span>기관별 수집 상태</span>
+    <b>{{ source_summaries|length }}개</b>
+  </summary>
+  <div class="source-board-body">
+    <div class="section-head compact">
+      <span class="meta">기관별 상세 수집 상태</span>
+      <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}">주의 필요 보기</a>
+    </div>
+    <div class="source-grid">
+      {% for source in source_summaries %}
+        <a class="source-card {% if source.issue %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
+          <strong>{{ source.name }}</strong>
+          <span>{{ source.region }} · 누적 {{ source.releases }}건 · 오늘 {{ source.today_releases }}건</span>
+          <span>최근 수집 {{ source.last_collected|date_label }}</span>
+          <span>마지막 점검 {{ source.last_checked_at|date_label }}</span>
+          {% if source.issue %}
+            <em>{{ source.issue }}</em>
+            {% if source.failure_reason %}
+              <span>원인 {{ source.failure_reason }}</span>
+            {% endif %}
+          {% else %}
+            <em>정상</em>
           {% endif %}
-        {% else %}
-          <em>정상</em>
-        {% endif %}
-      </a>
-    {% endfor %}
+        </a>
+      {% endfor %}
+    </div>
   </div>
-</section>
+</details>
 
 <details class="mobile-source-board">
   <summary class="mobile-source-toggle">

@@ -358,6 +358,8 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
 
     dashboard_html = client.get("/").data.decode("utf-8")
 
+    assert '<details class="source-board">' in dashboard_html
+    assert '<details class="source-board" open' not in dashboard_html
     assert "광주 · 누적 2건 · 오늘 1건" in dashboard_html
     assert '<details class="mobile-source-board">' in dashboard_html
     assert '<details class="mobile-source-board" open' not in dashboard_html
