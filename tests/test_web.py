@@ -646,18 +646,31 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     client.post("/login", data={"password": "oldpass123", "next": "/"})
     operations_html = client.get("/operations").data.decode("utf-8")
     assert "관리자 비밀번호" in operations_html
-    assert "비밀번호 변경" in operations_html
+    assert "확인 후 변경 열기" in operations_html
+    assert "new_password" not in operations_html
 
-    wrong_current = client.post(
-        "/operations/admin-password",
-        data={"current_password": "wrong", "new_password": "newpass123", "confirm_password": "newpass123"},
+    wrong_unlock = client.post(
+        "/operations/admin-password/unlock",
+        data={"current_password": "wrong"},
         follow_redirects=True,
     )
-    assert "현재 관리자 비밀번호가 올바르지 않습니다." in wrong_current.data.decode("utf-8")
+    wrong_unlock_html = wrong_unlock.data.decode("utf-8")
+    assert "현재 관리자 비밀번호가 올바르지 않습니다." in wrong_unlock_html
+    assert "new_password" not in wrong_unlock_html
+
+    unlock = client.post(
+        "/operations/admin-password/unlock",
+        data={"current_password": "oldpass123"},
+        follow_redirects=True,
+    )
+    unlocked_html = unlock.data.decode("utf-8")
+    assert "관리자 비밀번호 변경 입력칸을 열었습니다." in unlocked_html
+    assert "비밀번호 변경" in unlocked_html
+    assert "new_password" in unlocked_html
 
     changed = client.post(
         "/operations/admin-password",
-        data={"current_password": "oldpass123", "new_password": "newpass123", "confirm_password": "newpass123"},
+        data={"new_password": "newpass123", "confirm_password": "newpass123"},
         follow_redirects=True,
     )
     assert "관리자 비밀번호를 변경했습니다." in changed.data.decode("utf-8")

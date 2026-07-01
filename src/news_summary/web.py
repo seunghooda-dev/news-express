@@ -10,7 +10,7 @@ from pathlib import Path
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
-from .auth import auth_config, set_admin_password, verify_admin_password
+from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, verify_admin_password
 from .backup import create_backup, restore_backup
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
@@ -43,6 +43,7 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
+OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 
 
 def create_app() -> Flask:
@@ -233,6 +234,8 @@ def create_app() -> Flask:
     def operations():
         auto_collector = app.config.get("AUTO_COLLECTOR")
         auto_status = auto_collector.snapshot() if auto_collector else None
+        admin_password_source = _configured_admin_password_source(store)
+        admin_password_configured = bool(admin_password_source)
         return render_template(
             "operations.html",
             auto_collector_status=auto_status,
@@ -243,6 +246,11 @@ def create_app() -> Flask:
             backup_files=_backup_files(backup_dir),
             db_path=store.display_location,
             log_path=Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
+            admin_password_source=admin_password_source,
+            admin_password_configured=admin_password_configured,
+            admin_password_unlocked=bool(
+                admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
+            ),
         )
 
     @app.post("/operations/auto-collect")
@@ -257,20 +265,40 @@ def create_app() -> Flask:
         flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
         return redirect(url_for("operations"))
 
-    @app.post("/operations/admin-password")
-    def change_admin_password():
-        config = auth_config(store)
-        if config.source == "environment":
+    @app.post("/operations/admin-password/unlock")
+    def unlock_admin_password_panel():
+        source = _configured_admin_password_source(store)
+        if source == "environment":
             flash(".env의 관리자 비밀번호 설정이 우선 적용 중이라 화면에서 변경할 수 없습니다.")
             return redirect(url_for("operations"))
-        if config.setup_required:
+        if not source:
+            flash("관리자 비밀번호를 먼저 설정하세요.")
+            return redirect(url_for("admin_setup"))
+
+        current_password = request.form.get("current_password") or ""
+        if verify_admin_password(store, current_password):
+            session[OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY] = True
+            logger.info("admin password panel unlocked remote_addr=%s", request.remote_addr)
+            flash("관리자 비밀번호 변경 입력칸을 열었습니다.")
+        else:
+            logger.warning("admin password panel unlock failed remote_addr=%s", request.remote_addr)
+            flash("현재 관리자 비밀번호가 올바르지 않습니다.")
+        return redirect(url_for("operations"))
+
+    @app.post("/operations/admin-password")
+    def change_admin_password():
+        source = _configured_admin_password_source(store)
+        if source == "environment":
+            flash(".env의 관리자 비밀번호 설정이 우선 적용 중이라 화면에서 변경할 수 없습니다.")
+            return redirect(url_for("operations"))
+        if not source:
             flash("관리자 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup"))
 
         current_password = request.form.get("current_password") or ""
         new_password = request.form.get("new_password") or ""
         confirm_password = request.form.get("confirm_password") or ""
-        if not verify_admin_password(store, current_password):
+        if not session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY) and not verify_admin_password(store, current_password):
             logger.warning("admin password change failed remote_addr=%s reason=current_password", request.remote_addr)
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
         elif len(new_password) < 8:
@@ -280,6 +308,7 @@ def create_app() -> Flask:
         else:
             set_admin_password(store, new_password)
             session["admin_authenticated"] = True
+            session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
             logger.info("admin password changed remote_addr=%s", request.remote_addr)
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
         return redirect(url_for("operations"))
@@ -790,6 +819,14 @@ def _positive_int(value: str | None, default: int) -> int:
 
 def _current_next_path() -> str:
     return request.full_path.rstrip("?") if request.query_string else request.path
+
+
+def _configured_admin_password_source(store: Store) -> str:
+    if os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH") or os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD"):
+        return "environment"
+    if store.get_app_metadata(ADMIN_PASSWORD_HASH_KEY):
+        return "database"
+    return ""
 
 
 def _safe_next(default_endpoint: str = "dashboard") -> str:
