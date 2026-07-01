@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -84,6 +87,8 @@ CREATE TABLE IF NOT EXISTS source_collection_runs (
     checked_at TEXT NOT NULL
 );
 """
+
+POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
 
 
 POSTGRES_SCHEMA = """
@@ -194,6 +199,30 @@ class _PostgresConnection:
         for statement in _split_sql_script(script):
             self.execute(statement)
 
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    @property
+    def closed(self) -> bool:
+        return bool(getattr(self._conn, "closed", False))
+
+
+class _ScopedConnection:
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def __enter__(self) -> Any:
+        return self._conn
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
+
 
 def _split_sql_script(script: str) -> list[str]:
     return [statement.strip() for statement in script.split(";") if statement.strip()]
@@ -220,10 +249,111 @@ class Store:
         self.is_postgres = self.location.startswith(("postgresql://", "postgres://"))
         self.path = path if self.is_postgres else Path(path)
         self.display_location = _redact_database_url(self.location) if self.is_postgres else str(self.path)
+        self._local = threading.local()
         if isinstance(self.path, Path):
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> Any:
+        scoped_connection = getattr(self._local, "connection", None)
+        if scoped_connection is not None:
+            return _ScopedConnection(scoped_connection)
+        return self._new_connection()
+
+    @contextmanager
+    def connection_scope(self) -> Any:
+        existing = getattr(self._local, "connection", None)
+        if existing is not None:
+            yield existing
+            return
+
+        context = self._new_connection()
+        conn = context.__enter__()
+        self._local.connection = conn
+        try:
+            yield conn
+        except Exception as exc:
+            context.__exit__(type(exc), exc, exc.__traceback__)
+            raise
+        else:
+            context.__exit__(None, None, None)
+        finally:
+            if not self.is_postgres:
+                context.close()
+            if hasattr(self._local, "connection"):
+                del self._local.connection
+
+    @contextmanager
+    def reusable_connection_scope(self) -> Any:
+        if not self.is_postgres:
+            with self.connection_scope() as conn:
+                yield conn
+            return
+
+        existing = getattr(self._local, "connection", None)
+        if existing is not None:
+            yield existing
+            return
+
+        conn = self._persistent_postgres_connection()
+        self._local.connection = conn
+        try:
+            yield conn
+        except Exception:
+            try:
+                conn.rollback()
+            finally:
+                self._close_persistent_postgres_connection()
+            raise
+        else:
+            try:
+                conn.commit()
+            except Exception:
+                self._close_persistent_postgres_connection()
+                raise
+        finally:
+            if hasattr(self._local, "connection"):
+                del self._local.connection
+
+    def _persistent_postgres_connection(self) -> Any:
+        conn = getattr(self._local, "persistent_connection", None)
+        if conn is not None and not conn.closed:
+            last_checked_at = getattr(self._local, "persistent_connection_checked_at", 0.0)
+            if time.monotonic() - last_checked_at < POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS:
+                return conn
+            if self._postgres_connection_is_usable(conn):
+                self._local.persistent_connection_checked_at = time.monotonic()
+                return conn
+
+        self._close_persistent_postgres_connection()
+        context = self._new_connection()
+        conn = context.__enter__()
+        self._local.persistent_connection = conn
+        self._local.persistent_connection_checked_at = time.monotonic()
+        return conn
+
+    def _postgres_connection_is_usable(self, conn: Any) -> bool:
+        try:
+            conn.execute("SELECT 1").fetchone()
+            conn.commit()
+        except Exception:
+            return False
+        return True
+
+    def _close_persistent_postgres_connection(self) -> None:
+        conn = getattr(self._local, "persistent_connection", None)
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:
+            pass
+        finally:
+            if hasattr(self._local, "persistent_connection"):
+                del self._local.persistent_connection
+            if hasattr(self._local, "persistent_connection_checked_at"):
+                del self._local.persistent_connection_checked_at
+
+    def _new_connection(self) -> Any:
         if self.is_postgres:
             if psycopg is None:
                 raise RuntimeError("PostgreSQL을 사용하려면 psycopg 패키지가 필요합니다. python -m pip install -e .")
@@ -758,19 +888,21 @@ class Store:
 
     def counts(self) -> dict[str, int]:
         with self.connect() as conn:
-            releases = conn.execute("SELECT COUNT(*) AS count FROM press_releases").fetchone()["count"]
-            drafts = conn.execute("SELECT COUNT(*) AS count FROM article_drafts").fetchone()["count"]
-            approved = conn.execute(
-                "SELECT COUNT(*) AS count FROM article_drafts WHERE status = 'approved'"
-            ).fetchone()["count"]
-            needs_review = conn.execute(
-                "SELECT COUNT(*) AS count FROM article_drafts WHERE status = 'needs_review'"
-            ).fetchone()["count"]
+            row = conn.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM press_releases) AS releases,
+                    COUNT(*) AS drafts,
+                    SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                    SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review
+                FROM article_drafts
+                """
+            ).fetchone()
         return {
-            "press_releases": int(releases),
-            "drafts": int(drafts),
-            "approved": int(approved),
-            "needs_review": int(needs_review),
+            "press_releases": int(row["releases"] or 0),
+            "drafts": int(row["drafts"] or 0),
+            "approved": int(row["approved"] or 0),
+            "needs_review": int(row["needs_review"] or 0),
         }
 
     def press_releases(self, limit: int = 50) -> list[sqlite3.Row]:

@@ -278,7 +278,7 @@ def serve_command(host: str, port: int) -> None:
         logger.info("auto collector prepared but disabled host=%s port=%s", host, port)
         print("자동 수집 꺼짐: 운영 관리 화면에서 다시 켤 수 있습니다.")
     logger.info("flask app starting host=%s port=%s", host, port)
-    app.run(host=host, port=port, debug=False)
+    app.run(host=host, port=port, debug=False, threaded=True)
 
 
 def _status_label(status: str) -> str:

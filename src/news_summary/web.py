@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
 from .auth import auth_config, set_admin_password, verify_admin_password
@@ -78,6 +78,27 @@ def create_app() -> Flask:
             "auth_state": auth_config(store),
             "admin_authenticated": bool(session.get("admin_authenticated")),
         }
+
+    @app.before_request
+    def open_store_connection_scope():
+        endpoint = request.endpoint or ""
+        if endpoint == "static":
+            return None
+        scope = store.reusable_connection_scope()
+        scope.__enter__()
+        g.store_connection_scope = scope
+        return None
+
+    @app.teardown_request
+    def close_store_connection_scope(exc: BaseException | None):
+        scope = getattr(g, "store_connection_scope", None)
+        if not scope:
+            return None
+        if exc is None:
+            scope.__exit__(None, None, None)
+        else:
+            scope.__exit__(type(exc), exc, exc.__traceback__)
+        return None
 
     @app.before_request
     def require_admin_login():
@@ -1084,42 +1105,24 @@ def _counts_for_regions(store: Store, selected_regions: list[str]) -> dict[str, 
         return store.counts()
     region_condition, region_params = _region_sql_condition("pr.region", selected_regions)
     with store.connect() as conn:
-        releases = conn.execute(
-            f"SELECT COUNT(*) AS count FROM press_releases pr WHERE {region_condition}",
-            region_params,
-        ).fetchone()["count"]
-        drafts = conn.execute(
+        row = conn.execute(
             f"""
-            SELECT COUNT(*) AS count
+            SELECT
+                (SELECT COUNT(*) FROM press_releases pr WHERE {region_condition}) AS releases,
+                COUNT(*) AS drafts,
+                SUM(CASE WHEN ad.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN ad.status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review
             FROM article_drafts ad
             JOIN press_releases pr ON pr.id = ad.press_release_id
             WHERE {region_condition}
             """,
-            region_params,
-        ).fetchone()["count"]
-        approved = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM article_drafts ad
-            JOIN press_releases pr ON pr.id = ad.press_release_id
-            WHERE ad.status = 'approved' AND {region_condition}
-            """,
-            region_params,
-        ).fetchone()["count"]
-        needs_review = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM article_drafts ad
-            JOIN press_releases pr ON pr.id = ad.press_release_id
-            WHERE ad.status = 'needs_review' AND {region_condition}
-            """,
-            region_params,
-        ).fetchone()["count"]
+            (*region_params, *region_params),
+        ).fetchone()
     return {
-        "press_releases": int(releases),
-        "drafts": int(drafts),
-        "approved": int(approved),
-        "needs_review": int(needs_review),
+        "press_releases": int(row["releases"] or 0),
+        "drafts": int(row["drafts"] or 0),
+        "approved": int(row["approved"] or 0),
+        "needs_review": int(row["needs_review"] or 0),
     }
 
 
@@ -1270,10 +1273,26 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
             row["source_id"]: row
             for row in conn.execute(
                 """
-                SELECT source_id, COUNT(*) AS releases, MAX(collected_at) AS last_collected
+                SELECT source_id,
+                       COUNT(*) AS releases,
+                       MAX(collected_at) AS last_collected,
+                       SUM(
+                           CASE
+                               WHEN REPLACE(
+                                   REPLACE(
+                                       SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10),
+                                       '.', '-'
+                                   ),
+                                   '/', '-'
+                               ) = ?
+                               THEN 1
+                               ELSE 0
+                           END
+                       ) AS today_releases
                 FROM press_releases
                 GROUP BY source_id
-                """
+                """,
+                (today.isoformat(),),
             ).fetchall()
         }
         latest = {
@@ -1290,19 +1309,6 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 """
             ).fetchall()
         }
-        release_dates = conn.execute(
-            """
-            SELECT source_id, published_at, collected_at
-            FROM press_releases
-            """
-        ).fetchall()
-
-    today_counts: dict[str, int] = {}
-    for row in release_dates:
-        release_date = _source_release_date(row["published_at"], row["collected_at"])
-        if release_date == today:
-            source_id = str(row["source_id"])
-            today_counts[source_id] = today_counts.get(source_id, 0) + 1
 
     summaries = []
     for source in sources:
@@ -1334,7 +1340,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "name": source.name,
                 "region": source.region,
                 "releases": releases,
-                "today_releases": today_counts.get(source.id, 0),
+                "today_releases": int(stat["today_releases"] or 0) if stat else 0,
                 "last_collected": stat["last_collected"] if stat else None,
                 "issue": issue,
                 "last_status": last_status or "unknown",
