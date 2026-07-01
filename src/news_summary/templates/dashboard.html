@@ -51,12 +51,12 @@
   </form>
 </section>
 
-<section class="metrics">
-  <a class="metric-link" href="{{ url_for('press_releases', region=selected_regions) }}"><b>{{ counts.press_releases }}</b><span>수집 원문</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', region=selected_regions) }}"><b>{{ counts.drafts }}</b><span>기사 초안</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}"><b>{{ counts.needs_review }}</b><span>검수 대기</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}"><b>{{ attention_count }}</b><span>주의 필요</span></a>
-  <a class="metric-link" href="{{ url_for('drafts', status='approved', region=selected_regions) }}"><b>{{ counts.approved }}</b><span>승인 완료</span></a>
+<section class="dashboard-summary" aria-label="전체 현황 요약">
+  <a class="summary-link" href="{{ url_for('press_releases', region=selected_regions) }}"><span>수집 원문</span><b>{{ counts.press_releases }}</b></a>
+  <a class="summary-link" href="{{ url_for('drafts', region=selected_regions) }}"><span>기사 초안</span><b>{{ counts.drafts }}</b></a>
+  <a class="summary-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}"><span>검수 대기</span><b>{{ counts.needs_review }}</b></a>
+  <a class="summary-link summary-warning" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}"><span>주의 필요</span><b>{{ attention_count }}</b></a>
+  <a class="summary-link" href="{{ url_for('drafts', status='approved', region=selected_regions) }}"><span>승인 완료</span><b>{{ counts.approved }}</b></a>
 </section>
 
 {% include "_region_filter.html" %}
