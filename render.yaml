@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: news-express
+    runtime: python
+    plan: starter
+    buildCommand: pip install -e .
+    startCommand: gunicorn --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT news_summary.wsgi:app
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NEWS_SUMMARY_SECRET_KEY
+        generateValue: true
+      - key: NEWS_SUMMARY_ADMIN_PASSWORD
+        sync: false
+      - key: NEWS_SUMMARY_AUTH_REQUIRED
+        value: "1"
+      - key: NEWS_SUMMARY_AUTH_DISABLED
+        value: "0"
+      - key: NEWS_SUMMARY_AUTO_COLLECT
+        value: "1"
+      - key: NEWS_SUMMARY_AUTO_COLLECT_LIMIT
+        value: "30"
+      - key: NEWS_SUMMARY_AUTO_DRAFT_LIMIT
+        value: "250"
+      - key: NEWS_SUMMARY_AUTO_REQUIRE_GEMINI
+        value: "1"
+      - key: NEWS_SUMMARY_GEMINI_SOURCE_MAX_CHARS
+        value: "2400"
+      - key: NEWS_SUMMARY_RETENTION_DAYS
+        value: "3"
+      - key: NEWS_SUMMARY_LOG_DIR
+        value: /tmp/news-express/logs
+      - key: NEWS_SUMMARY_BACKUP_DIR
+        value: /tmp/news-express/backups
+      - key: NEWS_SUMMARY_CONFIG
+        value: config/municipalities.yaml

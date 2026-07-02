@@ -115,6 +115,37 @@ news-summary migrate-sqlite-to-postgres --sqlite-db data/news_summary.sqlite --d
 
 PostgreSQL 모드에서는 앱의 SQLite zip 백업 기능 대신 클라우드 DB 제공자의 백업/스냅샷 기능을 사용합니다.
 
+## Render Starter 배포
+
+2~3명이 외부에서 테스트하고 PC를 계속 켜두지 않으려면 Render Starter 웹 서비스를 사용할 수 있습니다.
+
+프로젝트 루트의 `render.yaml`은 아래 조건으로 준비되어 있습니다.
+
+- 서비스 이름: `news-express`
+- 플랜: Starter
+- 실행 방식: `gunicorn` 단일 워커, 8스레드
+- 헬스체크: `/healthz`
+- DB: Render가 아닌 외부 PostgreSQL, 예: Neon `DATABASE_URL`
+- 자동 수집: 웹 서비스 프로세스 안에서 매시간 정각 실행
+
+배포 순서:
+
+1. GitHub에 최신 코드가 푸시되어 있는지 확인합니다.
+2. Render Dashboard에서 `New` -> `Blueprint`를 선택합니다.
+3. GitHub 저장소 `seunghooda-dev/news-express`를 연결합니다.
+4. Blueprint 파일은 기본값 `render.yaml`을 사용합니다.
+5. 아래 비밀 환경변수를 Render 화면에서 직접 입력합니다.
+
+```text
+DATABASE_URL=Neon PostgreSQL 연결 문자열
+GEMINI_API_KEY=Gemini API 키
+NEWS_SUMMARY_ADMIN_PASSWORD=테스트 사용자에게 공유할 관리자 비밀번호
+```
+
+`NEWS_SUMMARY_SECRET_KEY`는 Render가 자동 생성합니다.
+
+배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 회사 외부 테스트라도 공개 인터넷 주소가 생기므로 `NEWS_SUMMARY_AUTH_REQUIRED=1`을 유지하는 것을 권장합니다.
+
 ## 외부 접속: Cloudflare Tunnel
 
 회사 기자들과 함께 쓰려면 아래 순서로 설정합니다.
