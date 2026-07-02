@@ -1246,15 +1246,16 @@ h3 {
 
 .source-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
 }
 
 .source-card {
   display: grid;
-  gap: 4px;
+  align-content: start;
+  gap: 6px;
   min-height: 104px;
-  padding: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -1263,9 +1264,9 @@ h3 {
 }
 
 .source-card-titleline {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
   color: inherit;
   font-size: inherit;
@@ -1280,6 +1281,7 @@ h3 {
   min-width: 0;
   color: var(--ink);
   font-size: 14px;
+  line-height: 1.35;
   overflow-wrap: anywhere;
   word-break: keep-all;
 }
@@ -1288,10 +1290,17 @@ h3 {
 .source-card-detail {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.45;
+}
+
+.source-card-counts {
+  color: #246a62;
+  font-weight: 700;
 }
 
 .source-card em {
-  width: fit-content;
+  justify-self: end;
+  min-width: 44px;
   padding: 2px 7px;
   border-radius: 999px;
   background: #edf7ed;
@@ -1299,6 +1308,9 @@ h3 {
   font-size: 12px;
   font-style: normal;
   font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .source-card-warning em {
@@ -1591,17 +1603,24 @@ h3 {
 
   .source-card {
     min-height: 0;
-    padding: 8px 10px;
+    padding: 9px 10px;
     background: #f7faf7;
     font-size: 13px;
   }
 
   .source-card-titleline {
     align-items: center;
+    gap: 8px;
   }
 
   .source-card strong {
     font-size: 13px;
+  }
+
+  .source-card em {
+    min-width: 42px;
+    padding: 2px 6px;
+    font-size: 11px;
   }
 
   .source-card-counts {
