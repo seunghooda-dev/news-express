@@ -17,7 +17,7 @@
       {% for region in region_options %}
         <label class="region-check {% if region in selected_regions %}active{% endif %}">
           <input type="checkbox" name="region" value="{{ region }}" {% if region in selected_regions %}checked{% endif %}>
-          <span>{{ region }}</span>
+          <span>{{ region_display_label(region) }}</span>
         </label>
       {% endfor %}
     </div>

@@ -19,6 +19,7 @@ from news_summary.web import (
     interval_label,
     model_badge_class,
     model_label,
+    region_display_label,
     review_flags,
 )
 
@@ -454,6 +455,13 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
 
+def test_region_display_label_removes_common_integrated_city_prefix():
+    assert region_display_label("전남광주통합특별시 진도") == "진도"
+    assert region_display_label("전남광주특별시 목포") == "목포"
+    assert region_display_label("전남광주통합특별시") == "광주·전남 전체"
+    assert region_display_label("광주 북구") == "광주 북구"
+
+
 def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch):
     db_path = Path(f"data/.test_region_filter_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -512,6 +520,8 @@ def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch
 
     dashboard_html = client.get("/?region=전남광주통합특별시+진도").data.decode("utf-8")
     assert 'name="region" value="전남광주통합특별시 진도" checked' in dashboard_html
+    assert "<span>진도</span>" in dashboard_html
+    assert "<span>광주·전남 전체</span>" in dashboard_html
     assert '<details class="region-filter-panel">' in dashboard_html
     assert '<details class="region-filter-panel" open' not in dashboard_html
     assert "data-auto-submit" not in dashboard_html

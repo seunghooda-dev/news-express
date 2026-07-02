@@ -46,6 +46,7 @@ AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup",
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 LIST_PAGE_SIZE = 50
 MAX_LIST_LIMIT = 500
+REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
 
 
 def create_app() -> Flask:
@@ -64,6 +65,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["body_character_count"] = body_character_count
     app.jinja_env.globals["change_type_label"] = change_type_label
     app.jinja_env.globals["file_size_label"] = file_size_label
+    app.jinja_env.globals["region_display_label"] = region_display_label
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_database())
@@ -945,6 +947,16 @@ def status_badge_class(status: str | None) -> str:
     if status == "rejected":
         return "badge-warning"
     return "badge-neutral"
+
+
+def region_display_label(region: str) -> str:
+    label = (region or "").strip()
+    for prefix in REGION_DISPLAY_PREFIXES:
+        if label == prefix:
+            return "광주·전남 전체"
+        if label.startswith(f"{prefix} "):
+            return label.removeprefix(prefix).strip()
+    return label
 
 
 def model_label(model: str | None) -> str:
