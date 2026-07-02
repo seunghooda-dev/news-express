@@ -147,38 +147,50 @@
 
   <div>
     <div class="section-head compact">
-      <h1>검수 완료</h1>
-      <form class="export-actions" method="post" action="{{ url_for('export') }}">
-        <button class="secondary" type="submit" name="scope" value="unexported">미내보내기</button>
-        <button class="secondary" type="submit" name="scope" value="today">오늘 승인</button>
-        <button class="secondary" type="submit" name="scope" value="all">전체</button>
-      </form>
+      <h1>수집 원문</h1>
+      <a class="source-link" href="{{ url_for('press_releases', region=selected_regions) }}">전체 보기</a>
     </div>
     <div class="list">
-      {% for draft in approved_drafts[:10] %}
-        <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
-          <strong>{{ draft.title }}</strong>
+      {% for item in recent_releases[:10] %}
+        <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
+          <strong>{{ item.title }}</strong>
           <span class="row-meta">
-            <span>{{ draft.source_name }}</span>
-            <span>승인 {{ (draft.approved_time or draft.updated_at or draft.created_at)|date_label }}</span>
-            <span class="badge badge-approved">{{ status_label(draft.status) }}</span>
-            <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+            <span>{{ item.source_name }}</span>
+            {% if item.published_at %}
+              <span>게시 {{ item.published_at|date_label }}</span>
+            {% else %}
+              <span>수집 {{ item.collected_at|date_label }}</span>
+            {% endif %}
+            {% if item.draft_id %}
+              <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
+              <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
+            {% else %}
+              <span class="badge badge-neutral">초안 없음</span>
+            {% endif %}
           </span>
         </a>
       {% else %}
-        <p class="empty">아직 검수 완료된 기사가 없습니다.</p>
+        <p class="empty">수집 원문이 없습니다.</p>
       {% endfor %}
-      {% if approved_drafts|length > 10 %}
+      {% if recent_releases|length > 10 %}
         <details class="more-details">
           <summary class="more-summary"><span>더 보기</span></summary>
-          {% for draft in approved_drafts[10:] %}
-            <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
-              <strong>{{ draft.title }}</strong>
+          {% for item in recent_releases[10:] %}
+            <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
+              <strong>{{ item.title }}</strong>
               <span class="row-meta">
-                <span>{{ draft.source_name }}</span>
-                <span>승인 {{ (draft.approved_time or draft.updated_at or draft.created_at)|date_label }}</span>
-                <span class="badge badge-approved">{{ status_label(draft.status) }}</span>
-                <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+                <span>{{ item.source_name }}</span>
+                {% if item.published_at %}
+                  <span>게시 {{ item.published_at|date_label }}</span>
+                {% else %}
+                  <span>수집 {{ item.collected_at|date_label }}</span>
+                {% endif %}
+                {% if item.draft_id %}
+                  <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
+                  <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
+                {% else %}
+                  <span class="badge badge-neutral">초안 없음</span>
+                {% endif %}
               </span>
             </a>
           {% endfor %}

@@ -318,6 +318,8 @@ def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     assert 'href="/press-releases"' in dashboard_html
     assert 'href="/drafts"' in dashboard_html
     assert 'href="/drafts?status=needs_review"' in dashboard_html
+    assert "테스트 원문" in dashboard_html
+    assert "검수 완료" not in dashboard_html
 
     releases_html = client.get("/press-releases").data.decode("utf-8")
     assert "테스트 원문" in releases_html

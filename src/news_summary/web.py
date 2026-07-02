@@ -131,8 +131,8 @@ def create_app() -> Flask:
         selected_regions = _selected_regions(config_path)
         pending_drafts = store.drafts(status="needs_review", limit=1000 if selected_regions else 300)
         pending_drafts = _filter_rows_by_regions(pending_drafts, selected_regions)
-        approved_drafts = store.approved_drafts(limit=1000 if selected_regions else 200)
-        approved_drafts = _filter_rows_by_regions(approved_drafts, selected_regions)
+        recent_releases = store.press_releases(limit=1000 if selected_regions else 200)
+        recent_releases = _filter_rows_by_regions(recent_releases, selected_regions)
         source_summaries = _filter_source_summaries_by_regions(
             _source_summaries(store, config_path),
             selected_regions,
@@ -150,7 +150,7 @@ def create_app() -> Flask:
             "dashboard.html",
             counts=_counts_for_regions(store, selected_regions) if selected_regions else store.counts(),
             draft_groups=draft_groups,
-            approved_drafts=approved_drafts,
+            recent_releases=recent_releases,
             auto_collector_status=auto_status,
             source_summaries=source_summaries,
             duplicate_titles=duplicate_titles,
