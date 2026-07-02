@@ -46,6 +46,9 @@ AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup",
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 LIST_PAGE_SIZE = 50
 MAX_LIST_LIMIT = 500
+DASHBOARD_PENDING_LIMIT = 20
+DASHBOARD_RELEASE_LIMIT = 10
+FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
 
 
@@ -129,10 +132,17 @@ def create_app() -> Flask:
     @app.get("/")
     def dashboard():
         selected_regions = _selected_regions(config_path)
-        pending_drafts = store.drafts(status="needs_review", limit=1000 if selected_regions else 300)
-        pending_drafts = _filter_rows_by_regions(pending_drafts, selected_regions)
-        recent_releases = store.press_releases(limit=1000 if selected_regions else 200)
-        recent_releases = _filter_rows_by_regions(recent_releases, selected_regions)
+        pending_drafts = _draft_rows_for_listing(
+            store,
+            status="needs_review",
+            selected_regions=selected_regions,
+            limit=FILTER_FETCH_LIMIT,
+        )
+        recent_releases = _press_release_rows_for_listing(
+            store,
+            selected_regions=selected_regions,
+            limit=DASHBOARD_RELEASE_LIMIT + 1,
+        )
         source_summaries = _filter_source_summaries_by_regions(
             _source_summaries(store, config_path),
             selected_regions,
@@ -144,7 +154,7 @@ def create_app() -> Flask:
         return render_template(
             "dashboard.html",
             counts=_counts_for_regions(store, selected_regions) if selected_regions else store.counts(),
-            pending_drafts=pending_drafts,
+            pending_drafts=pending_drafts[: DASHBOARD_PENDING_LIMIT + 1],
             recent_releases=recent_releases,
             auto_collector_status=auto_status,
             source_summaries=source_summaries,
@@ -393,21 +403,18 @@ def create_app() -> Flask:
         source_filter = (request.args.get("source") or "").strip()
         selected_regions = _selected_regions(config_path)
         display_limit = _list_display_limit()
-        has_filter = bool(target_date or query or review_filter or source_filter or selected_regions)
-        draft_rows = store.drafts(status=status, limit=1000 if has_filter else display_limit + 1)
+        draft_rows = _draft_rows_for_listing(
+            store,
+            status=status,
+            selected_regions=selected_regions,
+            source_filter=source_filter,
+            target_date=target_date,
+            query=query,
+            limit=FILTER_FETCH_LIMIT if review_filter else display_limit + 1,
+        )
         duplicate_titles = _duplicate_titles(store)
-        if selected_regions:
-            draft_rows = _filter_rows_by_regions(draft_rows, selected_regions)
-        if target_date:
-            draft_rows = _filter_drafts_by_date(draft_rows, target_date)
-        if query:
-            draft_rows = _filter_drafts_by_query(draft_rows, query)
-        if source_filter:
-            draft_rows = [draft for draft in draft_rows if _row_value(draft, "source_id") == source_filter]
         if review_filter:
             draft_rows = _filter_drafts_by_review(draft_rows, review_filter, duplicate_titles)
-        if source_filter or selected_regions:
-            draft_rows = _sort_drafts_latest_first(draft_rows)
         has_more = display_limit < MAX_LIST_LIMIT and len(draft_rows) > display_limit
         draft_rows = draft_rows[:display_limit]
         region_filter_hidden = _clean_query_args(
@@ -449,8 +456,11 @@ def create_app() -> Flask:
     def press_releases():
         selected_regions = _selected_regions(config_path)
         display_limit = _list_display_limit()
-        releases = store.press_releases(limit=1000)
-        releases = _filter_rows_by_regions(releases, selected_regions)
+        releases = _press_release_rows_for_listing(
+            store,
+            selected_regions=selected_regions,
+            limit=display_limit + 1,
+        )
         has_more = display_limit < MAX_LIST_LIMIT and len(releases) > display_limit
         releases = releases[:display_limit]
         return render_template(
@@ -693,14 +703,12 @@ def create_app() -> Flask:
                     "last_error": None,
                     "last_finished_at": None,
                     "last_auto_finished_at": None,
-                "next_run_at": None,
-                "gemini_cooldown_until": None,
-                "pending_draft_count": store.pending_press_release_summary()["total"],
-            }
-        )
+                    "next_run_at": None,
+                    "gemini_cooldown_until": None,
+                }
+            )
         status = auto_collector.snapshot()
         cooldown_until = gemini_cooldown_until(store)
-        pending_queue = store.pending_press_release_summary()
         return jsonify(
             {
                 "enabled": status.enabled,
@@ -717,7 +725,6 @@ def create_app() -> Flask:
                 "next_run_at": status.next_run_at,
                 "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
                 "run_count": status.run_count,
-                "pending_draft_count": pending_queue["total"],
             }
         )
 
@@ -1215,16 +1222,120 @@ def _counts_for_regions(store: Store, selected_regions: list[str]) -> dict[str, 
     }
 
 
+def _draft_rows_for_listing(
+    store: Store,
+    *,
+    status: str | None = None,
+    selected_regions: list[str] | None = None,
+    source_filter: str = "",
+    target_date: date | None = None,
+    query: str = "",
+    limit: int = LIST_PAGE_SIZE,
+):
+    selected_regions = selected_regions or []
+    where = []
+    params: list[object] = []
+    if status:
+        where.append("ad.status = ?")
+        params.append(status)
+    if source_filter:
+        where.append("pr.source_id = ?")
+        params.append(source_filter)
+    if selected_regions:
+        region_condition, region_params = _region_sql_condition("pr.region", selected_regions)
+        where.append(f"({region_condition})")
+        params.extend(region_params)
+    if target_date:
+        where.append(f"{_draft_date_sql_expr()} = ?")
+        params.append(target_date.isoformat())
+    for term in [term.casefold() for term in query.split() if term.strip()]:
+        like = f"%{term}%"
+        where.append(
+            "("
+            "LOWER(COALESCE(ad.title, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.source_name, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.region, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.title, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.content, '')) LIKE ? OR "
+            "LOWER(COALESCE(ad.review_note, '')) LIKE ?"
+            ")"
+        )
+        params.extend([like] * 6)
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    params.append(limit)
+    with store.connect() as conn:
+        return conn.execute(
+            f"""
+            SELECT ad.*, pr.source_id, pr.source_name, pr.region, pr.url, pr.content AS original_content,
+                   pr.title AS original_title, pr.published_at,
+                   pr.validation_status, pr.validation_note
+            FROM article_drafts ad
+            JOIN press_releases pr ON pr.id = ad.press_release_id
+            {where_sql}
+            ORDER BY COALESCE(ad.updated_at, ad.created_at) DESC, ad.id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+
+
+def _press_release_rows_for_listing(
+    store: Store,
+    *,
+    selected_regions: list[str] | None = None,
+    limit: int = LIST_PAGE_SIZE,
+):
+    selected_regions = selected_regions or []
+    where = []
+    params: list[object] = []
+    if selected_regions:
+        region_condition, region_params = _region_sql_condition("pr.region", selected_regions)
+        where.append(f"({region_condition})")
+        params.extend(region_params)
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    params.append(limit)
+    with store.connect() as conn:
+        return conn.execute(
+            f"""
+            SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
+            FROM press_releases pr
+            LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+            {where_sql}
+            ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                     pr.published_at DESC,
+                     pr.collected_at DESC,
+                     pr.id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+
+
+def _draft_date_sql_expr() -> str:
+    return (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(pr.published_at, ''), ad.created_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
+
+
 def _region_matches(region: str, selected_regions: list[str]) -> bool:
     region = region.strip()
     for selected in selected_regions:
-        selected = selected.strip()
-        if not selected:
+        match_values = _expanded_region_match_values(selected)
+        if not match_values:
             continue
-        if region == selected:
-            return True
-        if " " not in selected and region.startswith(f"{selected} "):
-            return True
+        for match_value in match_values:
+            if region == match_value:
+                return True
+            if " " not in match_value and region.startswith(f"{match_value} "):
+                return True
     return False
 
 
@@ -1232,15 +1343,36 @@ def _region_sql_condition(column: str, selected_regions: list[str]) -> tuple[str
     clauses = []
     params: list[object] = []
     for selected in selected_regions:
-        selected = selected.strip()
-        if not selected:
-            continue
-        clauses.append(f"{column} = ?")
-        params.append(selected)
-        if " " not in selected:
-            clauses.append(f"{column} LIKE ?")
-            params.append(f"{selected} %")
+        for match_value in _expanded_region_match_values(selected):
+            clauses.append(f"{column} = ?")
+            params.append(match_value)
+            if " " not in match_value:
+                clauses.append(f"{column} LIKE ?")
+                params.append(f"{match_value} %")
     return " OR ".join(f"({clause})" for clause in clauses) or "1 = 1", tuple(params)
+
+
+def _expanded_region_match_values(region: str) -> list[str]:
+    region = region.strip()
+    if not region:
+        return []
+    values = [region]
+    for prefix in REGION_DISPLAY_PREFIXES:
+        if region == prefix:
+            values.extend(["전남", "광주"])
+        elif region.startswith(f"{prefix} "):
+            suffix = region.removeprefix(prefix).strip()
+            if suffix:
+                values.append(suffix)
+                if not suffix.startswith("광주 "):
+                    values.append(f"전남 {suffix}")
+    deduped = []
+    seen = set()
+    for value in values:
+        if value not in seen:
+            deduped.append(value)
+            seen.add(value)
+    return deduped
 
 
 def _clean_query_args(**values: object) -> dict[str, object]:

@@ -326,6 +326,40 @@ def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     assert f'href="/drafts/{draft_id}"' in releases_html
 
 
+def test_dashboard_renders_only_recent_release_preview_rows(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_release_preview_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(12):
+        store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 기관",
+                region="전남",
+                title=f"홈 원문 미리보기 {index:02d}",
+                url=f"https://example.com/dashboard-release-preview-{index}",
+                content="테스트 원문 내용입니다.",
+                published_at=f"2026-05-{index + 1:02d}",
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/").data.decode("utf-8")
+
+    assert "홈 원문 미리보기 11" in dashboard_html
+    assert "홈 원문 미리보기 02" in dashboard_html
+    assert "홈 원문 미리보기 01" not in dashboard_html
+    assert "홈 원문 미리보기 00" not in dashboard_html
+    assert 'href="/press-releases"' in dashboard_html
+
+
 def test_drafts_page_uses_load_more_pagination(monkeypatch):
     db_path = Path(f"data/.test_drafts_load_more_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -449,12 +483,11 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
 
     assert '<details class="source-board">' in dashboard_html
     assert '<details class="source-board" open' not in dashboard_html
-    assert "전남광주통합특별시 광주 · 어제 1건 · 오늘 1건" in dashboard_html
-    assert "누적 2건" not in dashboard_html
-    assert '<details class="mobile-source-board">' in dashboard_html
-    assert '<details class="mobile-source-board" open' not in dashboard_html
-    assert "전남광주통합특별시 광주청사 보도자료" in dashboard_html
+    assert "전남광주통합특별시 광주" in dashboard_html
     assert "어제 1건 · 오늘 1건" in dashboard_html
+    assert "누적 2건" not in dashboard_html
+    assert "mobile-source-board" not in dashboard_html
+    assert "전남광주통합특별시 광주청사 보도자료" in dashboard_html
     assert "비정상" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 

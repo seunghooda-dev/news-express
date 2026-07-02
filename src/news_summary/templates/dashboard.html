@@ -74,39 +74,22 @@
     <div class="source-grid">
       {% for source in source_summaries %}
         <a class="source-card {% if source.issue %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
-          <strong>{{ source.name }}</strong>
-          <span>{{ source.region }} · 어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
-          <span>최근 수집 {{ source.last_collected|date_label }}</span>
-          <span>마지막 점검 {{ source.last_checked_at|date_label }}</span>
+          <span class="source-card-titleline">
+            <strong>{{ source.name }}</strong>
+            <em>{% if source.issue %}비정상{% else %}정상{% endif %}</em>
+          </span>
+          <span class="source-card-counts"><span class="source-card-region">{{ source.region }} · </span>어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
+          <span class="source-card-detail">최근 수집 {{ source.last_collected|date_label }}</span>
+          <span class="source-card-detail">마지막 점검 {{ source.last_checked_at|date_label }}</span>
           {% if source.issue %}
-            <em>{{ source.issue }}</em>
+            <span class="source-card-detail">상태 {{ source.issue }}</span>
             {% if source.failure_reason %}
-              <span>원인 {{ source.failure_reason }}</span>
+              <span class="source-card-detail">원인 {{ source.failure_reason }}</span>
             {% endif %}
-          {% else %}
-            <em>정상</em>
           {% endif %}
         </a>
       {% endfor %}
     </div>
-  </div>
-</details>
-
-<details class="mobile-source-board">
-  <summary class="mobile-source-toggle">
-    <span>기관별 수집 상태</span>
-    <b>{{ source_summaries|length }}개</b>
-  </summary>
-  <div class="mobile-source-list">
-    {% for source in source_summaries %}
-      <a class="mobile-source-row {% if source.issue %}is-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
-        <span class="mobile-source-info">
-          <span class="mobile-source-name">{{ source.name }}</span>
-          <span class="mobile-source-counts">어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
-        </span>
-        <b>{% if source.issue %}비정상{% else %}정상{% endif %}</b>
-      </a>
-    {% endfor %}
   </div>
 </details>
 
@@ -171,28 +154,9 @@
         <p class="empty">수집 원문이 없습니다.</p>
       {% endfor %}
       {% if recent_releases|length > 10 %}
-        <details class="more-details">
-          <summary class="more-summary"><span>더 보기</span></summary>
-          {% for item in recent_releases[10:] %}
-            <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
-              <strong>{{ item.title }}</strong>
-              <span class="row-meta">
-                <span>{{ item.source_name }}</span>
-                {% if item.published_at %}
-                  <span>게시 {{ item.published_at|date_label }}</span>
-                {% else %}
-                  <span>수집 {{ item.collected_at|date_label }}</span>
-                {% endif %}
-                {% if item.draft_id %}
-                  <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
-                  <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
-                {% else %}
-                  <span class="badge badge-neutral">초안 없음</span>
-                {% endif %}
-              </span>
-            </a>
-          {% endfor %}
-        </details>
+        <a class="more-summary" href="{{ url_for('press_releases', region=selected_regions) }}">
+          <span>전체 보기</span>
+        </a>
       {% endif %}
     </div>
   </div>
