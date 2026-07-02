@@ -1361,10 +1361,22 @@ h3 {
   text-decoration: none;
 }
 
-.mobile-source-row span {
+.mobile-source-info {
+  display: grid;
+  gap: 2px;
   min-width: 0;
+}
+
+.mobile-source-name,
+.mobile-source-counts {
   overflow-wrap: anywhere;
   word-break: keep-all;
+}
+
+.mobile-source-counts {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .mobile-source-row b {

@@ -75,7 +75,7 @@
       {% for source in source_summaries %}
         <a class="source-card {% if source.issue %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
           <strong>{{ source.name }}</strong>
-          <span>{{ source.region }} · 누적 {{ source.releases }}건 · 오늘 {{ source.today_releases }}건</span>
+          <span>{{ source.region }} · 어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
           <span>최근 수집 {{ source.last_collected|date_label }}</span>
           <span>마지막 점검 {{ source.last_checked_at|date_label }}</span>
           {% if source.issue %}
@@ -100,7 +100,10 @@
   <div class="mobile-source-list">
     {% for source in source_summaries %}
       <a class="mobile-source-row {% if source.issue %}is-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
-        <span>{{ source.name }}</span>
+        <span class="mobile-source-info">
+          <span class="mobile-source-name">{{ source.name }}</span>
+          <span class="mobile-source-counts">어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
+        </span>
         <b>{% if source.issue %}비정상{% else %}정상{% endif %}</b>
       </a>
     {% endfor %}

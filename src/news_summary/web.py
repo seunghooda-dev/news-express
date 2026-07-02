@@ -1356,6 +1356,7 @@ def _duplicate_titles(store: Store) -> set[str]:
 def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:
     sources = [source for source in load_sources(config_path) if source.enabled]
     today = datetime.now(LOCAL_TZ).date()
+    yesterday = today - timedelta(days=1)
     source_statuses = store.latest_source_collection_statuses()
     with store.connect() as conn:
         stats = {
@@ -1377,11 +1378,24 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                                THEN 1
                                ELSE 0
                            END
+                       ) AS yesterday_releases,
+                       SUM(
+                           CASE
+                               WHEN REPLACE(
+                                   REPLACE(
+                                       SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10),
+                                       '.', '-'
+                                   ),
+                                   '/', '-'
+                               ) = ?
+                               THEN 1
+                               ELSE 0
+                           END
                        ) AS today_releases
                 FROM press_releases
                 GROUP BY source_id
                 """,
-                (today.isoformat(),),
+                (yesterday.isoformat(), today.isoformat()),
             ).fetchall()
         }
         latest = {
@@ -1429,6 +1443,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "name": source.name,
                 "region": source.region,
                 "releases": releases,
+                "yesterday_releases": int(stat["yesterday_releases"] or 0) if stat else 0,
                 "today_releases": int(stat["today_releases"] or 0) if stat else 0,
                 "last_collected": stat["last_collected"] if stat else None,
                 "issue": issue,
@@ -1452,6 +1467,7 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "name": source.name if source else source_id,
         "region": source.region if source else "",
         "releases": 0,
+        "yesterday_releases": 0,
         "today_releases": 0,
         "last_collected": None,
         "issue": "수집 없음",

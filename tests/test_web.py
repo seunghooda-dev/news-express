@@ -410,7 +410,7 @@ def test_press_releases_page_uses_load_more_pagination(monkeypatch):
     assert "더보기" not in expanded_page
 
 
-def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
+def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     db_path = Path(f"data/.test_dashboard_source_counts_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     today = datetime.now(LOCAL_TZ).date()
@@ -449,10 +449,12 @@ def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
 
     assert '<details class="source-board">' in dashboard_html
     assert '<details class="source-board" open' not in dashboard_html
-    assert "전남광주통합특별시 광주 · 누적 2건 · 오늘 1건" in dashboard_html
+    assert "전남광주통합특별시 광주 · 어제 1건 · 오늘 1건" in dashboard_html
+    assert "누적 2건" not in dashboard_html
     assert '<details class="mobile-source-board">' in dashboard_html
     assert '<details class="mobile-source-board" open' not in dashboard_html
     assert "전남광주통합특별시 광주청사 보도자료" in dashboard_html
+    assert "어제 1건 · 오늘 1건" in dashboard_html
     assert "비정상" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
