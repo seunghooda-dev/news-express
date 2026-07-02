@@ -818,6 +818,31 @@ def test_operations_page_does_not_override_environment_admin_password(monkeypatc
     assert "관리자 비밀번호가 올바르지 않습니다." in new_login.data.decode("utf-8")
 
 
+def test_environment_admin_password_takes_priority_over_stored_hash(monkeypatch):
+    db_path = Path(f"data/.test_env_admin_password_priority_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "envpass123")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    store = Store(db_path)
+    store.init_db()
+    from news_summary.auth import set_admin_password
+
+    set_admin_password(store, "dbpass123")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    db_login = client.post("/login", data={"password": "dbpass123"}, follow_redirects=True)
+    assert "관리자 비밀번호가 올바르지 않습니다." in db_login.data.decode("utf-8")
+
+    env_login = client.post("/login", data={"password": "envpass123", "next": "/"}, follow_redirects=True)
+    assert "로그아웃" in env_login.data.decode("utf-8")
+
+
 def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     db_path = Path(f"data/.test_source_detail_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

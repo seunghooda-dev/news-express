@@ -32,13 +32,17 @@ def auth_config(store: Store) -> AuthConfig:
 
 
 def verify_admin_password(store: Store, password: str) -> bool:
-    configured_hash = os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH") or store.get_app_metadata(ADMIN_PASSWORD_HASH_KEY)
+    configured_hash = os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH")
     if configured_hash:
         return check_password_hash(configured_hash, password)
 
     configured_password = os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD")
     if configured_password:
         return hmac.compare_digest(configured_password, password)
+
+    stored_hash = store.get_app_metadata(ADMIN_PASSWORD_HASH_KEY)
+    if stored_hash:
+        return check_password_hash(stored_hash, password)
 
     return False
 
