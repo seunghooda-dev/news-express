@@ -771,17 +771,21 @@ def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, o
     log_path = log_path or PROJECT_ROOT / "data" / "tmp" / "cloudflare_quick_tunnel.err.log"
     public_url = ""
     updated_at = None
+    connected = False
     if log_path.exists():
         try:
             text = log_path.read_text(encoding="utf-8", errors="replace")
             matches = CLOUDFLARE_URL_RE.findall(text)
             public_url = matches[-1] if matches else ""
+            connected = _cloudflare_tunnel_connected_from_log(text)
             updated_at = datetime.fromtimestamp(log_path.stat().st_mtime, tz=LOCAL_TZ).isoformat()
         except OSError:
             public_url = ""
     running = _cloudflared_running()
-    if running and public_url:
+    if running and public_url and connected:
         label = "외부 접속 정상"
+    elif running and public_url:
+        label = "터널 재연결 중"
     elif running:
         label = "터널 실행 중"
     else:
@@ -793,6 +797,19 @@ def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, o
         "updated_at": updated_at,
         "label": label,
     }
+
+
+def _cloudflare_tunnel_connected_from_log(text: str) -> bool:
+    last_connected = text.rfind("Registered tunnel connection")
+    last_error = max(
+        text.rfind(marker)
+        for marker in (
+            "Serve tunnel error",
+            "failed to serve tunnel connection",
+            "control stream encountered a failure",
+        )
+    )
+    return last_connected > last_error
 
 
 def _cloudflared_running() -> bool:

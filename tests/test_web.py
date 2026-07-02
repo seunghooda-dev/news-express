@@ -1018,6 +1018,53 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "https://sample.trycloudflare.com" in html
 
 
+def test_cloudflare_tunnel_status_detects_active_connection(tmp_path, monkeypatch):
+    log_path = tmp_path / "cloudflare.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "ERR Serve tunnel error",
+                "INF | https://active-sample.trycloudflare.com |",
+                "INF Registered tunnel connection",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_cloudflared_running", lambda: True)
+
+    status = web_module._cloudflare_quick_tunnel_status(log_path)
+
+    assert status["public_url"] == "https://active-sample.trycloudflare.com"
+    assert status["label"] == "외부 접속 정상"
+
+
+def test_cloudflare_tunnel_status_detects_reconnecting_log(tmp_path, monkeypatch):
+    log_path = tmp_path / "cloudflare.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "INF | https://stale-sample.trycloudflare.com |",
+                "INF Registered tunnel connection",
+                "ERR failed to serve tunnel connection",
+                "ERR Serve tunnel error",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_cloudflared_running", lambda: True)
+
+    status = web_module._cloudflare_quick_tunnel_status(log_path)
+
+    assert status["public_url"] == "https://stale-sample.trycloudflare.com"
+    assert status["label"] == "터널 재연결 중"
+
+
 def test_healthz_reports_database_status(monkeypatch):
     db_path = Path(f"data/.test_healthz_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
