@@ -144,7 +144,7 @@ NEWS_SUMMARY_ADMIN_PASSWORD=테스트 사용자에게 공유할 관리자 비밀
 
 `NEWS_SUMMARY_SECRET_KEY`는 Render가 자동 생성합니다.
 
-배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 회사 외부 테스트라도 공개 인터넷 주소가 생기므로 `NEWS_SUMMARY_AUTH_REQUIRED=1`을 유지하는 것을 권장합니다.
+배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 임시 테스트 중에는 비밀번호 없이 접속하도록 `NEWS_SUMMARY_AUTH_DISABLED=1`을 사용할 수 있습니다. 정식 공유 전에는 다시 로그인 보호 또는 Cloudflare Access 같은 접근 제한을 켜는 것을 권장합니다.
 
 ## 외부 접속: Cloudflare Tunnel
 
