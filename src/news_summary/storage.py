@@ -386,10 +386,22 @@ class Store:
             self._normalize_published_dates(conn)
             self._normalize_press_release_urls(conn)
             self._ensure_single_draft_index(conn)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id DESC)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id DESC)"
-            )
+            self._ensure_indexes(conn)
+
+    def _ensure_indexes(self, conn: Any) -> None:
+        index_statements = [
+            "CREATE INDEX IF NOT EXISTS idx_article_drafts_press_release_id ON article_drafts(press_release_id)",
+            "CREATE INDEX IF NOT EXISTS idx_article_drafts_status_updated ON article_drafts(status, updated_at, id)",
+            "CREATE INDEX IF NOT EXISTS idx_article_drafts_updated ON article_drafts(updated_at, id)",
+            "CREATE INDEX IF NOT EXISTS idx_article_drafts_model_dates ON article_drafts(model, created_at, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_press_releases_title ON press_releases(title)",
+            "CREATE INDEX IF NOT EXISTS idx_press_releases_source_published ON press_releases(source_id, published_at, collected_at, id)",
+            "CREATE INDEX IF NOT EXISTS idx_press_releases_region_published ON press_releases(region, published_at, collected_at, id)",
+            "CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id)",
+            "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id)",
+        ]
+        for statement in index_statements:
+            conn.execute(statement)
 
     def _ensure_column(self, conn: Any, table: str, column: str, definition: str) -> None:
         if self.is_postgres:

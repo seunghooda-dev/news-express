@@ -1687,13 +1687,33 @@ h3 {
   }
 
   .row {
-    padding: 13px 14px;
+    padding: 10px 12px;
+  }
+
+  .row strong {
+    display: -webkit-box;
+    margin-bottom: 5px;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 1.35;
   }
 
   .row-meta,
   .detail-status,
   .gemini-models {
-    gap: 6px;
+    gap: 4px 6px;
+  }
+
+  .row-meta {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .row-meta .badge {
+    min-height: 20px;
+    padding: 1px 6px;
+    font-size: 11px;
   }
 
   .original,

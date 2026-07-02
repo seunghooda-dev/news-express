@@ -33,7 +33,7 @@
     {% else %}
       <p class="meta">자동 수집 컨트롤러가 준비되지 않았습니다.</p>
     {% endif %}
-    <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}">
+    <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}" data-confirm="자동 수집 설정을 변경할까요?">
       {% if auto_collector_status and auto_collector_status.enabled %}
         <input type="hidden" name="enabled" value="false">
         <button class="secondary" type="submit">자동 수집 끄기</button>
@@ -98,7 +98,7 @@
     </div>
     <p class="meta">현재 DB: {{ db_path }}</p>
     <p class="meta">백업 폴더: {{ backup_dir }}</p>
-    <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}">
+    <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">
       <button type="submit">지금 백업 생성</button>
     </form>
   </article>
@@ -163,7 +163,7 @@
 
 <section class="ops-log-view">
   <h2>백업 복구</h2>
-  <form class="restore-form" method="post" action="{{ url_for('restore_backup_route') }}">
+  <form class="restore-form" method="post" action="{{ url_for('restore_backup_route') }}" data-confirm="백업 복구 작업을 진행할까요? 복구 실행은 운영 데이터에 영향을 줄 수 있습니다.">
     <label for="backup_name">복구할 백업</label>
     <select id="backup_name" name="backup_name" required>
       <option value="">백업 선택</option>

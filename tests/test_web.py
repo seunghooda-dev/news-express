@@ -753,6 +753,46 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     assert logout.status_code == 302
 
 
+def test_security_headers_are_applied(monkeypatch):
+    db_path = Path(f"data/.test_security_headers_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "same-origin"
+    assert "camera=()" in response.headers["Permissions-Policy"]
+
+    operations = client.get("/operations")
+    assert operations.headers["Cache-Control"] == "no-store"
+
+
+def test_dangerous_operations_render_confirmation_prompts(monkeypatch):
+    db_path = Path(f"data/.test_operation_confirmations_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard_html = client.get("/").data.decode("utf-8")
+    operations_html = client.get("/operations").data.decode("utf-8")
+    gemini_html = client.get("/gemini-usage").data.decode("utf-8")
+
+    assert "수동 재수집을 시작할까요?" in dashboard_html
+    assert "자동 수집 설정을 변경할까요?" in operations_html
+    assert "백업 복구 작업을 진행할까요?" in operations_html
+    assert "로컬 Gemini 사용량 기록을 초기화할까요?" in gemini_html
+
+
 def test_admin_setup_enables_login_without_env_password(monkeypatch):
     db_path = Path(f"data/.test_admin_setup_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

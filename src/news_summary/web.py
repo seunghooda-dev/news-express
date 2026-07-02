@@ -87,6 +87,16 @@ def create_app() -> Flask:
             "admin_authenticated": bool(session.get("admin_authenticated")),
         }
 
+    @app.after_request
+    def add_security_headers(response: Response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if request.endpoint in {"operations", "ops_logs"}:
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
     @app.before_request
     def open_store_connection_scope():
         endpoint = request.endpoint or ""
@@ -137,6 +147,7 @@ def create_app() -> Flask:
             status="needs_review",
             selected_regions=selected_regions,
             limit=FILTER_FETCH_LIMIT,
+            include_original_content=False,
         )
         recent_releases = _press_release_rows_for_listing(
             store,
@@ -403,6 +414,7 @@ def create_app() -> Flask:
         source_filter = (request.args.get("source") or "").strip()
         selected_regions = _selected_regions(config_path)
         display_limit = _list_display_limit()
+        needs_original_content = bool(query or review_filter in {"application", "event", "support"})
         draft_rows = _draft_rows_for_listing(
             store,
             status=status,
@@ -411,6 +423,7 @@ def create_app() -> Flask:
             target_date=target_date,
             query=query,
             limit=FILTER_FETCH_LIMIT if review_filter else display_limit + 1,
+            include_original_content=needs_original_content,
         )
         duplicate_titles = _duplicate_titles(store)
         if review_filter:
@@ -1231,6 +1244,7 @@ def _draft_rows_for_listing(
     target_date: date | None = None,
     query: str = "",
     limit: int = LIST_PAGE_SIZE,
+    include_original_content: bool = True,
 ):
     selected_regions = selected_regions or []
     where = []
@@ -1264,10 +1278,11 @@ def _draft_rows_for_listing(
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     params.append(limit)
+    original_content_select = "pr.content AS original_content" if include_original_content else "'' AS original_content"
     with store.connect() as conn:
         return conn.execute(
             f"""
-            SELECT ad.*, pr.source_id, pr.source_name, pr.region, pr.url, pr.content AS original_content,
+            SELECT ad.*, pr.source_id, pr.source_name, pr.region, pr.url, {original_content_select},
                    pr.title AS original_title, pr.published_at,
                    pr.validation_status, pr.validation_note
             FROM article_drafts ad
