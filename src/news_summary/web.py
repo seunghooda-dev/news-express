@@ -137,11 +137,6 @@ def create_app() -> Flask:
             _source_summaries(store, config_path),
             selected_regions,
         )
-        draft_groups = _group_drafts_by_recent_dates(
-            pending_drafts,
-            include_older=bool(selected_regions),
-            date_source="created",
-        )
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
         attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
@@ -149,7 +144,7 @@ def create_app() -> Flask:
         return render_template(
             "dashboard.html",
             counts=_counts_for_regions(store, selected_regions) if selected_regions else store.counts(),
-            draft_groups=draft_groups,
+            pending_drafts=pending_drafts,
             recent_releases=recent_releases,
             auto_collector_status=auto_status,
             source_summaries=source_summaries,

@@ -109,39 +109,34 @@
 
 <section class="split">
   <div>
-    <h1>검수 대기 초안</h1>
-    <div class="list date-list">
-      {% for group in draft_groups %}
-        <section class="date-group">
-          <div class="date-group-head">
-            <h2>{{ group.label }}</h2>
-            <span>{{ group.drafts|length }}건</span>
-          </div>
-          {% for draft in group.drafts[:10] %}
-            <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
-              <strong>{{ draft.title }}</strong>
-              <span class="row-meta">
-                <span>{{ draft.source_name }}</span>
-                <span>초안 {{ draft.created_at|date_label }}</span>
-                {% if draft.published_at %}
-                  <span>게시 {{ draft.published_at|date_label }}</span>
-                {% endif %}
-                <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
-                {% for flag in review_flags(draft, duplicate_titles)[:3] %}
-                  <span class="badge badge-warning">{{ flag }}</span>
-                {% endfor %}
-              </span>
-            </a>
-          {% else %}
-            <p class="empty">해당 날짜의 검수 대기 초안이 없습니다.</p>
-          {% endfor %}
-          {% if group.drafts|length > 10 %}
-            <a class="more-summary" href="{% if group.iso_date and group.date_source != 'created' %}{{ url_for('drafts', status='needs_review', date=group.iso_date, region=selected_regions) }}{% else %}{{ url_for('drafts', status='needs_review', region=selected_regions) }}{% endif %}">
-              <span>전체 보기</span>
-            </a>
-          {% endif %}
-        </section>
+    <div class="section-head compact">
+      <h1>검수 대기 초안</h1>
+      <a class="source-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}">전체 보기</a>
+    </div>
+    <div class="list">
+      {% for draft in pending_drafts[:20] %}
+        <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
+          <strong>{{ draft.title }}</strong>
+          <span class="row-meta">
+            <span>{{ draft.source_name }}</span>
+            <span>초안 {{ draft.created_at|date_label }}</span>
+            {% if draft.published_at %}
+              <span>게시 {{ draft.published_at|date_label }}</span>
+            {% endif %}
+            <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+            {% for flag in review_flags(draft, duplicate_titles)[:3] %}
+              <span class="badge badge-warning">{{ flag }}</span>
+            {% endfor %}
+          </span>
+        </a>
+      {% else %}
+        <p class="empty">검수 대기 초안이 없습니다.</p>
       {% endfor %}
+      {% if pending_drafts|length > 20 %}
+        <a class="more-summary" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}">
+          <span>전체 보기</span>
+        </a>
+      {% endif %}
     </div>
   </div>
 

@@ -588,36 +588,61 @@ def test_parent_region_filter_shows_child_region_pending_drafts_on_dashboard(mon
     assert "진도 오래된 검수 대기 초안" in drafts_html
 
 
-def test_dashboard_groups_pending_drafts_by_draft_created_date(monkeypatch):
-    db_path = Path(f"data/.test_dashboard_created_date_{uuid4().hex}.sqlite").resolve()
+def test_dashboard_shows_latest_pending_drafts_across_dates(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_latest_pending_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     store = Store(db_path)
     store.init_db()
     today = datetime.now(LOCAL_TZ)
-    yesterday = (today - timedelta(days=1)).date().isoformat()
+    yesterday = today - timedelta(days=1)
 
-    release_id = store.add_press_release(
-        PressRelease(
-            source_id="sample",
-            source_name="테스트 군청",
-            region="전남",
-            title="어제 게시된 원문",
-            url="https://example.com/yesterday-published-today-draft",
-            content="테스트 군은 지역 사업을 추진한다고 밝혔다.",
-            published_at=yesterday,
+    for index in range(4):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 군청",
+                region="전남",
+                title=f"오늘 원문 {index:02d}",
+                url=f"https://example.com/today-pending-{index}",
+                content="테스트 군은 지역 사업을 추진한다고 밝혔다.",
+                published_at=today.date().isoformat(),
+            )
         )
-    )
-    assert release_id is not None
-    store.add_article_draft(
-        ArticleDraft(
-            press_release_id=release_id,
-            title="오늘 생성된 검수 대기 초안",
-            body="본문입니다.",
-            review_note="메모",
-            model="gemini-3.5-flash:gemini",
-            created_at=today.isoformat(),
+        assert release_id is not None
+        store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=f"오늘 생성된 검수 대기 초안 {index:02d}",
+                body="본문입니다.",
+                review_note="메모",
+                model="gemini-3.5-flash:gemini",
+                created_at=(today - timedelta(minutes=index)).isoformat(),
+            )
         )
-    )
+
+    for index in range(21):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 군청",
+                region="전남",
+                title=f"어제 원문 {index:02d}",
+                url=f"https://example.com/yesterday-pending-{index}",
+                content="테스트 군은 지역 사업을 추진한다고 밝혔다.",
+                published_at=yesterday.date().isoformat(),
+            )
+        )
+        assert release_id is not None
+        store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=f"어제 생성된 검수 대기 초안 {index:02d}",
+                body="본문입니다.",
+                review_note="메모",
+                model="gemini-3.5-flash:gemini",
+                created_at=(yesterday - timedelta(minutes=index)).isoformat(),
+            )
+        )
 
     from news_summary.web import create_app
 
@@ -627,8 +652,10 @@ def test_dashboard_groups_pending_drafts_by_draft_created_date(monkeypatch):
 
     dashboard_html = client.get("/").data.decode("utf-8")
 
-    assert f"{today.year}년 {today.month}월 {today.day}일 (오늘)" in dashboard_html
-    assert "오늘 생성된 검수 대기 초안" in dashboard_html
+    assert "오늘 생성된 검수 대기 초안 00" in dashboard_html
+    assert "어제 생성된 검수 대기 초안 00" in dashboard_html
+    assert "어제 생성된 검수 대기 초안 16" not in dashboard_html
+    assert f"{today.year}년 {today.month}월 {today.day}일 (오늘)" not in dashboard_html
     assert "초안 " in dashboard_html
 
 
