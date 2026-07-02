@@ -9,6 +9,7 @@
   {% endif %}
   <form method="post" action="{{ url_for('admin_setup') }}">
     <input type="hidden" name="next" value="{{ next_url }}">
+    <input type="hidden" name="username" value="admin" autocomplete="username">
     <label for="password">새 관리자 비밀번호</label>
     <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required>
     <label for="confirm_password">비밀번호 확인</label>

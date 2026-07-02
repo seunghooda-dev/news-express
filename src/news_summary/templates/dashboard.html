@@ -200,6 +200,7 @@
       const statusUrl = panel.dataset.statusUrl;
       let wasRunning = panel.dataset.initialRunning === "true";
       let reloadQueued = false;
+      let pollTimer = null;
 
       const render = (status) => {
         const total = Number(status.progress_total || 0);
@@ -219,17 +220,32 @@
         wasRunning = Boolean(status.running);
       };
 
+      const schedulePoll = (status) => {
+        window.clearTimeout(pollTimer);
+        const isRunning = Boolean(status?.running);
+        const delay = isRunning ? 1500 : (document.hidden ? 60000 : 30000);
+        pollTimer = window.setTimeout(poll, delay);
+      };
+
       const poll = async () => {
+        let latestStatus = null;
         try {
           const response = await fetch(statusUrl, { headers: { "Accept": "application/json" } });
-          if (response.ok) render(await response.json());
+          if (response.ok) {
+            latestStatus = await response.json();
+            render(latestStatus);
+          }
         } catch {
           message.textContent = "진행 상태 확인 중 오류가 발생했습니다.";
+        } finally {
+          schedulePoll(latestStatus);
         }
       };
 
       poll();
-      window.setInterval(poll, 1500);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) poll();
+      });
     })();
   </script>
 {% endif %}

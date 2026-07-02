@@ -275,6 +275,8 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "본문 총 글자수:" in html
     assert f'<span id="body-char-count-value">{body_character_count(body)}</span>자' in html
     assert 'body?.addEventListener("input", updateBodyCount);' in html
+    assert '<details class="original original-details" open>' in html
+    assert "originalDetails.open = false;" in html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
@@ -319,6 +321,90 @@ def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     releases_html = client.get("/press-releases").data.decode("utf-8")
     assert "테스트 원문" in releases_html
     assert f'href="/drafts/{draft_id}"' in releases_html
+
+
+def test_drafts_page_uses_load_more_pagination(monkeypatch):
+    db_path = Path(f"data/.test_drafts_load_more_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(55):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 기관",
+                region="전남",
+                title=f"원문 {index:02d}",
+                url=f"https://example.com/load-more-draft-{index}",
+                content="테스트 원문 내용입니다.",
+                published_at="2026-05-20",
+            )
+        )
+        assert release_id is not None
+        store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=f"초안 {index:02d}",
+                body="본문입니다.",
+                review_note="",
+                model="gemini-3.5-flash:gemini",
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    first_page = client.get("/drafts").data.decode("utf-8")
+    expanded_page = client.get("/drafts?limit=100").data.decode("utf-8")
+
+    assert "현재 50개를 표시하고 있습니다." in first_page
+    assert "더보기" in first_page
+    assert "limit=100" in first_page
+    assert "초안 00" not in first_page
+    assert "현재 55개를 표시하고 있습니다." in expanded_page
+    assert "초안 00" in expanded_page
+    assert "더보기" not in expanded_page
+
+
+def test_press_releases_page_uses_load_more_pagination(monkeypatch):
+    db_path = Path(f"data/.test_releases_load_more_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(55):
+        store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 기관",
+                region="전남",
+                title=f"원문 목록 {index:02d}",
+                url=f"https://example.com/load-more-release-{index}",
+                content="테스트 원문 내용입니다.",
+                published_at="2026-05-20",
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    first_page = client.get("/press-releases").data.decode("utf-8")
+    expanded_page = client.get("/press-releases?limit=100").data.decode("utf-8")
+
+    assert "현재 50개를 표시하고 있습니다." in first_page
+    assert "더보기" in first_page
+    assert "limit=100" in first_page
+    assert "원문 목록 00" not in first_page
+    assert "현재 55개를 표시하고 있습니다." in expanded_page
+    assert "원문 목록 00" in expanded_page
+    assert "더보기" not in expanded_page
 
 
 def test_dashboard_source_cards_show_total_and_today_counts(monkeypatch):
@@ -799,7 +885,7 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     dashboard = client.get("/")
     dashboard_html = dashboard.data.decode("utf-8")
     assert "수동 재수집" in dashboard_html
-    assert "<summary>설정</summary>" in dashboard_html
+    assert "<summary>메뉴</summary>" in dashboard_html
     assert "대시 모드" not in dashboard_html
     assert "초안 검수" in dashboard_html
     assert "Gemini 사용량" in dashboard_html
@@ -913,7 +999,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
             "public_url": "https://sample.trycloudflare.com",
             "log_path": "data/tmp/cloudflare_quick_tunnel.err.log",
             "updated_at": "2026-06-29T10:00:00+09:00",
-            "label": "접속 대기 중",
+            "label": "외부 접속 정상",
         },
     )
     app = web_module.create_app()
@@ -928,6 +1014,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "Gemini 대기 원문" not in html
     assert "테스트 기관 1건" in html
     assert "외부 접속" in html
+    assert "외부 접속 정상" in html
     assert "https://sample.trycloudflare.com" in html
 
 
@@ -1119,6 +1206,8 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
     assert 'class="manual-recrawl"' in html
     assert html.index('class="auto-status"') < html.index("수동 재수집")
     assert "/recrawl/status" in html
+    assert "window.setInterval" not in html
+    assert "window.setTimeout(poll" in html
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
     assert response.status_code == 200

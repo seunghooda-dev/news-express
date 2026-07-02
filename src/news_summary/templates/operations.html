@@ -119,6 +119,7 @@
     {% elif not admin_password_unlocked %}
       <p class="meta">현재 관리자 비밀번호를 입력하면 변경 입력칸이 표시됩니다.</p>
       <form class="ops-form" method="post" action="{{ url_for('unlock_admin_password_panel') }}">
+        <input type="hidden" name="username" value="admin" autocomplete="username">
         <label for="unlock_current_password">현재 비밀번호</label>
         <input id="unlock_current_password" name="current_password" type="password" autocomplete="current-password" required>
         <button type="submit">확인 후 변경 열기</button>
@@ -126,6 +127,7 @@
     {% else %}
       <p class="meta">현재 비밀번호 확인 후 새 비밀번호를 저장합니다.</p>
       <form class="ops-form" method="post" action="{{ url_for('change_admin_password') }}">
+        <input type="hidden" name="username" value="admin" autocomplete="username">
         <label for="new_password">새 비밀번호</label>
         <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="8" required>
         <label for="confirm_password">새 비밀번호 확인</label>

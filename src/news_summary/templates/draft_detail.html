@@ -23,13 +23,16 @@
 </section>
 
 <section class="editor-grid">
-  <article class="original">
-    <h2>수집 원문</h2>
+  <details class="original original-details" open>
+    <summary>
+      <span>수집 원문</span>
+      <small>펼침/접기</small>
+    </summary>
     <p class="meta">{{ draft.source_name }} · {{ draft.published_at|date_label }}</p>
     <p class="meta">원문 검증: {{ draft.validation_status }} · {{ draft.validation_note }}</p>
     <h3>{{ draft.original_title }}</h3>
     <p>{{ draft.original_content }}</p>
-  </article>
+  </details>
 
   <form id="draft-editor" class="editor" method="post" action="{{ url_for('update_draft', draft_id=draft.id) }}" data-refine-url="{{ url_for('refine_draft', draft_id=draft.id) }}" data-initial-url="{{ url_for('restore_initial_draft', draft_id=draft.id) }}" data-gemini-cooldown-until="{{ gemini_cooldown_until.isoformat() if gemini_cooldown_until else '' }}">
     <label for="title">제목</label>
@@ -109,6 +112,7 @@
 </section>
 <script>
   (() => {
+    const originalDetails = document.querySelector(".original-details");
     const form = document.querySelector("#draft-editor");
     const body = document.querySelector("#body");
     const bodyCount = document.querySelector("#body-char-count-value");
@@ -120,6 +124,9 @@
     const initialUrl = form?.dataset.initialUrl;
     const cooldownUntil = form?.dataset.geminiCooldownUntil || "";
     if (!form || !instruction || !preset || !refineUrl || !initialUrl) return;
+    if (originalDetails && window.matchMedia("(max-width: 760px)").matches) {
+      originalDetails.open = false;
+    }
 
     const updateBodyCount = () => {
       if (!body || !bodyCount) return;

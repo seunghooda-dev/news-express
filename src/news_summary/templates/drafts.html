@@ -68,4 +68,14 @@
     <p class="empty">표시할 초안이 없습니다.</p>
   {% endfor %}
 </section>
+
+{% if drafts %}
+  <p class="list-count">현재 {{ displayed_count }}개를 표시하고 있습니다.</p>
+{% endif %}
+
+{% if has_more %}
+  <div class="load-more">
+    <a class="load-more-link" href="{{ more_url }}">더보기</a>
+  </div>
+{% endif %}
 {% endblock %}

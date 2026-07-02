@@ -44,6 +44,8 @@ CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
+LIST_PAGE_SIZE = 50
+MAX_LIST_LIMIT = 500
 
 
 def create_app() -> Flask:
@@ -393,8 +395,9 @@ def create_app() -> Flask:
         review_filter = (request.args.get("review") or "").strip()
         source_filter = (request.args.get("source") or "").strip()
         selected_regions = _selected_regions(config_path)
+        display_limit = _list_display_limit()
         has_filter = bool(target_date or query or review_filter or source_filter or selected_regions)
-        draft_rows = store.drafts(status=status, limit=1000 if has_filter else 120)
+        draft_rows = store.drafts(status=status, limit=1000 if has_filter else display_limit + 1)
         duplicate_titles = _duplicate_titles(store)
         if selected_regions:
             draft_rows = _filter_rows_by_regions(draft_rows, selected_regions)
@@ -408,6 +411,8 @@ def create_app() -> Flask:
             draft_rows = _filter_drafts_by_review(draft_rows, review_filter, duplicate_titles)
         if source_filter or selected_regions:
             draft_rows = _sort_drafts_latest_first(draft_rows)
+        has_more = display_limit < MAX_LIST_LIMIT and len(draft_rows) > display_limit
+        draft_rows = draft_rows[:display_limit]
         region_filter_hidden = _clean_query_args(
             status=status,
             date=target_date.isoformat() if target_date else "",
@@ -430,6 +435,9 @@ def create_app() -> Flask:
             region_filter_hidden=region_filter_hidden,
             region_reset_url=url_for("drafts", **region_filter_hidden),
             page_title=_drafts_page_title(status, target_date, review_filter, source_filter, config_path),
+            displayed_count=len(draft_rows),
+            has_more=has_more,
+            more_url=_load_more_url("drafts", display_limit + LIST_PAGE_SIZE) if has_more else "",
         )
 
     @app.get("/drafts/next")
@@ -443,8 +451,11 @@ def create_app() -> Flask:
     @app.get("/press-releases")
     def press_releases():
         selected_regions = _selected_regions(config_path)
+        display_limit = _list_display_limit()
         releases = store.press_releases(limit=1000)
         releases = _filter_rows_by_regions(releases, selected_regions)
+        has_more = display_limit < MAX_LIST_LIMIT and len(releases) > display_limit
+        releases = releases[:display_limit]
         return render_template(
             "press_releases.html",
             press_releases=releases,
@@ -452,6 +463,9 @@ def create_app() -> Flask:
             selected_regions=selected_regions,
             region_filter_hidden={},
             region_reset_url=url_for("press_releases"),
+            displayed_count=len(releases),
+            has_more=has_more,
+            more_url=_load_more_url("press_releases", display_limit + LIST_PAGE_SIZE) if has_more else "",
         )
 
     @app.get("/sources/<source_id>")
@@ -767,7 +781,7 @@ def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, o
             public_url = ""
     running = _cloudflared_running()
     if running and public_url:
-        label = "접속 대기 중"
+        label = "외부 접속 정상"
     elif running:
         label = "터널 실행 중"
     else:
@@ -815,6 +829,20 @@ def _positive_int(value: str | None, default: int) -> int:
     except ValueError:
         return default
     return max(1, min(parsed, 100))
+
+
+def _list_display_limit() -> int:
+    try:
+        parsed = int(request.args.get("limit") or LIST_PAGE_SIZE)
+    except ValueError:
+        parsed = LIST_PAGE_SIZE
+    return max(LIST_PAGE_SIZE, min(parsed, MAX_LIST_LIMIT))
+
+
+def _load_more_url(endpoint: str, next_limit: int) -> str:
+    args = request.args.to_dict(flat=False)
+    args["limit"] = [str(min(next_limit, MAX_LIST_LIMIT))]
+    return url_for(endpoint, **args)
 
 
 def _current_next_path() -> str:
