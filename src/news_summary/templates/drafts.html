@@ -31,7 +31,7 @@
   <select id="source" name="source" onchange="this.form.submit()">
     <option value="">전체 기관</option>
     {% for source in source_options %}
-      <option value="{{ source.id }}" {% if source_filter == source.id %}selected{% endif %}>{{ source.name }}</option>
+      <option value="{{ source.id }}" {% if source_filter == source.id %}selected{% endif %}>{{ source_display_label(source.name) }}</option>
     {% endfor %}
   </select>
 </form>
@@ -55,7 +55,7 @@
     <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
       <strong>{{ draft.title }}</strong>
       <span class="row-meta">
-        <span>{{ draft.source_name }}</span>
+        <span>{{ source_display_label(draft.source_name) }}</span>
         <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
         <span>{{ (draft.published_at or draft.created_at)|date_label }}</span>
         <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>

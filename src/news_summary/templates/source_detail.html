@@ -2,8 +2,8 @@
 {% block content %}
 <section class="section-head">
   <div>
-    <h1>{{ source.name }}</h1>
-    <p class="meta">{{ source.region }} · {{ source.list_url }}</p>
+    <h1>{{ source_display_label(source.name) }}</h1>
+    <p class="meta">{{ region_display_label(source.region) }} · {{ source.list_url }}</p>
   </div>
   <div class="section-actions">
     <a class="source-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}">검수 대기 보기</a>

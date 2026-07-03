@@ -14,7 +14,7 @@
 <section class="detail-status">
   <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
   <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
-  <span>{{ draft.source_name }}</span>
+  <span>{{ source_display_label(draft.source_name) }}</span>
   <span>게시 {{ draft.published_at|date_label }}</span>
   {% if draft.updated_at %}<span>수정 {{ draft.updated_at|date_label }}</span>{% endif %}
   {% for flag in review_flags(draft, duplicate_titles) %}
@@ -28,7 +28,7 @@
       <span>수집 원문</span>
       <small>펼침/접기</small>
     </summary>
-    <p class="meta">{{ draft.source_name }} · {{ draft.published_at|date_label }}</p>
+    <p class="meta">{{ source_display_label(draft.source_name) }} · {{ draft.published_at|date_label }}</p>
     <p class="meta">원문 검증: {{ draft.validation_status }} · {{ draft.validation_note }}</p>
     <h3>{{ draft.original_title }}</h3>
     <p>{{ draft.original_content }}</p>

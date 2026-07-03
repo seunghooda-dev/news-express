@@ -69,6 +69,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["change_type_label"] = change_type_label
     app.jinja_env.globals["file_size_label"] = file_size_label
     app.jinja_env.globals["region_display_label"] = region_display_label
+    app.jinja_env.globals["source_display_label"] = source_display_label
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_database())
@@ -730,7 +731,7 @@ def create_app() -> Flask:
                 "progress_current": status.progress_current,
                 "progress_total": status.progress_total,
                 "progress_message": status.progress_message,
-                "progress_source_name": status.progress_source_name or "",
+                "progress_source_name": source_display_label(status.progress_source_name or ""),
                 "progress_phase": status.progress_phase,
                 "last_error": status.last_error,
                 "last_finished_at": status.last_finished_at,
@@ -969,6 +970,16 @@ def region_display_label(region: str) -> str:
     for prefix in REGION_DISPLAY_PREFIXES:
         if label == prefix:
             return "광주·전남 전체"
+    return _strip_integrated_city_prefix(label)
+
+
+def source_display_label(source_name: str) -> str:
+    return _strip_integrated_city_prefix(source_name or "")
+
+
+def _strip_integrated_city_prefix(value: str) -> str:
+    label = (value or "").strip()
+    for prefix in REGION_DISPLAY_PREFIXES:
         if label.startswith(f"{prefix} "):
             return label.removeprefix(prefix).strip()
     return label

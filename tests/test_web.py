@@ -21,6 +21,7 @@ from news_summary.web import (
     model_label,
     region_display_label,
     review_flags,
+    source_display_label,
 )
 
 
@@ -483,11 +484,13 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
 
     assert '<details class="source-board">' in dashboard_html
     assert '<details class="source-board" open' not in dashboard_html
-    assert "전남광주통합특별시 광주" in dashboard_html
+    assert "광주 ·" in dashboard_html
+    assert "전남광주통합특별시 광주 ·" not in dashboard_html
     assert "어제 1건 · 오늘 1건" in dashboard_html
     assert "누적 2건" not in dashboard_html
     assert "mobile-source-board" not in dashboard_html
-    assert "전남광주통합특별시 광주청사 보도자료" in dashboard_html
+    assert "광주청사 보도자료" in dashboard_html
+    assert "전남광주통합특별시 광주청사 보도자료" not in dashboard_html
     assert "비정상" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
@@ -497,6 +500,12 @@ def test_region_display_label_removes_common_integrated_city_prefix():
     assert region_display_label("전남광주특별시 목포") == "목포"
     assert region_display_label("전남광주통합특별시") == "광주·전남 전체"
     assert region_display_label("광주 북구") == "광주 북구"
+
+
+def test_source_display_label_removes_common_integrated_city_prefix():
+    assert source_display_label("전남광주통합특별시 광주청사 보도자료") == "광주청사 보도자료"
+    assert source_display_label("전남광주특별시 목포시청 보도자료") == "목포시청 보도자료"
+    assert source_display_label("광주 북구청 보도자료") == "광주 북구청 보도자료"
 
 
 def test_region_checkbox_filter_limits_dashboard_drafts_and_releases(monkeypatch):
