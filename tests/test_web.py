@@ -505,6 +505,7 @@ def test_region_display_label_removes_common_integrated_city_prefix():
 def test_source_display_label_removes_common_integrated_city_prefix():
     assert source_display_label("전남광주통합특별시 광주청사 보도자료") == "광주청사 보도자료"
     assert source_display_label("전남광주특별시 목포시청 보도자료") == "목포시청 보도자료"
+    assert source_display_label("전남광주통합특별시청 보도자료") == "시청 보도자료"
     assert source_display_label("광주 북구청 보도자료") == "광주 북구청 보도자료"
 
 

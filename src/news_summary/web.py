@@ -982,6 +982,8 @@ def _strip_integrated_city_prefix(value: str) -> str:
     for prefix in REGION_DISPLAY_PREFIXES:
         if label.startswith(f"{prefix} "):
             return label.removeprefix(prefix).strip()
+        if label.startswith(f"{prefix}청"):
+            return f"시청{label.removeprefix(f'{prefix}청')}".strip()
     return label
 
 
