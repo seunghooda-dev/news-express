@@ -1083,8 +1083,40 @@ def test_ops_logs_page_shows_recent_warnings(monkeypatch, tmp_path):
     html = client.get("/ops-logs").data.decode("utf-8")
 
     assert "운영 로그" in html
-    assert "최근 경고·오류" in html
+    assert "오류" in html
+    assert "Gemini" in html
+    assert "자동수집" in html
+    assert "전체" in html
     assert "수집 실패 테스트" in html
+
+
+def test_ops_logs_page_filters_categories(monkeypatch, tmp_path):
+    db_path = Path(f"data/.test_ops_logs_filters_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_LOG_DIR", str(tmp_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    log_path = tmp_path / "news_summary.log"
+    log_path.write_text(
+        "2026-06-02 INFO [news_summary.writer] Gemini 초안 생성 완료\n"
+        "2026-06-02 INFO [news_summary.scheduler] auto collector waiting\n"
+        "2026-06-02 WARNING [news_summary.web] slow web request path=/drafts\n",
+        encoding="utf-8",
+    )
+    client = app.test_client()
+
+    gemini_html = client.get("/ops-logs?tab=gemini").data.decode("utf-8")
+    collector_html = client.get("/ops-logs?tab=collector").data.decode("utf-8")
+    invalid_html = client.get("/ops-logs?tab=unknown").data.decode("utf-8")
+
+    assert "Gemini 초안 생성 완료" in gemini_html
+    assert "auto collector waiting" not in gemini_html
+    assert "auto collector waiting" in collector_html
+    assert "Gemini 초안 생성 완료" not in collector_html
+    assert "slow web request path=/drafts" in invalid_html
 
 
 def test_operations_page_toggles_auto_collection(monkeypatch):

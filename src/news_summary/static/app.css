@@ -1210,6 +1210,62 @@ h3 {
   white-space: pre-wrap;
 }
 
+.ops-log-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.ops-log-tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf7;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ops-log-tabs a.active {
+  border-color: #92c9bf;
+  background: #eaf7f4;
+  color: var(--accent-strong);
+}
+
+.ops-log-tabs b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #fff;
+  color: inherit;
+  font-size: 12px;
+}
+
+.ops-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ops-log-head span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .source-health p,
 .draft-history p {
   margin: 0;
@@ -1808,6 +1864,16 @@ h3 {
 
   .ops-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ops-log-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ops-log-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .gemini-usage-grid {

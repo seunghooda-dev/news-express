@@ -6,27 +6,37 @@
     <p class="meta">{{ log_path }}</p>
   </div>
   <div class="section-actions">
+    <a class="source-link" href="{{ url_for('operations') }}">운영 관리</a>
     <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
   </div>
 </section>
 
 <section class="ops-log-view">
-  <h2>최근 경고·오류</h2>
-  {% if important_lines %}
-    <pre>{% for line in important_lines %}{{ line }}
-{% endfor %}</pre>
-  {% else %}
-    <p class="empty">최근 경고나 오류가 없습니다.</p>
-  {% endif %}
-</section>
+  <div class="ops-log-tabs" role="tablist" aria-label="운영 로그 분류">
+    {% for tab in log_tabs %}
+      <a
+        class="{% if active_log_tab == tab.id %}active{% endif %}"
+        href="{{ url_for('ops_logs', tab=tab.id) }}"
+        role="tab"
+        aria-selected="{{ 'true' if active_log_tab == tab.id else 'false' }}"
+      >
+        <span>{{ tab.label }}</span>
+        <b>{{ tab.count }}</b>
+      </a>
+    {% endfor %}
+  </div>
 
-<section class="ops-log-view">
-  <h2>최근 전체 로그</h2>
-  {% if log_lines %}
-    <pre>{% for line in log_lines %}{{ line }}
+  {% set current_tab = (log_tabs|selectattr("id", "equalto", active_log_tab)|list|first) %}
+  <div class="ops-log-head">
+    <h2>{{ current_tab.label if current_tab else "로그" }}</h2>
+    <span>최근 {{ active_log_lines|length }}줄</span>
+  </div>
+
+  {% if active_log_lines %}
+    <pre>{% for line in active_log_lines %}{{ line }}
 {% endfor %}</pre>
   {% else %}
-    <p class="empty">아직 기록된 로그가 없습니다.</p>
+    <p class="empty">이 분류에 표시할 로그가 없습니다.</p>
   {% endif %}
 </section>
 {% endblock %}

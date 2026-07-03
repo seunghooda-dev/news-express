@@ -267,12 +267,18 @@ def create_app() -> Flask:
     def ops_logs():
         log_path = Path(app.config["NEWS_SUMMARY_LOG_PATH"])
         lines = _recent_log_lines(log_path, limit=250)
-        important_lines = [line for line in lines if " ERROR " in line or " WARNING " in line][-80:]
+        active_log_tab = request.args.get("tab") or "errors"
+        log_tabs = _ops_log_tabs(lines)
+        if active_log_tab not in {tab["id"] for tab in log_tabs}:
+            active_log_tab = "errors"
+        active_log_lines = next(tab["lines"] for tab in log_tabs if tab["id"] == active_log_tab)
         return render_template(
             "ops_logs.html",
             log_path=log_path,
             log_lines=lines,
-            important_lines=important_lines,
+            log_tabs=log_tabs,
+            active_log_tab=active_log_tab,
+            active_log_lines=active_log_lines,
         )
 
     @app.get("/operations")
@@ -1739,6 +1745,30 @@ def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
         return log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
     except OSError:
         return ["운영 로그 파일을 읽을 수 없습니다."]
+
+
+def _ops_log_tabs(lines: list[str]) -> list[dict[str, object]]:
+    categories = [
+        ("errors", "오류", lambda line: " ERROR " in line or " WARNING " in line or "slow web request" in line),
+        ("gemini", "Gemini", lambda line: "gemini" in line.lower() or "제미나이" in line or "쿨다운" in line),
+        (
+            "collector",
+            "자동수집",
+            lambda line: (
+                "scheduler" in line.lower()
+                or "collector" in line.lower()
+                or "collect" in line.lower()
+                or "recrawl" in line.lower()
+                or "수집" in line
+            ),
+        ),
+        ("all", "전체", lambda line: True),
+    ]
+    tabs = []
+    for tab_id, label, matcher in categories:
+        matched = [line for line in lines if matcher(line)][-80:]
+        tabs.append({"id": tab_id, "label": label, "count": len(matched), "lines": matched})
+    return tabs
 
 
 def _sort_drafts_latest_first(drafts):
