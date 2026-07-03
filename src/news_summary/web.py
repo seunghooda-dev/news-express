@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import os
 import subprocess
+import time
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -52,6 +53,14 @@ FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
 
 
+def _slow_request_threshold_seconds() -> float:
+    raw_value = os.getenv("NEWS_SUMMARY_SLOW_REQUEST_SECONDS", "2.5")
+    try:
+        return max(0.5, float(raw_value))
+    except ValueError:
+        return 2.5
+
+
 def create_app() -> Flask:
     load_environment()
     log_path = configure_logging()
@@ -96,10 +105,25 @@ def create_app() -> Flask:
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         if request.endpoint in {"operations", "ops_logs"}:
             response.headers.setdefault("Cache-Control", "no-store")
+        started_at = getattr(g, "request_started_at", None)
+        if started_at is not None:
+            elapsed = time.perf_counter() - started_at
+            threshold = _slow_request_threshold_seconds()
+            if elapsed >= threshold:
+                logger.warning(
+                    "slow web request method=%s path=%s endpoint=%s status=%s elapsed=%.3fs threshold=%.3fs",
+                    request.method,
+                    request.path,
+                    request.endpoint,
+                    response.status_code,
+                    elapsed,
+                    threshold,
+                )
         return response
 
     @app.before_request
     def open_store_connection_scope():
+        g.request_started_at = time.perf_counter()
         endpoint = request.endpoint or ""
         if endpoint == "static":
             return None

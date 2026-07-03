@@ -988,6 +988,11 @@ h3 {
   background: var(--warn);
 }
 
+.mobile-review-bar,
+.mobile-review-spacer {
+  display: none;
+}
+
 .source-board {
   margin-bottom: 28px;
   border: 1px solid var(--line);
@@ -1743,6 +1748,8 @@ h3 {
   .quick-refine button,
   .refine-submit-row button {
     width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
   }
 
   .refine-submit-row {
@@ -1759,6 +1766,44 @@ h3 {
     width: 100%;
     min-height: 44px;
     padding: 10px 8px;
+  }
+
+  .mobile-review-bar {
+    position: fixed;
+    z-index: 30;
+    right: 12px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: 12px;
+    display: grid;
+    grid-template-columns: 0.9fr 1.25fr 0.85fr;
+    gap: 8px;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 10px;
+    border: 1px solid #b9d9d3;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 12px 36px rgba(14, 31, 43, 0.18);
+  }
+
+  .mobile-review-bar button {
+    width: 100%;
+    min-height: 48px;
+    padding: 10px 8px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .mobile-review-bar button[name="action"][value="rejected"] {
+    border-color: #e2c8a7;
+    background: #fff7ed;
+    color: var(--warn);
+  }
+
+  .mobile-review-spacer {
+    display: block;
+    height: 86px;
   }
 
   .ops-grid {

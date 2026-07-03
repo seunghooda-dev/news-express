@@ -82,6 +82,13 @@
       <button type="submit" name="action" value="rejected_next">반려 후 다음</button>
     </div>
 
+    <div class="mobile-review-bar" aria-label="빠른 검수 작업">
+      <button class="secondary" type="submit">저장</button>
+      <button type="submit" name="action" value="approved_next">승인 후 다음</button>
+      <button class="secondary" type="submit" name="action" value="rejected">반려</button>
+    </div>
+    <div class="mobile-review-spacer" aria-hidden="true"></div>
+
     <section class="approval-checks">
       <h2>승인 전 체크</h2>
       {% for check in checks %}

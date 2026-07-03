@@ -279,6 +279,9 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert 'body?.addEventListener("input", updateBodyCount);' in html
     assert '<details class="original original-details" open>' in html
     assert "originalDetails.open = false;" in html
+    assert 'class="mobile-review-bar" aria-label="빠른 검수 작업"' in html
+    assert '<button type="submit" name="action" value="approved_next">승인 후 다음</button>' in html
+    assert 'class="mobile-review-spacer" aria-hidden="true"' in html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
