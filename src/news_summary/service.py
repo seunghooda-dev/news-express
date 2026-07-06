@@ -29,7 +29,7 @@ logger = get_logger("service")
 GEMINI_COOLDOWN_UNTIL_KEY = "gemini_cooldown_until"
 GEMINI_COOLDOWN_REASON_KEY = "gemini_cooldown_reason"
 DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
-TRANSIENT_DNS_RETRY_DELAY_SECONDS = 5.0
+TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS = 5.0
 RETENTION_DAYS_ENV = "NEWS_SUMMARY_RETENTION_DAYS"
 RETENTION_HOLIDAYS_ENV = "NEWS_SUMMARY_RETENTION_HOLIDAYS"
 DEFAULT_RETENTION_DAYS = 3
@@ -82,7 +82,7 @@ def collect_enabled_sources(
 
     inserted = 0
     total = len(sources)
-    transient_dns_retry_sources: list[Source] = []
+    transient_retry_sources: list[Source] = []
     logger.info("collect started sources=%s limit=%s config=%s", total, limit, config_path)
     _report_progress(progress_callback, phase="collecting", current=0, total=total, message="수집 준비 중")
     for index, source in enumerate(sources, start=1):
@@ -108,8 +108,8 @@ def collect_enabled_sources(
                 failure_stage=failure_stage,
                 failure_reason=failure_reason,
             )
-            if _should_retry_transient_dns_failure(failure_stage):
-                transient_dns_retry_sources.append(source)
+            if _should_retry_transient_collection_failure(failure_stage):
+                transient_retry_sources.append(source)
             logger.warning("source collection failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
             _report_progress(
                 progress_callback,
@@ -132,8 +132,8 @@ def collect_enabled_sources(
                 failure_stage=failure_stage,
                 failure_reason=failure_reason,
             )
-            if _should_retry_transient_dns_failure(failure_stage):
-                transient_dns_retry_sources.append(source)
+            if _should_retry_transient_collection_failure(failure_stage):
+                transient_retry_sources.append(source)
             logger.exception("source collection unexpected failure source_id=%s source_name=%s", source.id, source.name)
             _report_progress(
                 progress_callback,
@@ -188,10 +188,10 @@ def collect_enabled_sources(
             message=f"{index}/{total} {source.name} 수집 완료",
         )
 
-    if transient_dns_retry_sources:
-        retry_inserted, retry_messages = retry_transient_dns_failures(
+    if transient_retry_sources:
+        retry_inserted, retry_messages = retry_transient_collection_failures(
             store,
-            transient_dns_retry_sources,
+            transient_retry_sources,
             limit=limit,
             progress_callback=progress_callback,
         )
@@ -210,7 +210,7 @@ def collect_enabled_sources(
     return messages
 
 
-def retry_transient_dns_failures(
+def retry_transient_collection_failures(
     store: Store,
     sources: list[Source],
     limit: int = 10,
@@ -219,10 +219,14 @@ def retry_transient_dns_failures(
     if not sources:
         return 0, []
 
-    logger.info("transient dns retry scheduled sources=%s delay=%s", len(sources), TRANSIENT_DNS_RETRY_DELAY_SECONDS)
-    _report_progress(progress_callback, phase="dns_retry_waiting", message="DNS 실패 기관 자동 재검증 대기 중")
-    if TRANSIENT_DNS_RETRY_DELAY_SECONDS > 0:
-        time.sleep(TRANSIENT_DNS_RETRY_DELAY_SECONDS)
+    logger.info(
+        "transient collection retry scheduled sources=%s delay=%s",
+        len(sources),
+        TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS,
+    )
+    _report_progress(progress_callback, phase="transient_retry_waiting", message="일시 연결 실패 기관 자동 재검증 대기 중")
+    if TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS > 0:
+        time.sleep(TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS)
 
     inserted_total = 0
     messages: list[str] = []
@@ -234,13 +238,13 @@ def retry_transient_dns_failures(
             current=index,
             total=total,
             source_name=source.name,
-            message=f"DNS 재검증 중: {source.name}",
+            message=f"일시 연결 실패 재검증 중: {source.name}",
         )
         try:
             releases = collect_source(source, limit=limit)
         except CollectionError as exc:
             failure_stage, failure_reason = classify_collection_failure(exc)
-            message = f"{source.name} DNS 자동 재검증 실패: {exc}"
+            message = f"{source.name} 일시 장애 자동 재검증 실패: {exc}"
             store.record_source_collection_status(
                 source.id,
                 source.name,
@@ -250,11 +254,11 @@ def retry_transient_dns_failures(
                 failure_reason=failure_reason,
             )
             messages.append(message)
-            logger.warning("transient dns retry failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
+            logger.warning("transient collection retry failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
             continue
         except Exception as exc:
             failure_stage, failure_reason = classify_collection_failure(exc)
-            message = f"{source.name} DNS 자동 재검증 실패: {type(exc).__name__}: {exc}"
+            message = f"{source.name} 일시 장애 자동 재검증 실패: {type(exc).__name__}: {exc}"
             store.record_source_collection_status(
                 source.id,
                 source.name,
@@ -264,7 +268,7 @@ def retry_transient_dns_failures(
                 failure_reason=failure_reason,
             )
             messages.append(message)
-            logger.exception("transient dns retry unexpected failure source_id=%s source_name=%s", source.id, source.name)
+            logger.exception("transient collection retry unexpected failure source_id=%s source_name=%s", source.id, source.name)
             continue
 
         retention_cutoff = collection_retention_cutoff_date()
@@ -280,7 +284,7 @@ def retry_transient_dns_failures(
             len(releases),
             source_inserted,
             source_skipped,
-            prefix="DNS 자동 재검증 통과",
+            prefix="일시 장애 자동 재검증 통과",
         )
         messages.append(message)
         if repaired_dates:
@@ -295,7 +299,7 @@ def retry_transient_dns_failures(
             repaired_dates=repaired_dates,
         )
         logger.info(
-            "transient dns retry succeeded source_id=%s source_name=%s releases=%s inserted=%s skipped_retention=%s repaired_dates=%s",
+            "transient collection retry succeeded source_id=%s source_name=%s releases=%s inserted=%s skipped_retention=%s repaired_dates=%s",
             source.id,
             source.name,
             len(releases),
@@ -436,8 +440,8 @@ def _collection_source_message(
     return f"{source_name}: {prefix} {releases_found}건{skipped_part}, 새로 저장 {inserted_count}건"
 
 
-def _should_retry_transient_dns_failure(failure_stage: str) -> bool:
-    return failure_stage == "DNS 조회"
+def _should_retry_transient_collection_failure(failure_stage: str) -> bool:
+    return failure_stage in {"DNS 조회", "외부 사이트 응답 지연", "연결 강제 종료", "사이트 접속"}
 
 
 def repair_missing_published_dates(store: Store, source: Source, limit: int = 20) -> int:

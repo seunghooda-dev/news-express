@@ -316,17 +316,54 @@ def test_collect_enabled_sources_retries_transient_dns_failures(monkeypatch):
     monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
     monkeypatch.setattr("news_summary.service.collect_source", collect_after_dns_retry)
     monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
-    monkeypatch.setattr("news_summary.service.TRANSIENT_DNS_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr("news_summary.service.TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS", 0)
 
     messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3)
     status = store.latest_source_collection_statuses()["dns-source"]
 
     assert calls["count"] == 2
-    assert any("DNS 자동 재검증 통과" in message for message in messages)
+    assert any("일시 장애 자동 재검증 통과" in message for message in messages)
     assert "새 원문 1건" in messages[-1]
     assert status["status"] == "ok"
     assert status["failure_stage"] == ""
-    assert "DNS 자동 재검증 통과" in status["message"]
+    assert "일시 장애 자동 재검증 통과" in status["message"]
+
+
+def test_collect_enabled_sources_retries_tls_timeouts(monkeypatch):
+    db_path = Path(f"data/.test_service_tls_retry_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id="tls-source", name="TLS 지연 기관", region="전남", type="html_board")]
+    calls = {"count": 0}
+
+    def collect_after_tls_retry(source, limit):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise httpx.ConnectTimeout("TLS 연결 시간 초과")
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="TLS 복구 보도자료",
+                url="https://example.com/tls-recovered",
+                content="TLS 연결 지연 뒤 다시 수집된 보도자료입니다.",
+            )
+        ]
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", collect_after_tls_retry)
+    monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
+    monkeypatch.setattr("news_summary.service.TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS", 0)
+
+    messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+    status = store.latest_source_collection_statuses()["tls-source"]
+
+    assert calls["count"] == 2
+    assert any("일시 장애 자동 재검증 통과" in message for message in messages)
+    assert "새 원문 1건" in messages[-1]
+    assert status["status"] == "ok"
+    assert status["failure_stage"] == ""
 
 
 def test_store_normalizes_existing_published_at_metadata():
