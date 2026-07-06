@@ -494,7 +494,7 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     assert "mobile-source-board" not in dashboard_html
     assert "광주청사 보도자료" in dashboard_html
     assert "전남광주통합특별시 광주청사 보도자료" not in dashboard_html
-    assert "일시 지연" in dashboard_html
+    assert "오늘 원문 1건이 수집돼 정상으로 봅니다" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
 
@@ -1413,8 +1413,77 @@ def test_source_summary_marks_transient_failure_after_today_success_as_temporary
     assert summary["issue"] == ""
     assert summary["status_label"] == "정상"
     assert summary["status_level"] == "ok"
-    assert "오늘 원문은 수집" in summary["status_detail"]
-    assert "정상 수집" in summary["status_detail"]
+    assert "오늘 원문 1건" in summary["status_detail"]
+    assert "정상으로 봅니다" in summary["status_detail"]
+
+
+def test_source_summary_keeps_current_day_releases_normal_after_repeated_transient_failures(monkeypatch):
+    db_path = Path(f"data/.test_source_today_release_repeated_failure_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+    from news_summary.models import Source
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 7, 6, 15, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [Source(id="gangjin", name="강진군청 보도자료", region="전남 강진", type="html_board")],
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="gangjin",
+            source_name="강진군청 보도자료",
+            region="전남 강진",
+            title="강진군, 여름철 안전 점검",
+            url="https://example.com/gangjin/2",
+            content="강진군은 여름철 안전 점검을 추진한다고 밝혔다. 관계 기관과 함께 시설 점검을 이어갈 계획이다.",
+            published_at="2026-07-06",
+            collected_at="2026-07-06T05:05:00+00:00",
+        )
+    )
+    with store.connect() as conn:
+        for checked_at in (
+            "2026-07-06T05:10:00+00:00",
+            "2026-07-06T05:20:00+00:00",
+            "2026-07-06T05:30:00+00:00",
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "gangjin",
+                    "강진군청 보도자료",
+                    "failed",
+                    "TLS 연결 시간 초과",
+                    "외부 사이트 응답 지연",
+                    "TLS 연결 시간 초과",
+                    0,
+                    0,
+                    0,
+                    checked_at,
+                ),
+            )
+
+    summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
+
+    assert summary["issue"] == ""
+    assert summary["status_label"] == "정상"
+    assert summary["status_level"] == "ok"
+    assert summary["consecutive_failures"] == 3
+    assert "오늘 원문 1건" in summary["status_detail"]
+    assert "자동 복구 대상" in summary["status_detail"]
 
 
 def test_source_summary_marks_three_consecutive_failures_as_failed(monkeypatch):

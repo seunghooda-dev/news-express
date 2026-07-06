@@ -2355,6 +2355,8 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         releases = int(stat["releases"]) if stat else 0
         today_releases = int(stat["today_releases"] or 0) if stat else 0
         yesterday_releases = int(stat["yesterday_releases"] or 0) if stat else 0
+        last_collected_datetime = _parse_datetime(stat["last_collected"]) if stat else None
+        last_collected_date = last_collected_datetime.astimezone(LOCAL_TZ).date() if last_collected_datetime else None
         issue = ""
         last_status = str(status_row["status"]) if status_row else ""
         last_checked_at = status_row["checked_at"] if status_row else None
@@ -2378,19 +2380,30 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         last_success_datetime = _parse_datetime(success_row["checked_at"]) if success_row else None
         last_success_date = last_success_datetime.astimezone(LOCAL_TZ).date() if last_success_datetime else None
         has_success_today = last_success_date == today
+        has_current_day_data = today_releases > 0 or last_collected_date == today
         if last_status == "failed":
-            if consecutive_failures < 3:
-                issue = "" if has_success_today and today_releases > 0 else "일시 지연"
-                status_label = "정상" if has_success_today and today_releases > 0 else "일시 지연"
-                status_level = "ok" if has_success_today and today_releases > 0 else "warning"
+            if consecutive_failures < 3 or has_current_day_data:
+                issue = "" if has_current_day_data or has_success_today else "일시 지연"
+                status_label = "정상" if has_current_day_data or has_success_today else "일시 지연"
+                status_level = "ok" if has_current_day_data or has_success_today else "warning"
                 temporary_cause = " · ".join(
                     item for item in (str(failure_stage or ""), str(failure_reason or "")) if item
                 )
                 cause_suffix = f" 최근 원인: {temporary_cause}" if temporary_cause else ""
-                if has_success_today and today_releases > 0:
+                if has_current_day_data:
+                    current_data_label = (
+                        f"오늘 원문 {today_releases}건이 수집돼"
+                        if today_releases > 0
+                        else "오늘 원문 보관 기록이 있어"
+                    )
                     status_detail = (
-                        f"오늘 원문은 수집됐고 최근 {consecutive_failures}회 연결 점검만 실패했습니다. "
-                        f"3회 연속 실패 전까지 정상 수집으로 봅니다.{cause_suffix}"
+                        f"{current_data_label} 정상으로 봅니다. "
+                        f"최근 연결 재점검 {consecutive_failures}회 실패 기록은 자동 복구 대상으로 유지합니다.{cause_suffix}"
+                    )
+                elif has_success_today:
+                    status_detail = (
+                        f"오늘 점검은 성공했고 최근 {consecutive_failures}회 연결 점검만 실패했습니다. "
+                        f"정상 점검 기록을 우선 반영합니다.{cause_suffix}"
                     )
                 else:
                     status_detail = (
