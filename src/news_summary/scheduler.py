@@ -43,12 +43,21 @@ AUTO_RECOVERY_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS"
 AUTO_RECOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_LIMIT"
 AUTO_QUIET_SOURCE_RECHECK_ENV = "NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK"
 AUTO_QUIET_SOURCE_RECHECK_HOUR_ENV = "NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR"
+AUTO_FOCUSED_RECRAWL_LIMIT_ENV = "NEWS_SUMMARY_AUTO_FOCUSED_RECRAWL_LIMIT"
+AUTO_ANOMALY_CHECK_HOUR_ENV = "NEWS_SUMMARY_AUTO_ANOMALY_CHECK_HOUR"
+AUTO_DEDUPLICATE_ENV = "NEWS_SUMMARY_AUTO_DEDUPLICATE"
+AUTO_DEDUPLICATE_LIMIT_ENV = "NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT"
 AUTO_URL_DISCOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
+PUBLIC_URL_ENV = "NEWS_SUMMARY_PUBLIC_URL"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
 AUTO_DAILY_REPORT_KEY = "auto_daily_report_snapshot"
 AUTO_URL_DISCOVERY_STATUS_KEY = "auto_url_discovery_snapshot"
 AUTO_BACKUP_VERIFY_STATUS_KEY = "auto_backup_verify_snapshot"
+AUTO_SERVER_HEALTH_STATUS_KEY = "auto_server_health_snapshot"
+AUTO_COLLECTION_ANOMALY_STATUS_KEY = "auto_collection_anomaly_snapshot"
+AUTO_DEDUPLICATE_STATUS_KEY = "auto_deduplicate_snapshot"
+AUTO_OPERATIONS_SUMMARY_STATUS_KEY = "auto_operations_summary_snapshot"
 LOCAL_TZ = timezone(timedelta(hours=9))
 logger = get_logger("scheduler")
 
@@ -403,6 +412,15 @@ class AutoCollector:
 
     def _execute_maintenance_once(self, now: datetime) -> None:
         messages: list[str] = []
+        server_health = self._persist_server_health_snapshot(now)
+        if server_health.get("status_level") == "error":
+            messages.append(f"서버 상태 확인 필요: {server_health.get('message')}")
+        anomaly_report = self._persist_collection_anomaly_snapshot(now)
+        if anomaly_report.get("issue_count"):
+            messages.append(f"수집 이상치 {anomaly_report.get('issue_count')}건 감지")
+        dedupe_message = self._deduplicate_press_releases_once()
+        if dedupe_message:
+            messages.append(dedupe_message)
         source_messages = self._recover_failed_sources_once()
         if source_messages:
             messages.extend(source_messages)
@@ -416,6 +434,81 @@ class AutoCollector:
         if backup_message:
             messages.append(backup_message)
         self._persist_daily_report_snapshot(messages, now)
+        self._persist_operations_summary_snapshot(messages, now)
+
+    def _persist_server_health_snapshot(self, now: datetime) -> dict[str, object]:
+        started = now
+        checks: list[dict[str, object]] = []
+        status_level = "ok"
+        message = "서버 내부 점검 정상"
+        try:
+            with self.store.connect() as conn:
+                conn.execute("SELECT 1").fetchone()
+            checks.append({"name": "database", "ok": True, "message": "DB 연결 정상"})
+        except Exception as exc:  # noqa: BLE001 - health snapshot should report errors without stopping maintenance.
+            status_level = "error"
+            message = f"DB 연결 실패: {type(exc).__name__}"
+            checks.append({"name": "database", "ok": False, "message": message})
+
+        with self._state_lock:
+            status_updated_at = _parse_datetime(self._status.last_finished_at or self._status.last_started_at)
+            collector_enabled = self._status.enabled
+            collector_running = self._status.running
+        if collector_enabled and not collector_running and status_updated_at:
+            stale_minutes = int((started - status_updated_at.astimezone(timezone.utc)).total_seconds() // 60)
+            if stale_minutes >= 120:
+                status_level = "warning" if status_level == "ok" else status_level
+                checks.append({"name": "auto_collector", "ok": False, "message": f"자동 수집 최근 실행 후 {stale_minutes}분 경과"})
+            else:
+                checks.append({"name": "auto_collector", "ok": True, "message": "자동 수집 상태 정상"})
+        elif collector_enabled and collector_running:
+            checks.append({"name": "auto_collector", "ok": True, "message": "자동 수집 실행 중"})
+        elif not collector_enabled:
+            status_level = "warning" if status_level == "ok" else status_level
+            checks.append({"name": "auto_collector", "ok": False, "message": "자동 수집 꺼짐"})
+
+        public_url = os.getenv(PUBLIC_URL_ENV, "").strip().rstrip("/")
+        if public_url:
+            health_url = f"{public_url}/healthz"
+            try:
+                response = httpx.get(health_url, timeout=5)
+                response.raise_for_status()
+                checks.append({"name": "public_url", "ok": True, "message": f"외부 healthz {response.status_code}"})
+            except Exception as exc:  # noqa: BLE001 - public check is diagnostic only.
+                status_level = "warning" if status_level == "ok" else status_level
+                checks.append({"name": "public_url", "ok": False, "message": f"외부 healthz 실패: {type(exc).__name__}"})
+
+        payload = {
+            "updated_at": started.isoformat(),
+            "status_level": status_level,
+            "status_label": "정상" if status_level == "ok" else ("확인 필요" if status_level == "error" else "주의"),
+            "message": message,
+            "checks": checks,
+        }
+        self.store.set_app_metadata(AUTO_SERVER_HEALTH_STATUS_KEY, json.dumps(payload, ensure_ascii=False))
+        return payload
+
+    def _persist_collection_anomaly_snapshot(self, now: datetime) -> dict[str, object]:
+        report = _collection_anomaly_snapshot(self.store, self.config_path, now=now)
+        self.store.set_app_metadata(AUTO_COLLECTION_ANOMALY_STATUS_KEY, json.dumps(report, ensure_ascii=False))
+        return report
+
+    def _deduplicate_press_releases_once(self) -> str | None:
+        if not env_bool(AUTO_DEDUPLICATE_ENV, True):
+            return None
+        limit = env_int(AUTO_DEDUPLICATE_LIMIT_ENV, 50, minimum=0)
+        if limit <= 0:
+            return None
+        result = self.store.deduplicate_press_releases(limit=limit)
+        payload = {"updated_at": _now(), **result}
+        self.store.set_app_metadata(AUTO_DEDUPLICATE_STATUS_KEY, json.dumps(payload, ensure_ascii=False))
+        merged = int(result.get("merged") or 0)
+        skipped = int(result.get("skipped") or 0)
+        if merged:
+            return f"중복 원문 자동 정리 {merged}건"
+        if skipped:
+            return f"중복 원문 {skipped}건은 초안 충돌로 보류"
+        return None
 
     def _recover_failed_sources_once(self) -> list[str]:
         limit = env_int(AUTO_RECOVERY_LIMIT_ENV, 5, minimum=0)
@@ -429,7 +522,10 @@ class AutoCollector:
         logger.info("auto recovery source recheck started sources=%s", len(candidates))
         for candidate in candidates:
             source = candidate.source
-            prefix = "업무일 무수집 보정 점검" if candidate.reason == "quiet" else "자동 복구 재검증"
+            prefix = {
+                "quiet": "업무일 무수집 보정 점검",
+                "focused": "이상치 집중 재수집",
+            }.get(candidate.reason, "자동 복구 재검증")
             try:
                 releases = collect_source_with_fallback(source, limit=max(5, min(self.collect_limit, 10)))
             except Exception as exc:  # noqa: BLE001 - recovery should record and continue per source.
@@ -555,6 +651,10 @@ class AutoCollector:
         report = _daily_report_snapshot(self.store, now=now, messages=messages)
         self.store.set_app_metadata(AUTO_DAILY_REPORT_KEY, json.dumps(report, ensure_ascii=False))
 
+    def _persist_operations_summary_snapshot(self, messages: list[str], now: datetime) -> None:
+        report = _operations_summary_snapshot(self.store, now=now, messages=messages)
+        self.store.set_app_metadata(AUTO_OPERATIONS_SUMMARY_STATUS_KEY, json.dumps(report, ensure_ascii=False))
+
 
 def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollector | None:
     collect_limit = env_int("NEWS_SUMMARY_AUTO_COLLECT_LIMIT", DEFAULT_AUTO_COLLECT_LIMIT)
@@ -593,10 +693,12 @@ def _auto_recovery_interval_seconds() -> int:
 def _source_recovery_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
     failed = _failed_source_candidates(store, config_path, limit)
     remaining = max(0, limit - len(failed))
+    focused = _focused_source_candidates(store, config_path, remaining) if remaining else []
+    remaining = max(0, remaining - len(focused))
     quiet = _quiet_source_candidates(store, config_path, remaining) if remaining else []
     seen: set[str] = set()
     candidates: list[SourceRecoveryCandidate] = []
-    for candidate in [*failed, *quiet]:
+    for candidate in [*failed, *focused, *quiet]:
         if candidate.source.id in seen:
             continue
         seen.add(candidate.source.id)
@@ -703,6 +805,45 @@ def _quiet_source_candidates(store: Store, config_path: Path, limit: int) -> lis
             continue
         candidates.append(SourceRecoveryCandidate(source, "quiet"))
     return candidates[:limit]
+
+
+def _focused_source_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
+    if limit <= 0:
+        return []
+    focus_limit = env_int(AUTO_FOCUSED_RECRAWL_LIMIT_ENV, 3, minimum=0)
+    if focus_limit <= 0:
+        return []
+    now = datetime.now(timezone.utc)
+    anomaly_report = _collection_anomaly_snapshot(store, config_path, now=now)
+    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    local_today = now.astimezone(LOCAL_TZ).date()
+    local_start = datetime.combine(local_today, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc).isoformat()
+    with store.connect() as conn:
+        checked_today = {
+            str(row["source_id"])
+            for row in conn.execute(
+                """
+                SELECT DISTINCT source_id
+                FROM source_collection_runs
+                WHERE checked_at >= ?
+                  AND message LIKE ?
+                """,
+                (local_start, "%이상치 집중 재수집%"),
+            ).fetchall()
+        }
+    candidates: list[SourceRecoveryCandidate] = []
+    for issue in anomaly_report.get("issues", []):
+        if not isinstance(issue, dict):
+            continue
+        if issue.get("type") not in {"today_zero", "drop"}:
+            continue
+        source_id = str(issue.get("source_id") or "")
+        if source_id not in source_map or source_id in checked_today:
+            continue
+        candidates.append(SourceRecoveryCandidate(source_map[source_id], "focused"))
+        if len(candidates) >= min(limit, focus_limit):
+            break
+    return candidates
 
 
 def _url_discovery_candidates(store: Store, config_path: Path, limit: int) -> list[Source]:
@@ -825,6 +966,204 @@ def _latest_backup_file(backup_dir: Path) -> Path | None:
     if not files:
         return None
     return max(files, key=lambda path: path.stat().st_mtime)
+
+
+def _collection_anomaly_snapshot(store: Store, config_path: Path, *, now: datetime) -> dict[str, object]:
+    local_now = now.astimezone(LOCAL_TZ)
+    today = local_now.date()
+    holidays = retention_holidays({today.year - 1, today.year, today.year + 1})
+    is_business_day = is_collection_business_day(today, holidays)
+    check_hour = env_int(AUTO_ANOMALY_CHECK_HOUR_ENV, 10, minimum=0)
+    enabled_sources = {source.id: source for source in load_sources(config_path) if source.enabled}
+    if not enabled_sources:
+        return {
+            "updated_at": now.isoformat(),
+            "status_level": "warning",
+            "status_label": "소스 없음",
+            "issue_count": 0,
+            "issues": [],
+        }
+
+    cutoff = collection_retention_cutoff_date(today=today)
+    date_expr = _press_release_date_expr()
+    with store.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT source_id, {date_expr} AS release_date, COUNT(*) AS count
+            FROM press_releases
+            WHERE {date_expr} >= ?
+            GROUP BY source_id, {date_expr}
+            """,
+            (cutoff.isoformat(),),
+        ).fetchall()
+
+    counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        source_id = str(row["source_id"])
+        release_date = str(row["release_date"] or "")
+        if not source_id or not release_date:
+            continue
+        counts.setdefault(source_id, {})[release_date] = int(row["count"] or 0)
+
+    issues: list[dict[str, object]] = []
+    for source_id, source in enabled_sources.items():
+        by_date = counts.get(source_id, {})
+        today_count = by_date.get(today.isoformat(), 0)
+        baseline_values = [
+            count
+            for release_date, count in by_date.items()
+            if release_date != today.isoformat() and count > 0
+        ]
+        if not baseline_values:
+            continue
+        average = sum(baseline_values) / len(baseline_values)
+        if is_business_day and local_now.hour >= min(check_hour, 23) and today_count == 0 and average >= 1:
+            issues.append(
+                {
+                    "source_id": source_id,
+                    "source_name": source.name,
+                    "type": "today_zero",
+                    "label": "오늘 0건",
+                    "today_count": today_count,
+                    "average": round(average, 1),
+                }
+            )
+        elif is_business_day and local_now.hour >= min(check_hour + 3, 23) and average >= 2 and today_count < max(1, average * 0.3):
+            issues.append(
+                {
+                    "source_id": source_id,
+                    "source_name": source.name,
+                    "type": "drop",
+                    "label": "평소 대비 급감",
+                    "today_count": today_count,
+                    "average": round(average, 1),
+                }
+            )
+        elif average >= 2 and today_count >= max(10, average * 4):
+            issues.append(
+                {
+                    "source_id": source_id,
+                    "source_name": source.name,
+                    "type": "spike",
+                    "label": "평소 대비 급증",
+                    "today_count": today_count,
+                    "average": round(average, 1),
+                }
+            )
+
+    issues = sorted(
+        issues,
+        key=lambda item: (
+            {"today_zero": 0, "drop": 1, "spike": 2}.get(str(item.get("type")), 9),
+            str(item.get("source_name") or ""),
+        ),
+    )
+    status_level = "warning" if issues else "ok"
+    return {
+        "updated_at": now.isoformat(),
+        "status_level": status_level,
+        "status_label": "확인 필요" if issues else "정상",
+        "issue_count": len(issues),
+        "issues": issues[:20],
+    }
+
+
+def _operations_summary_snapshot(store: Store, *, now: datetime, messages: list[str]) -> dict[str, object]:
+    local_today = now.astimezone(LOCAL_TZ).date()
+    local_start = datetime.combine(local_today, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc).isoformat()
+    date_expr = _press_release_date_expr()
+    with store.connect() as conn:
+        source_runs = conn.execute(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM source_collection_runs
+            WHERE checked_at >= ?
+            GROUP BY status
+            """,
+            (local_start,),
+        ).fetchall()
+        recovery_successes = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM source_collection_runs
+            WHERE checked_at >= ?
+              AND status = 'ok'
+              AND (
+                message LIKE '%자동 복구 재검증%'
+                OR message LIKE '%업무일 무수집 보정%'
+                OR message LIKE '%이상치 집중 재수집%'
+              )
+            """,
+            (local_start,),
+        ).fetchone()["count"]
+        today_sources = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT source_id) AS count
+            FROM press_releases
+            WHERE {date_expr} = ?
+            """,
+            (local_today.isoformat(),),
+        ).fetchone()["count"]
+    run_counts = {str(row["status"]): int(row["count"] or 0) for row in source_runs}
+    draft_failures = store.draft_generation_failure_summary(limit=1)
+    anomaly_raw = store.get_app_metadata(AUTO_COLLECTION_ANOMALY_STATUS_KEY)
+    dedupe_raw = store.get_app_metadata(AUTO_DEDUPLICATE_STATUS_KEY)
+    server_raw = store.get_app_metadata(AUTO_SERVER_HEALTH_STATUS_KEY)
+    anomaly_count = _json_int(anomaly_raw, "issue_count")
+    dedupe_merged = _json_int(dedupe_raw, "merged")
+    server_level = _json_str(server_raw, "status_level") or "unknown"
+    return {
+        "date": local_today.isoformat(),
+        "updated_at": now.isoformat(),
+        "source_successes": run_counts.get("ok", 0),
+        "source_failures": run_counts.get("failed", 0),
+        "recovery_successes": int(recovery_successes or 0),
+        "today_active_sources": int(today_sources or 0),
+        "draft_failures": int(draft_failures.get("total") or 0),
+        "anomaly_count": anomaly_count,
+        "dedupe_merged": dedupe_merged,
+        "server_status_level": server_level,
+        "messages": messages[-8:],
+    }
+
+
+def _press_release_date_expr() -> str:
+    return (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
+
+
+def _json_int(raw_value: str | None, key: str) -> int:
+    if not raw_value:
+        return 0
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    try:
+        return int(payload.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _json_str(raw_value: str | None, key: str) -> str:
+    if not raw_value:
+        return ""
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get(key) or "")
 
 
 def _daily_report_snapshot(store: Store, *, now: datetime, messages: list[str]) -> dict[str, object]:

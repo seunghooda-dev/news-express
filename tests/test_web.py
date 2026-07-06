@@ -1235,8 +1235,12 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "배포 버전" in html
     assert "최신 배포" in html
     assert "일일 운영 리포트" in html
+    assert "운영 요약" in html
+    assert "서버 상태 점검" in html
+    assert "수집 이상치" in html
     assert "게시일 점검" in html
     assert "대체 URL 준비" in html
+    assert "중복 원문 정리" in html
     assert "URL 후보 탐색" in html
     assert "Gemini 미변환 큐" in html
     assert "Gemini 실패 큐" in html

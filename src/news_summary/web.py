@@ -21,7 +21,15 @@ from .backup import create_backup, restore_backup, verify_backup
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .scheduler import AUTO_COLLECT_STATUS_KEY
-from .scheduler import AUTO_BACKUP_VERIFY_STATUS_KEY, AUTO_DAILY_REPORT_KEY, AUTO_URL_DISCOVERY_STATUS_KEY
+from .scheduler import (
+    AUTO_BACKUP_VERIFY_STATUS_KEY,
+    AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+    AUTO_DAILY_REPORT_KEY,
+    AUTO_DEDUPLICATE_STATUS_KEY,
+    AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+    AUTO_SERVER_HEALTH_STATUS_KEY,
+    AUTO_URL_DISCOVERY_STATUS_KEY,
+)
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
     business_days_between,
@@ -328,6 +336,10 @@ def create_app() -> Flask:
             db_health=_db_health_report(store, backup_dir),
             date_issue_report=_date_issue_report(store),
             daily_report=_daily_operations_report(store),
+            operations_summary=_operations_summary_report(store),
+            server_health_report=_server_health_report(store),
+            anomaly_report=_collection_anomaly_report(store),
+            deduplicate_report=_deduplicate_report(store),
             fallback_report=_fallback_url_report(config_path),
             url_discovery_report=_url_discovery_report(store),
             backup_verify_report=_backup_verify_report(store, backup_dir),
@@ -1025,6 +1037,82 @@ def _daily_operations_report(store: Store) -> dict[str, object]:
     }
 
 
+def _operations_summary_report(store: Store) -> dict[str, object]:
+    return _metadata_json_report(
+        store,
+        AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+        {
+            "date": datetime.now(LOCAL_TZ).date().isoformat(),
+            "updated_at": None,
+            "source_successes": 0,
+            "source_failures": 0,
+            "recovery_successes": 0,
+            "today_active_sources": 0,
+            "draft_failures": int(store.draft_generation_failure_summary(limit=1).get("total") or 0),
+            "anomaly_count": 0,
+            "dedupe_merged": 0,
+            "server_status_level": "unknown",
+            "messages": [],
+        },
+    )
+
+
+def _server_health_report(store: Store) -> dict[str, object]:
+    return _metadata_json_report(
+        store,
+        AUTO_SERVER_HEALTH_STATUS_KEY,
+        {
+            "updated_at": None,
+            "status_level": "neutral",
+            "status_label": "점검 전",
+            "message": "아직 자동 서버 점검 기록이 없습니다.",
+            "checks": [],
+        },
+    )
+
+
+def _collection_anomaly_report(store: Store) -> dict[str, object]:
+    return _metadata_json_report(
+        store,
+        AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+        {
+            "updated_at": None,
+            "status_level": "neutral",
+            "status_label": "점검 전",
+            "issue_count": 0,
+            "issues": [],
+        },
+    )
+
+
+def _deduplicate_report(store: Store) -> dict[str, object]:
+    return _metadata_json_report(
+        store,
+        AUTO_DEDUPLICATE_STATUS_KEY,
+        {
+            "updated_at": None,
+            "groups": 0,
+            "merged": 0,
+            "skipped": 0,
+        },
+    )
+
+
+def _metadata_json_report(store: Store, key: str, default: dict[str, object]) -> dict[str, object]:
+    raw_value = store.get_app_metadata(key)
+    if not raw_value:
+        return dict(default)
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return dict(default)
+    if not isinstance(payload, dict):
+        return dict(default)
+    merged = dict(default)
+    merged.update(payload)
+    return merged
+
+
 def _url_discovery_report(store: Store) -> dict[str, object]:
     raw_value = store.get_app_metadata(AUTO_URL_DISCOVERY_STATUS_KEY)
     if not raw_value:
@@ -1098,6 +1186,9 @@ def _automation_settings_report() -> dict[str, object]:
         "recovery_limit": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "5"),
         "quiet_recheck": os.getenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK", "1"),
         "quiet_recheck_hour": os.getenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR", "9"),
+        "focused_recrawl_limit": os.getenv("NEWS_SUMMARY_AUTO_FOCUSED_RECRAWL_LIMIT", "3"),
+        "anomaly_check_hour": os.getenv("NEWS_SUMMARY_AUTO_ANOMALY_CHECK_HOUR", "10"),
+        "deduplicate_limit": os.getenv("NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT", "50"),
         "url_discovery_limit": os.getenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "3"),
         "backup_verify": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "1"),
     }

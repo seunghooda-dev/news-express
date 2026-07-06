@@ -10,6 +10,7 @@ from news_summary.scheduler import (
     DEFAULT_AUTO_COLLECT_LIMIT,
     AutoCollector,
     build_auto_collector_from_env,
+    _collection_anomaly_snapshot,
     _next_hourly_run_at,
     _should_run_startup_catchup,
     _wait_seconds_until,
@@ -316,7 +317,7 @@ def test_auto_maintenance_rechecks_quiet_business_day_sources(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR", "9")
     monkeypatch.setattr("news_summary.scheduler.datetime", FixedDatetime)
     monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
-    monkeypatch.setattr("news_summary.scheduler.collection_retention_cutoff_date", lambda: date(2026, 7, 2))
+    monkeypatch.setattr("news_summary.scheduler.collection_retention_cutoff_date", lambda today=None: date(2026, 7, 2))
     monkeypatch.setattr("news_summary.scheduler.collect_source_with_fallback", fake_collect_source_with_fallback)
     monkeypatch.setattr("news_summary.scheduler.repair_missing_published_dates", lambda store, source, limit=20: 0)
 
@@ -327,6 +328,99 @@ def test_auto_maintenance_rechecks_quiet_business_day_sources(monkeypatch):
     assert any("업무일 무수집 보정 점검 통과" in message for message in messages)
     assert status["status"] == "ok"
     assert status["inserted_count"] == 1
+
+
+def test_auto_maintenance_focused_recrawls_anomaly_sources(monkeypatch):
+    db_path = Path(f"data/.test_auto_focused_recrawl_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="focus", name="집중 기관", region="전남", type="html_board")
+    for index in range(2):
+        store.add_press_release(
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title=f"이전 원문 {index}",
+                url=f"https://example.com/focus-old-{index}",
+                content="이전 영업일 원문입니다.",
+                published_at="2026-07-03",
+            )
+        )
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 11, 0, tzinfo=timezone(timedelta(hours=9)))
+            return value if tz is None else value.astimezone(tz)
+
+    def fake_collect_source_with_fallback(source, limit):
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="집중 재수집 원문",
+                url="https://example.com/focused-recrawl",
+                content="이상치 집중 재수집으로 확인된 원문입니다.",
+                published_at="2026-07-06",
+            )
+        ]
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_FOCUSED_RECRAWL_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_ANOMALY_CHECK_HOUR", "10")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK", "0")
+    monkeypatch.setattr("news_summary.scheduler.datetime", FixedDatetime)
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
+    monkeypatch.setattr("news_summary.scheduler.collection_retention_cutoff_date", lambda today=None: date(2026, 7, 3))
+    monkeypatch.setattr("news_summary.scheduler.collect_source_with_fallback", fake_collect_source_with_fallback)
+    monkeypatch.setattr("news_summary.scheduler.repair_missing_published_dates", lambda store, source, limit=20: 0)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    messages = collector._recover_failed_sources_once()
+    anomaly = _collection_anomaly_snapshot(store, Path("unused.yaml"), now=FixedDatetime.now(timezone.utc))
+
+    assert any("이상치 집중 재수집 통과" in message for message in messages)
+    assert anomaly["issue_count"] == 0
+
+
+def test_store_deduplicates_press_releases_by_title_date():
+    db_path = Path(f"data/.test_storage_title_date_dedupe_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    first_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="중복 제목",
+            url="https://example.com/dedupe-title-1",
+            content="첫 번째 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+    second_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="중복 제목",
+            url="https://example.com/dedupe-title-2",
+            content="두 번째 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+    assert first_id is not None
+    assert second_id is not None
+
+    result = store.deduplicate_press_releases(limit=10)
+
+    assert result["merged"] == 1
+    with store.connect() as conn:
+        rows = conn.execute("SELECT id, title, content FROM press_releases").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "중복 제목"
 
 
 def test_collect_enabled_sources_keeps_only_retention_window(monkeypatch):

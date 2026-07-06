@@ -43,10 +43,20 @@ services:
         value: "1"
       - key: NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR
         value: "9"
+      - key: NEWS_SUMMARY_AUTO_FOCUSED_RECRAWL_LIMIT
+        value: "3"
+      - key: NEWS_SUMMARY_AUTO_ANOMALY_CHECK_HOUR
+        value: "10"
+      - key: NEWS_SUMMARY_AUTO_DEDUPLICATE
+        value: "1"
+      - key: NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT
+        value: "50"
       - key: NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT
         value: "3"
       - key: NEWS_SUMMARY_AUTO_BACKUP_VERIFY
         value: "1"
+      - key: NEWS_SUMMARY_PUBLIC_URL
+        value: https://news-express-5uq0.onrender.com
       - key: NEWS_SUMMARY_GEMINI_FAILURE_RETRY_SECONDS
         value: "900"
       - key: NEWS_SUMMARY_GITHUB_REPO

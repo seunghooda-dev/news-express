@@ -554,7 +554,7 @@ class Store:
         conn: sqlite3.Connection,
         keep_id: int,
         duplicate_id: int,
-    ) -> None:
+    ) -> bool:
         keep_draft = conn.execute("SELECT id FROM article_drafts WHERE press_release_id = ?", (keep_id,)).fetchone()
         duplicate_draft = conn.execute(
             "SELECT id FROM article_drafts WHERE press_release_id = ?",
@@ -563,7 +563,11 @@ class Store:
         if duplicate_draft and not keep_draft:
             conn.execute("UPDATE article_drafts SET press_release_id = ? WHERE press_release_id = ?", (keep_id, duplicate_id))
         elif duplicate_draft and keep_draft:
-            return
+            return False
+        conn.execute(
+            "UPDATE draft_generation_failures SET press_release_id = ? WHERE press_release_id = ?",
+            (keep_id, duplicate_id),
+        )
 
         conn.execute(
             """
@@ -584,6 +588,54 @@ class Store:
             (keep_id, duplicate_id),
         )
         conn.execute("DELETE FROM press_releases WHERE id = ?", (duplicate_id,))
+        return True
+
+    def deduplicate_press_releases(self, limit: int = 50) -> dict[str, int]:
+        if limit <= 0:
+            return {"groups": 0, "merged": 0, "skipped": 0}
+        published_date_expr = _published_date_expr("published_at")
+        with self.connect() as conn:
+            groups = conn.execute(
+                f"""
+                SELECT source_id,
+                       LOWER(TRIM(title)) AS normalized_title,
+                       {published_date_expr} AS published_date,
+                       COUNT(*) AS count
+                FROM press_releases
+                WHERE TRIM(COALESCE(title, '')) != ''
+                  AND {published_date_expr} != ''
+                GROUP BY source_id, LOWER(TRIM(title)), {published_date_expr}
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            merged = 0
+            skipped = 0
+            for group in groups:
+                rows = conn.execute(
+                    f"""
+                    SELECT pr.id,
+                           CASE WHEN ad.id IS NULL THEN 0 ELSE 1 END AS has_draft
+                    FROM press_releases pr
+                    LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                    WHERE pr.source_id = ?
+                      AND LOWER(TRIM(pr.title)) = ?
+                      AND {published_date_expr.replace('published_at', 'pr.published_at')} = ?
+                    ORDER BY has_draft DESC, pr.id ASC
+                    """,
+                    (group["source_id"], group["normalized_title"], group["published_date"]),
+                ).fetchall()
+                if len(rows) < 2:
+                    continue
+                keep_id = int(rows[0]["id"])
+                for row in rows[1:]:
+                    if self._merge_press_release_duplicate(conn, keep_id, int(row["id"])):
+                        merged += 1
+                    else:
+                        skipped += 1
+            return {"groups": len(groups), "merged": merged, "skipped": skipped}
 
     def _ensure_single_draft_index(self, conn: sqlite3.Connection) -> None:
         duplicate = conn.execute(
