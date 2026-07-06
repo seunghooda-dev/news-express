@@ -1169,6 +1169,97 @@ h3 {
   margin: 0;
 }
 
+.visitor-card {
+  grid-column: 1 / -1;
+}
+
+.visitor-date-tabs {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.visitor-date-tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf7;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.visitor-date-tabs a.active {
+  border-color: #92c9bf;
+  background: #eaf7f4;
+  color: var(--accent-strong);
+}
+
+.visitor-date-tabs b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #fff;
+  color: inherit;
+  font-size: 12px;
+}
+
+.visitor-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.visitor-summary span {
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.visitor-list {
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.visitor-row {
+  display: grid;
+  grid-template-columns: 140px 150px minmax(0, 1fr) 130px;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.visitor-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .restore-form,
 .ops-form {
   display: grid;
@@ -1864,6 +1955,20 @@ h3 {
 
   .ops-grid {
     grid-template-columns: 1fr;
+  }
+
+  .visitor-date-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .visitor-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+    align-items: start;
+  }
+
+  .visitor-row span {
+    white-space: normal;
   }
 
   .ops-log-tabs {

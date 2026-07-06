@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS source_collection_runs (
     repaired_dates INTEGER NOT NULL DEFAULT 0,
     checked_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS visitor_access_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    masked_ip TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    status_code INTEGER NOT NULL DEFAULT 0,
+    user_agent TEXT NOT NULL DEFAULT '',
+    visited_at TEXT NOT NULL
+);
 """
 
 POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
@@ -153,6 +164,17 @@ CREATE TABLE IF NOT EXISTS source_collection_runs (
     inserted_count INTEGER NOT NULL DEFAULT 0,
     repaired_dates INTEGER NOT NULL DEFAULT 0,
     checked_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS visitor_access_logs (
+    id BIGSERIAL PRIMARY KEY,
+    masked_ip TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    status_code INTEGER NOT NULL DEFAULT 0,
+    user_agent TEXT NOT NULL DEFAULT '',
+    visited_at TEXT NOT NULL
 );
 """
 
@@ -399,6 +421,7 @@ class Store:
             "CREATE INDEX IF NOT EXISTS idx_press_releases_region_published ON press_releases(region, published_at, collected_at, id)",
             "CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id)",
             "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id)",
+            "CREATE INDEX IF NOT EXISTS idx_visitor_access_logs_visited ON visitor_access_logs(visited_at, id)",
         ]
         for statement in index_statements:
             conn.execute(statement)
@@ -1206,6 +1229,56 @@ class Store:
                 """
             ).fetchall()
         return {str(row["source_id"]): row for row in rows}
+
+    def record_visitor_access(
+        self,
+        masked_ip: str,
+        method: str,
+        path: str,
+        endpoint: str,
+        status_code: int,
+        user_agent: str,
+        visited_at: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO visitor_access_logs
+                (masked_ip, method, path, endpoint, status_code, user_agent, visited_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    masked_ip,
+                    method[:12],
+                    path[:300],
+                    endpoint[:80],
+                    int(status_code or 0),
+                    user_agent[:80],
+                    visited_at or _now(),
+                ),
+            )
+
+    def visitor_access_logs_since(self, cutoff_iso: str, limit: int = 2000) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM visitor_access_logs
+                WHERE visited_at >= ?
+                ORDER BY visited_at DESC, id DESC
+                LIMIT ?
+                """,
+                (cutoff_iso, limit),
+            ).fetchall()
+
+    def prune_visitor_access_logs(self, cutoff_iso: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM visitor_access_logs WHERE visited_at < ?",
+                (cutoff_iso,),
+            ).fetchone()
+            conn.execute("DELETE FROM visitor_access_logs WHERE visited_at < ?", (cutoff_iso,))
+        return int(row["count"] or 0)
 
     def _record_draft_history(self, conn: sqlite3.Connection, row: sqlite3.Row, change_type: str) -> None:
         conn.execute(

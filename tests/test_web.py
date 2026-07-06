@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -1200,6 +1200,76 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
     assert "https://sample.trycloudflare.com" in html
+
+
+def test_operations_page_records_masked_visitor_access(monkeypatch):
+    db_path = Path(f"data/.test_visitor_access_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    client.get(
+        "/drafts",
+        headers={
+            "X-Forwarded-For": "123.45.67.89",
+            "User-Agent": "Mozilla/5.0 Chrome/120.0",
+        },
+    )
+    html = client.get("/operations").data.decode("utf-8")
+
+    assert "접속자 현황" in html
+    assert "최근 7일" in html
+    assert "123.45.xxx.xxx" in html
+    assert "123.45.67.89" not in html
+    assert "GET /drafts" in html
+    assert "Chrome" in html
+
+
+def test_operations_page_filters_visitor_access_by_recent_date(monkeypatch):
+    db_path = Path(f"data/.test_visitor_access_date_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    yesterday = datetime.now(LOCAL_TZ).date() - timedelta(days=1)
+    yesterday_visited_at = datetime.combine(yesterday, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+    old_visited_at = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
+    store.record_visitor_access(
+        "10.20.xxx.xxx",
+        "GET",
+        "/yesterday",
+        "drafts",
+        200,
+        "Mobile Chrome",
+        visited_at=yesterday_visited_at.isoformat(),
+    )
+    store.record_visitor_access(
+        "88.99.xxx.xxx",
+        "GET",
+        "/too-old",
+        "drafts",
+        200,
+        "Chrome",
+        visited_at=old_visited_at,
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get(f"/operations?access_date={yesterday.isoformat()}").data.decode("utf-8")
+
+    assert "접속자 현황" in html
+    assert "10.20.xxx.xxx" in html
+    assert "GET /yesterday" in html
+    assert "88.99.xxx.xxx" not in html
+    assert "/too-old" not in html
 
 
 def test_cloudflare_tunnel_status_detects_active_connection(tmp_path, monkeypatch):

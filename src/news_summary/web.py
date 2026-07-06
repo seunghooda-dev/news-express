@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 import os
 import subprocess
@@ -105,6 +106,10 @@ def create_app() -> Flask:
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         if request.endpoint in {"operations", "ops_logs"}:
             response.headers.setdefault("Cache-Control", "no-store")
+        try:
+            _record_visitor_access(store, response.status_code)
+        except Exception as exc:  # noqa: BLE001 - access logging must never block the page response.
+            logger.warning("visitor access log failed path=%s error=%s", request.path, exc)
         started_at = getattr(g, "request_started_at", None)
         if started_at is not None:
             elapsed = time.perf_counter() - started_at
@@ -228,9 +233,9 @@ def create_app() -> Flask:
             password = request.form.get("password") or ""
             if verify_admin_password(store, password):
                 session["admin_authenticated"] = True
-                logger.info("admin login succeeded remote_addr=%s", request.remote_addr)
+                logger.info("admin login succeeded remote_addr=%s", _masked_request_ip())
                 return redirect(_safe_next())
-            logger.warning("admin login failed remote_addr=%s", request.remote_addr)
+            logger.warning("admin login failed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호가 올바르지 않습니다.")
         return render_template("login.html", next_url=_safe_next())
 
@@ -258,7 +263,7 @@ def create_app() -> Flask:
             else:
                 set_admin_password(store, password)
                 session["admin_authenticated"] = True
-                logger.info("admin password configured remote_addr=%s", request.remote_addr)
+                logger.info("admin password configured remote_addr=%s", _masked_request_ip())
                 flash("관리자 로그인을 활성화했습니다.")
                 return redirect(url_for("dashboard"))
         return render_template("admin_setup.html", auth_state=config, next_url=_safe_next())
@@ -292,6 +297,7 @@ def create_app() -> Flask:
             auto_collector_status=auto_status,
             retention_policy=_retention_policy_summary(),
             pending_queue=store.pending_press_release_summary(),
+            visitor_access=_visitor_access_overview(store),
             cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
             backup_dir=backup_dir,
             backup_files=_backup_files(backup_dir),
@@ -329,10 +335,10 @@ def create_app() -> Flask:
         current_password = request.form.get("current_password") or ""
         if verify_admin_password(store, current_password):
             session[OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY] = True
-            logger.info("admin password panel unlocked remote_addr=%s", request.remote_addr)
+            logger.info("admin password panel unlocked remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호 변경 입력칸을 열었습니다.")
         else:
-            logger.warning("admin password panel unlock failed remote_addr=%s", request.remote_addr)
+            logger.warning("admin password panel unlock failed remote_addr=%s", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
         return redirect(url_for("operations"))
 
@@ -350,7 +356,7 @@ def create_app() -> Flask:
         new_password = request.form.get("new_password") or ""
         confirm_password = request.form.get("confirm_password") or ""
         if not session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY) and not verify_admin_password(store, current_password):
-            logger.warning("admin password change failed remote_addr=%s reason=current_password", request.remote_addr)
+            logger.warning("admin password change failed remote_addr=%s reason=current_password", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
         elif len(new_password) < 8:
             flash("새 관리자 비밀번호는 8자 이상이어야 합니다.")
@@ -360,7 +366,7 @@ def create_app() -> Flask:
             set_admin_password(store, new_password)
             session["admin_authenticated"] = True
             session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
-            logger.info("admin password changed remote_addr=%s", request.remote_addr)
+            logger.info("admin password changed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
         return redirect(url_for("operations"))
 
@@ -927,6 +933,148 @@ def _safe_next(default_endpoint: str = "dashboard") -> str:
     if not target.startswith("/") or target.startswith("//"):
         return url_for(default_endpoint)
     return target
+
+
+def _client_ip() -> str:
+    forwarded = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return (request.headers.get("X-Real-IP") or request.remote_addr or "").strip()
+
+
+def _mask_ip(value: object) -> str:
+    raw = str(value or "").split(",", 1)[0].strip().strip("[]")
+    if raw.count(":") == 1 and "." in raw:
+        raw = raw.rsplit(":", 1)[0]
+    try:
+        parsed = ipaddress.ip_address(raw)
+    except ValueError:
+        return "알 수 없음"
+    if parsed.version == 4:
+        parts = str(parsed).split(".")
+        return f"{parts[0]}.{parts[1]}.xxx.xxx"
+    hextets = parsed.exploded.split(":")
+    return f"{hextets[0]}:{hextets[1]}:xxxx:xxxx"
+
+
+def _masked_request_ip() -> str:
+    return _mask_ip(_client_ip())
+
+
+def _browser_label(user_agent: object) -> str:
+    value = str(user_agent or "").lower()
+    if not value:
+        return "브라우저 미상"
+    mobile = "모바일 " if any(token in value for token in ("mobile", "android", "iphone")) else ""
+    if "edg/" in value or "edge/" in value:
+        return f"{mobile}Edge".strip()
+    if "firefox/" in value:
+        return f"{mobile}Firefox".strip()
+    if "chrome/" in value or "crios/" in value:
+        return f"{mobile}Chrome".strip()
+    if "safari/" in value:
+        return f"{mobile}Safari".strip()
+    return f"{mobile}기타".strip()
+
+
+def _should_record_visitor_access(endpoint: str, method: str) -> bool:
+    if method.upper() not in {"GET", "POST"}:
+        return False
+    if endpoint in {"static", "favicon", "healthz", "recrawl_status"}:
+        return False
+    if request.path.startswith("/static/"):
+        return False
+    return True
+
+
+def _recent_visitor_dates(days: int = 7) -> list[date]:
+    today = datetime.now(LOCAL_TZ).date()
+    return [today - timedelta(days=offset) for offset in range(days)]
+
+
+def _visitor_cutoff_iso(days: int = 7) -> str:
+    oldest = _recent_visitor_dates(days)[-1]
+    local_start = datetime.combine(oldest, datetime.min.time(), tzinfo=LOCAL_TZ)
+    return local_start.astimezone(timezone.utc).isoformat()
+
+
+def _visitor_date_label(value: date) -> str:
+    today = datetime.now(LOCAL_TZ).date()
+    if value == today:
+        return "오늘"
+    if value == today - timedelta(days=1):
+        return "어제"
+    return f"{value.month:02d}.{value.day:02d}"
+
+
+def _record_visitor_access(store: Store, status_code: int) -> None:
+    endpoint = request.endpoint or "unknown"
+    if not _should_record_visitor_access(endpoint, request.method):
+        return
+    cutoff_iso = _visitor_cutoff_iso()
+    store.record_visitor_access(
+        _masked_request_ip(),
+        request.method.upper(),
+        request.path,
+        endpoint,
+        status_code,
+        _browser_label(request.headers.get("User-Agent")),
+    )
+    store.prune_visitor_access_logs(cutoff_iso)
+
+
+def _visitor_access_overview(store: Store) -> dict[str, object]:
+    recent_dates = _recent_visitor_dates()
+    date_keys = {item.isoformat(): item for item in recent_dates}
+    selected_key = request.args.get("access_date") or recent_dates[0].isoformat()
+    if selected_key not in date_keys:
+        selected_key = recent_dates[0].isoformat()
+
+    counts = {key: 0 for key in date_keys}
+    selected_rows: list[dict[str, object]] = []
+    selected_ips: set[str] = set()
+    for row in store.visitor_access_logs_since(_visitor_cutoff_iso()):
+        visited_at = _parse_datetime(row["visited_at"])
+        if visited_at is None:
+            continue
+        if visited_at.tzinfo is None:
+            visited_at = visited_at.replace(tzinfo=timezone.utc)
+        local_visited_at = visited_at.astimezone(LOCAL_TZ)
+        row_key = local_visited_at.date().isoformat()
+        if row_key not in counts:
+            continue
+        counts[row_key] += 1
+        if row_key == selected_key:
+            masked_ip = str(row["masked_ip"] or "알 수 없음")
+            selected_ips.add(masked_ip)
+        if row_key == selected_key and len(selected_rows) < 200:
+            selected_rows.append(
+                {
+                    "masked_ip": masked_ip,
+                    "method": str(row["method"] or ""),
+                    "path": str(row["path"] or ""),
+                    "status_code": int(row["status_code"] or 0),
+                    "user_agent": str(row["user_agent"] or "브라우저 미상"),
+                    "visited_at": local_visited_at.isoformat(),
+                }
+            )
+
+    return {
+        "selected_date": selected_key,
+        "dates": [
+            {
+                "date": item.isoformat(),
+                "label": _visitor_date_label(item),
+                "count": counts[item.isoformat()],
+                "active": item.isoformat() == selected_key,
+            }
+            for item in recent_dates
+        ],
+        "rows": selected_rows,
+        "selected_count": counts[selected_key],
+        "unique_masked_ips": len(selected_ips),
+        "total_count": sum(counts.values()),
+    }
 
 
 def _backup_files(backup_dir: Path) -> list[dict[str, object]]:
