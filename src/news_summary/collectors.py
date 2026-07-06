@@ -254,6 +254,8 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
         list_response.raise_for_status()
         soup = BeautifulSoup(list_response.text, "html.parser")
         rows = _candidate_rows(soup, selectors)
+        if not rows:
+            raise CollectionError(f"{source.name} 목록에서 보도자료 후보를 찾지 못했습니다. 사이트 구조 변경 가능성")
 
         releases = []
         seen_urls = set()
@@ -322,6 +324,8 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
             )
             if release:
                 releases.append(release)
+        if not releases:
+            raise CollectionError(f"{source.name} 수집 결과 0건입니다. 게시판 구조 또는 본문 선택자 변경 가능성")
     return releases
 
 

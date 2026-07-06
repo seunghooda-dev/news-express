@@ -494,7 +494,7 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     assert "mobile-source-board" not in dashboard_html
     assert "광주청사 보도자료" in dashboard_html
     assert "전남광주통합특별시 광주청사 보도자료" not in dashboard_html
-    assert "수집 실패" in dashboard_html
+    assert "일시 지연" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
 
@@ -1172,6 +1172,21 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
             published_at="2026-06-26 09:00",
         )
     )
+    store.record_source_collection_status(
+        "sample",
+        "테스트 기관",
+        "failed",
+        "테스트 기관 수집 실패: ReadTimeout",
+        failure_stage="외부 사이트 응답 지연",
+        failure_reason="응답 지연 또는 타임아웃",
+    )
+    store.record_source_collection_status(
+        "sample",
+        "테스트 기관",
+        "ok",
+        "일시 장애 1차 자동 재검증 통과, 원문 검증 통과 1건, 새로 저장 0건",
+        releases_found=1,
+    )
 
     from news_summary import web as web_module
 
@@ -1194,6 +1209,10 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
 
     assert "수집 보관 기준" in html
     assert "공휴일이 있으면" in html
+    assert "자동 복구 점검" in html
+    assert "최근 24시간 실패 1건" in html
+    assert "자동 복구 1건" in html
+    assert "외부 사이트 응답 지연 1건" in html
     assert "Gemini 미변환 큐" in html
     assert "Gemini 대기 원문" not in html
     assert "테스트 기관 1건" in html
@@ -1366,6 +1385,61 @@ def test_source_summary_marks_transient_failure_after_today_success_as_temporary
     assert "오늘 원문은 수집" in summary["status_detail"]
 
 
+def test_source_summary_marks_three_consecutive_failures_as_failed(monkeypatch):
+    db_path = Path(f"data/.test_source_three_failures_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+    from news_summary.models import Source
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 7, 6, 15, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [Source(id="suncheon", name="순천시청 보도자료", region="전남 순천", type="html_board")],
+    )
+    with store.connect() as conn:
+        for checked_at in (
+            "2026-07-06T05:00:00+00:00",
+            "2026-07-06T05:10:00+00:00",
+            "2026-07-06T05:20:00+00:00",
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "suncheon",
+                    "순천시청 보도자료",
+                    "failed",
+                    "TLS 연결 시간 초과",
+                    "외부 사이트 응답 지연",
+                    "TLS 연결 시간 초과",
+                    0,
+                    0,
+                    0,
+                    checked_at,
+                ),
+            )
+
+    summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
+
+    assert summary["issue"] == "외부 사이트 응답 지연"
+    assert summary["status_label"] == "수집 실패"
+    assert summary["status_level"] == "error"
+    assert summary["consecutive_failures"] == 3
+
+
 def test_operations_page_records_masked_visitor_access(monkeypatch):
     db_path = Path(f"data/.test_visitor_access_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -1496,7 +1570,10 @@ def test_healthz_reports_database_status(monkeypatch):
     response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.get_json() == {"database": "ok", "ok": True}
+    payload = response.get_json()
+    assert payload["database"] == "ok"
+    assert payload["ok"] is True
+    assert payload["auto_collector"] in {"enabled", "running", "disabled", "unavailable"}
 
 
 def test_operations_page_creates_and_restores_backup(monkeypatch):

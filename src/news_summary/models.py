@@ -17,6 +17,7 @@ class Source:
     selectors: dict[str, object] | None = None
     include_url_contains: list[str] = field(default_factory=list)
     exclude_title_contains: list[str] = field(default_factory=list)
+    fallback_urls: list[str] = field(default_factory=list)
     verify_ssl: bool = True
 
 

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import httpx
 
+from news_summary.collectors import CollectionError
 from news_summary.models import ArticleDraft, PressRelease, Source
 from news_summary.scheduler import (
     DEFAULT_AUTO_COLLECT_LIMIT,
@@ -322,11 +323,11 @@ def test_collect_enabled_sources_retries_transient_dns_failures(monkeypatch):
     status = store.latest_source_collection_statuses()["dns-source"]
 
     assert calls["count"] == 2
-    assert any("일시 장애 자동 재검증 통과" in message for message in messages)
+    assert any("자동 재검증 통과" in message for message in messages)
     assert "새 원문 1건" in messages[-1]
     assert status["status"] == "ok"
     assert status["failure_stage"] == ""
-    assert "일시 장애 자동 재검증 통과" in status["message"]
+    assert "자동 재검증 통과" in status["message"]
 
 
 def test_collect_enabled_sources_retries_tls_timeouts(monkeypatch):
@@ -360,10 +361,93 @@ def test_collect_enabled_sources_retries_tls_timeouts(monkeypatch):
     status = store.latest_source_collection_statuses()["tls-source"]
 
     assert calls["count"] == 2
-    assert any("일시 장애 자동 재검증 통과" in message for message in messages)
+    assert any("자동 재검증 통과" in message for message in messages)
     assert "새 원문 1건" in messages[-1]
     assert status["status"] == "ok"
     assert status["failure_stage"] == ""
+
+
+def test_collect_enabled_sources_retries_http_503_failures(monkeypatch):
+    db_path = Path(f"data/.test_service_http_503_retry_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id="http-source", name="HTTP 임시 장애 기관", region="전남", type="html_board")]
+    calls = {"count": 0}
+
+    def collect_after_http_retry(source, limit):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            request = httpx.Request("GET", "https://example.com/http-503")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("Service Unavailable", request=request, response=response)
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="HTTP 복구 보도자료",
+                url="https://example.com/http-recovered",
+                content="HTTP 503 이후 다시 수집된 보도자료입니다.",
+            )
+        ]
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", collect_after_http_retry)
+    monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
+    monkeypatch.setattr("news_summary.service.TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS", 0)
+
+    messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+    status = store.latest_source_collection_statuses()["http-source"]
+
+    assert calls["count"] == 2
+    assert any("자동 재검증 통과" in message for message in messages)
+    assert "새 원문 1건" in messages[-1]
+    assert status["status"] == "ok"
+    assert status["failure_stage"] == ""
+
+
+def test_collect_enabled_sources_uses_fallback_url_after_structure_failure(monkeypatch):
+    db_path = Path(f"data/.test_service_fallback_url_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [
+        Source(
+            id="fallback-source",
+            name="대체 URL 기관",
+            region="전남",
+            type="html_board",
+            list_url="https://example.com/old-board",
+            fallback_urls=["https://example.com/new-board"],
+        )
+    ]
+    requested_urls: list[str] = []
+
+    def collect_after_fallback(source, limit):
+        requested_urls.append(source.list_url)
+        if source.list_url == "https://example.com/old-board":
+            raise CollectionError("목록에서 보도자료 후보를 찾지 못했습니다. 사이트 구조 변경 가능성")
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="대체 URL 보도자료",
+                url="https://example.com/fallback-recovered",
+                content="대체 URL로 수집된 보도자료입니다.",
+            )
+        ]
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", collect_after_fallback)
+    monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
+
+    messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+    status = store.latest_source_collection_statuses()["fallback-source"]
+
+    assert requested_urls == ["https://example.com/old-board", "https://example.com/new-board"]
+    assert "새 원문 1건" in messages[-1]
+    assert status["status"] == "ok"
+    assert status["releases_found"] == 1
 
 
 def test_store_normalizes_existing_published_at_metadata():

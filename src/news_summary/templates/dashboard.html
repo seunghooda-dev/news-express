@@ -83,8 +83,8 @@
           <span class="source-card-detail">마지막 점검 {{ source.last_checked_at|date_label }}</span>
           {% if source.issue %}
             <span class="source-card-detail">상태 {{ source.issue }}</span>
-            {% if source.failure_reason %}
-              <span class="source-card-detail">원인 {{ source.failure_reason }}</span>
+            {% if source.failure_stage or source.failure_reason %}
+              <span class="source-card-detail">원인 {{ source.failure_stage }}{% if source.failure_stage and source.failure_reason %} · {% endif %}{{ source.failure_reason }}</span>
             {% endif %}
           {% elif source.status_detail %}
             <span class="source-card-detail">{{ source.status_detail }}</span>

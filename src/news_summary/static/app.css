@@ -1169,6 +1169,16 @@ h3 {
   margin: 0;
 }
 
+.ops-mini-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .visitor-card {
   grid-column: 1 / -1;
 }

@@ -46,6 +46,36 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>자동 복구 점검</h2>
+      <span class="badge {% if operations_health.status_level == 'ok' %}badge-gemini{% elif operations_health.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ operations_health.status_label }}
+      </span>
+    </div>
+    <p class="meta">
+      최근 24시간 실패 {{ operations_health.failure_count }}건 · 자동 복구 {{ operations_health.retry_success_count }}건 · 미복구 {{ operations_health.unresolved_count }}건
+    </p>
+    <p class="meta">마지막 자동 수집 {{ operations_health.last_auto_finished_at|date_label }}</p>
+    {% if operations_health.top_failure_stages %}
+      <p class="gemini-models">
+        주요 원인:
+        {% for item in operations_health.top_failure_stages %}
+          <span>{{ item.stage }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+    {% endif %}
+    {% if operations_health.issues %}
+      <ul class="ops-mini-list">
+        {% for issue in operations_health.issues %}
+          <li>{{ issue }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">자동 수집, DB 연결, Gemini 대기열이 정상 범위입니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>수집 보관 기준</h2>
       <span class="badge badge-gemini">최근 {{ retention_policy.days }}일</span>
     </div>

@@ -16,5 +16,9 @@ def test_wsgi_app_exports_health_checked_flask_app(monkeypatch, tmp_path):
     response = module.app.test_client().get("/healthz")
 
     assert response.status_code == 200
-    assert response.get_json() == {"database": "ok", "ok": True}
+    payload = response.get_json()
+    assert payload["database"] == "ok"
+    assert payload["ok"] is True
+    assert payload["auto_collector"] == "disabled"
+    assert payload["last_auto_finished_at"] is None
     assert module.app.config["AUTO_COLLECTOR"].snapshot().enabled is False

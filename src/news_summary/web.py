@@ -6,6 +6,7 @@ import re
 import os
 import subprocess
 import time
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -225,7 +226,19 @@ def create_app() -> Flask:
         except Exception as exc:  # noqa: BLE001 - health endpoint should return a clear degraded state.
             logger.warning("health check failed error=%s", exc)
             return jsonify({"ok": False, "database": "error"}), 503
-        return jsonify({"ok": True, "database": "ok"})
+        auto_collector = app.config.get("AUTO_COLLECTOR")
+        if auto_collector:
+            auto_status = auto_collector.snapshot()
+            auto_label = "running" if auto_status.running else ("enabled" if auto_status.enabled else "disabled")
+            return jsonify(
+                {
+                    "ok": True,
+                    "database": "ok",
+                    "auto_collector": auto_label,
+                    "last_auto_finished_at": auto_status.last_auto_finished_at,
+                }
+            )
+        return jsonify({"ok": True, "database": "ok", "auto_collector": "unavailable"})
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -298,11 +311,13 @@ def create_app() -> Flask:
         auto_status = auto_collector.snapshot() if auto_collector else None
         admin_password_source = _configured_admin_password_source(store)
         admin_password_configured = bool(admin_password_source)
+        pending_queue = store.pending_press_release_summary()
         return render_template(
             "operations.html",
             auto_collector_status=auto_status,
             retention_policy=_retention_policy_summary(),
-            pending_queue=store.pending_press_release_summary(),
+            pending_queue=pending_queue,
+            operations_health=_operations_health_report(store, auto_status, pending_queue),
             visitor_access=_visitor_access_overview(store),
             cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
             backup_dir=backup_dir,
@@ -811,6 +826,145 @@ def _retention_policy_summary() -> dict[str, object]:
         "cutoff_date": cutoff.isoformat(),
         "description": "주말과 공휴일을 제외한 최근 운영일 기준입니다.",
     }
+
+
+def _operations_health_report(
+    store: Store,
+    auto_status: object | None,
+    pending_queue: dict[str, object],
+) -> dict[str, object]:
+    now = datetime.now(LOCAL_TZ)
+    since = (now - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
+    issues: list[str] = []
+    try:
+        with store.connect() as conn:
+            recent_rows = conn.execute(
+                """
+                SELECT *
+                FROM source_collection_runs
+                WHERE checked_at >= ?
+                ORDER BY id DESC
+                """,
+                (since,),
+            ).fetchall()
+            latest_rows = conn.execute(
+                """
+                SELECT scr.*
+                FROM source_collection_runs scr
+                JOIN (
+                    SELECT source_id, MAX(id) AS max_id
+                    FROM source_collection_runs
+                    GROUP BY source_id
+                ) latest ON latest.max_id = scr.id
+                """
+            ).fetchall()
+            status_sequence_rows = conn.execute(
+                """
+                SELECT source_id, status
+                FROM source_collection_runs
+                ORDER BY source_id, id DESC
+                """
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001 - operations page should stay usable during diagnostics.
+        return {
+            "status_level": "error",
+            "status_label": "DB 확인 필요",
+            "failure_count": 0,
+            "retry_success_count": 0,
+            "unresolved_count": 0,
+            "temporary_count": 0,
+            "pending_total": int(pending_queue.get("total") or 0),
+            "last_auto_finished_at": _auto_status_value(auto_status, "last_auto_finished_at"),
+            "top_failure_stages": [],
+            "issues": [f"운영 점검 DB 조회 실패: {type(exc).__name__}"],
+        }
+
+    failure_rows = [row for row in recent_rows if str(row["status"]) == "failed"]
+    retry_success_rows = [
+        row
+        for row in recent_rows
+        if str(row["status"]) == "ok" and "자동 재검증 통과" in str(row["message"] or "")
+    ]
+    stage_counts = Counter(str(row["failure_stage"] or "수집 실패") for row in failure_rows)
+    top_failure_stages = [
+        {"stage": stage, "count": count}
+        for stage, count in stage_counts.most_common(3)
+    ]
+
+    consecutive_failures = _consecutive_failure_counts(status_sequence_rows)
+    unresolved_rows = [
+        row
+        for row in latest_rows
+        if str(row["status"]) == "failed" and consecutive_failures.get(str(row["source_id"]), 0) >= 3
+    ]
+    temporary_rows = [
+        row
+        for row in latest_rows
+        if str(row["status"]) == "failed" and consecutive_failures.get(str(row["source_id"]), 0) < 3
+    ]
+
+    if unresolved_rows:
+        labels = [
+            f"{row['source_name']} {consecutive_failures.get(str(row['source_id']), 0)}회 연속 실패"
+            for row in unresolved_rows[:3]
+        ]
+        issues.append("미복구 기관: " + ", ".join(labels))
+    if temporary_rows:
+        issues.append(f"일시 장애 재검증 대상 {len(temporary_rows)}곳")
+
+    auto_enabled = bool(_auto_status_value(auto_status, "enabled"))
+    auto_running = bool(_auto_status_value(auto_status, "running"))
+    last_auto_finished_at = _auto_status_value(auto_status, "last_auto_finished_at")
+    last_auto_finished = _parse_datetime(last_auto_finished_at)
+    if auto_status is None:
+        issues.append("자동 수집 컨트롤러 미감지")
+    elif not auto_enabled:
+        issues.append("자동 수집 꺼짐")
+    elif last_auto_finished:
+        minutes_since_auto = int((now - last_auto_finished.astimezone(LOCAL_TZ)).total_seconds() // 60)
+        if minutes_since_auto >= 90 and not auto_running:
+            issues.append(f"마지막 자동 수집 후 {minutes_since_auto}분 경과")
+    elif not auto_running:
+        issues.append("자동 수집 완료 기록 없음")
+
+    cooldown_until = gemini_cooldown_until(store)
+    if cooldown_until:
+        issues.append(f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until)}까지")
+
+    pending_total = int(pending_queue.get("total") or 0)
+    if pending_total >= 100:
+        issues.append(f"Gemini 미변환 큐 {pending_total}건")
+
+    if unresolved_rows:
+        status_level = "error"
+        status_label = "확인 필요"
+    elif issues:
+        status_level = "warning"
+        status_label = "주의"
+    else:
+        status_level = "ok"
+        status_label = "정상"
+
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "failure_count": len(failure_rows),
+        "retry_success_count": len(retry_success_rows),
+        "unresolved_count": len(unresolved_rows),
+        "temporary_count": len(temporary_rows),
+        "pending_total": pending_total,
+        "last_auto_finished_at": last_auto_finished_at,
+        "top_failure_stages": top_failure_stages,
+        "issues": issues[:5],
+    }
+
+
+def _auto_status_value(auto_status: object | None, name: str) -> object | None:
+    if auto_status is None:
+        return None
+    if isinstance(auto_status, dict):
+        return auto_status.get(name)
+    return getattr(auto_status, name, None)
 
 
 def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, object]:
@@ -1727,6 +1881,20 @@ def _duplicate_titles(store: Store) -> set[str]:
     return {str(row["title"]) for row in rows}
 
 
+def _consecutive_failure_counts(rows) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    stopped_sources: set[str] = set()
+    for row in rows:
+        source_id = str(row["source_id"])
+        if source_id in stopped_sources:
+            continue
+        if str(row["status"]) == "failed":
+            counts[source_id] = counts.get(source_id, 0) + 1
+        else:
+            stopped_sources.add(source_id)
+    return counts
+
+
 def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:
     sources = [source for source in load_sources(config_path) if source.enabled]
     today = datetime.now(LOCAL_TZ).date()
@@ -1803,6 +1971,14 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 """
             ).fetchall()
         }
+        recent_status_rows = conn.execute(
+            """
+            SELECT source_id, status
+            FROM source_collection_runs
+            ORDER BY source_id, id DESC
+            """
+        ).fetchall()
+    consecutive_failure_counts = _consecutive_failure_counts(recent_status_rows)
 
     summaries = []
     for source in sources:
@@ -1832,20 +2008,34 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         status_label = "정상"
         status_level = "ok"
         status_detail = ""
+        consecutive_failures = consecutive_failure_counts.get(source.id, 0)
         last_success_datetime = _parse_datetime(success_row["checked_at"]) if success_row else None
         last_success_date = last_success_datetime.astimezone(LOCAL_TZ).date() if last_success_datetime else None
         has_success_today = last_success_date == today
         if last_status == "failed":
-            if has_success_today and today_releases > 0:
+            if consecutive_failures < 3:
                 issue = "일시 지연"
                 status_label = "일시 지연"
                 status_level = "warning"
-                status_detail = "오늘 원문은 수집됐지만 마지막 연결 점검이 일시적으로 실패했습니다."
+                temporary_cause = " · ".join(
+                    item for item in (str(failure_stage or ""), str(failure_reason or "")) if item
+                )
+                cause_suffix = f" 최근 원인: {temporary_cause}" if temporary_cause else ""
+                if has_success_today and today_releases > 0:
+                    status_detail = (
+                        f"오늘 원문은 수집됐고 최근 {consecutive_failures}회 연결 점검만 실패했습니다. "
+                        f"3회 연속 실패 전까지 일시 지연으로 봅니다.{cause_suffix}"
+                    )
+                else:
+                    status_detail = (
+                        f"최근 {consecutive_failures}회 연결 점검이 실패했습니다. "
+                        f"3회 연속 실패 전까지 일시 지연으로 봅니다.{cause_suffix}"
+                    )
             else:
                 issue = str(failure_stage or "수집 실패")
                 status_label = "수집 실패"
                 status_level = "error"
-                status_detail = str(failure_reason or last_message or "")
+                status_detail = f"{consecutive_failures}회 연속 실패했습니다. {failure_reason or last_message or ''}".strip()
         elif business_gap is not None and business_gap > 1:
             issue = "점검 지연"
             status_label = "점검 지연"
@@ -1882,6 +2072,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "status_level": status_level,
                 "status_detail": status_detail,
                 "business_gap": business_gap,
+                "consecutive_failures": consecutive_failures,
                 "last_status": last_status or "unknown",
                 "last_checked_at": last_checked_at,
                 "last_message": last_message,
@@ -1910,6 +2101,7 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "status_level": "warning",
         "status_detail": "기관 설정은 있지만 아직 수집 점검 기록이 없습니다.",
         "business_gap": None,
+        "consecutive_failures": 0,
         "last_status": "unknown",
         "last_checked_at": None,
         "last_message": "",

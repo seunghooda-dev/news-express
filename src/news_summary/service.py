@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from json import JSONDecodeError
 import os
@@ -30,6 +31,8 @@ GEMINI_COOLDOWN_UNTIL_KEY = "gemini_cooldown_until"
 GEMINI_COOLDOWN_REASON_KEY = "gemini_cooldown_reason"
 DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
 TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS = 5.0
+DEFAULT_TRANSIENT_COLLECTION_RETRY_DELAYS = (5.0, 30.0)
+TRANSIENT_COLLECTION_RETRY_DELAYS_ENV = "NEWS_SUMMARY_TRANSIENT_RETRY_DELAYS"
 RETENTION_DAYS_ENV = "NEWS_SUMMARY_RETENTION_DAYS"
 RETENTION_HOLIDAYS_ENV = "NEWS_SUMMARY_RETENTION_HOLIDAYS"
 DEFAULT_RETENTION_DAYS = 3
@@ -95,7 +98,7 @@ def collect_enabled_sources(
             message=f"{index}/{total} {source.name} 연결 확인 중",
         )
         try:
-            releases = collect_source(source, limit=limit)
+            releases = collect_source_with_fallback(source, limit=limit)
         except CollectionError as exc:
             failure_stage, failure_reason = classify_collection_failure(exc)
             message = f"{source.name} 수집 실패: {exc}"
@@ -108,7 +111,7 @@ def collect_enabled_sources(
                 failure_stage=failure_stage,
                 failure_reason=failure_reason,
             )
-            if _should_retry_transient_collection_failure(failure_stage):
+            if _should_retry_transient_collection_failure(failure_stage, failure_reason):
                 transient_retry_sources.append(source)
             logger.warning("source collection failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
             _report_progress(
@@ -132,7 +135,7 @@ def collect_enabled_sources(
                 failure_stage=failure_stage,
                 failure_reason=failure_reason,
             )
-            if _should_retry_transient_collection_failure(failure_stage):
+            if _should_retry_transient_collection_failure(failure_stage, failure_reason):
                 transient_retry_sources.append(source)
             logger.exception("source collection unexpected failure source_id=%s source_name=%s", source.id, source.name)
             _report_progress(
@@ -219,96 +222,219 @@ def retry_transient_collection_failures(
     if not sources:
         return 0, []
 
-    logger.info(
-        "transient collection retry scheduled sources=%s delay=%s",
-        len(sources),
-        TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS,
-    )
-    _report_progress(progress_callback, phase="transient_retry_waiting", message="일시 연결 실패 기관 자동 재검증 대기 중")
-    if TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS > 0:
-        time.sleep(TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS)
-
     inserted_total = 0
     messages: list[str] = []
-    total = len(sources)
-    for index, source in enumerate(sources, start=1):
+    remaining_sources = list(sources)
+    retry_delays = transient_collection_retry_delays()
+    logger.info(
+        "transient collection retry scheduled sources=%s delays=%s",
+        len(sources),
+        retry_delays,
+    )
+
+    for attempt_index, delay_seconds in enumerate(retry_delays, start=1):
+        if not remaining_sources:
+            break
         _report_progress(
             progress_callback,
-            phase="dns_retrying",
-            current=index,
-            total=total,
-            source_name=source.name,
-            message=f"일시 연결 실패 재검증 중: {source.name}",
+            phase="transient_retry_waiting",
+            message=f"일시 연결 실패 기관 {attempt_index}차 자동 재검증 대기 중",
         )
-        try:
-            releases = collect_source(source, limit=limit)
-        except CollectionError as exc:
-            failure_stage, failure_reason = classify_collection_failure(exc)
-            message = f"{source.name} 일시 장애 자동 재검증 실패: {exc}"
-            store.record_source_collection_status(
-                source.id,
-                source.name,
-                "failed",
-                message,
-                failure_stage=failure_stage,
-                failure_reason=failure_reason,
-            )
-            messages.append(message)
-            logger.warning("transient collection retry failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
-            continue
-        except Exception as exc:
-            failure_stage, failure_reason = classify_collection_failure(exc)
-            message = f"{source.name} 일시 장애 자동 재검증 실패: {type(exc).__name__}: {exc}"
-            store.record_source_collection_status(
-                source.id,
-                source.name,
-                "failed",
-                message,
-                failure_stage=failure_stage,
-                failure_reason=failure_reason,
-            )
-            messages.append(message)
-            logger.exception("transient collection retry unexpected failure source_id=%s source_name=%s", source.id, source.name)
-            continue
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
 
-        retention_cutoff = collection_retention_cutoff_date()
-        retained_releases, source_skipped = filter_releases_by_retention(releases, retention_cutoff)
-        source_inserted = 0
-        for release in retained_releases:
-            if store.add_press_release(release):
-                source_inserted += 1
-                inserted_total += 1
-        repaired_dates = repair_missing_published_dates(store, source, limit=max(5, limit))
-        message = _collection_source_message(
-            source.name,
-            len(releases),
-            source_inserted,
-            source_skipped,
-            prefix="일시 장애 자동 재검증 통과",
-        )
-        messages.append(message)
-        if repaired_dates:
-            messages.append(f"{source.name}: 누락 게시일 {repaired_dates}건 보정")
+        total = len(remaining_sources)
+        next_remaining: list[Source] = []
+        for index, source in enumerate(remaining_sources, start=1):
+            source_inserted, retry_message, should_retry_again = _retry_transient_source_once(
+                store,
+                source,
+                limit=limit,
+                progress_callback=progress_callback,
+                current=index,
+                total=total,
+                attempt_index=attempt_index,
+                is_final_attempt=attempt_index >= len(retry_delays),
+            )
+            inserted_total += source_inserted
+            if retry_message:
+                messages.append(retry_message)
+            if should_retry_again:
+                next_remaining.append(source)
+        remaining_sources = next_remaining
+
+    return inserted_total, messages
+
+
+def _retry_transient_source_once(
+    store: Store,
+    source: Source,
+    *,
+    limit: int,
+    progress_callback: ProgressCallback | None,
+    current: int,
+    total: int,
+    attempt_index: int,
+    is_final_attempt: bool,
+) -> tuple[int, str, bool]:
+    _report_progress(
+        progress_callback,
+        phase="transient_retrying",
+        current=current,
+        total=total,
+        source_name=source.name,
+        message=f"일시 연결 실패 {attempt_index}차 재검증 중: {source.name}",
+    )
+    try:
+        releases = collect_source_with_fallback(source, limit=limit)
+    except CollectionError as exc:
+        failure_stage, failure_reason = classify_collection_failure(exc)
+        message = f"{source.name} 일시 장애 {attempt_index}차 자동 재검증 실패: {exc}"
         store.record_source_collection_status(
             source.id,
             source.name,
-            "ok",
-            message.removeprefix(f"{source.name}: "),
-            releases_found=len(releases),
-            inserted_count=source_inserted,
-            repaired_dates=repaired_dates,
+            "failed",
+            message,
+            failure_stage=failure_stage,
+            failure_reason=failure_reason,
         )
-        logger.info(
-            "transient collection retry succeeded source_id=%s source_name=%s releases=%s inserted=%s skipped_retention=%s repaired_dates=%s",
+        logger.warning("transient collection retry failed source_id=%s source_name=%s error=%s", source.id, source.name, exc)
+        return 0, message, (not is_final_attempt and _should_retry_transient_collection_failure(failure_stage, failure_reason))
+    except Exception as exc:
+        failure_stage, failure_reason = classify_collection_failure(exc)
+        message = f"{source.name} 일시 장애 {attempt_index}차 자동 재검증 실패: {type(exc).__name__}: {exc}"
+        store.record_source_collection_status(
             source.id,
             source.name,
-            len(releases),
-            source_inserted,
-            source_skipped,
-            repaired_dates,
+            "failed",
+            message,
+            failure_stage=failure_stage,
+            failure_reason=failure_reason,
         )
+        logger.exception("transient collection retry unexpected failure source_id=%s source_name=%s", source.id, source.name)
+        return 0, message, (not is_final_attempt and _should_retry_transient_collection_failure(failure_stage, failure_reason))
 
-    return inserted_total, messages
+    retention_cutoff = collection_retention_cutoff_date()
+    retained_releases, source_skipped = filter_releases_by_retention(releases, retention_cutoff)
+    source_inserted = 0
+    for release in retained_releases:
+        if store.add_press_release(release):
+            source_inserted += 1
+    repaired_dates = repair_missing_published_dates(store, source, limit=max(5, limit))
+    message = _collection_source_message(
+        source.name,
+        len(releases),
+        source_inserted,
+        source_skipped,
+        prefix=f"일시 장애 {attempt_index}차 자동 재검증 통과",
+    )
+    if repaired_dates:
+        message = f"{message} · 누락 게시일 {repaired_dates}건 보정"
+    store.record_source_collection_status(
+        source.id,
+        source.name,
+        "ok",
+        message.removeprefix(f"{source.name}: "),
+        releases_found=len(releases),
+        inserted_count=source_inserted,
+        repaired_dates=repaired_dates,
+    )
+    logger.info(
+        "transient collection retry succeeded source_id=%s source_name=%s attempt=%s releases=%s inserted=%s skipped_retention=%s repaired_dates=%s",
+        source.id,
+        source.name,
+        attempt_index,
+        len(releases),
+        source_inserted,
+        source_skipped,
+        repaired_dates,
+    )
+    return source_inserted, message, False
+
+
+def transient_collection_retry_delays() -> tuple[float, ...]:
+    raw_value = os.getenv(TRANSIENT_COLLECTION_RETRY_DELAYS_ENV)
+    if raw_value is not None:
+        delays = []
+        for chunk in raw_value.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            try:
+                delays.append(max(0.0, float(chunk)))
+            except ValueError:
+                logger.warning("invalid transient retry delay ignored value=%s", chunk)
+        return tuple(delays) or (0.0,)
+    if TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS != DEFAULT_TRANSIENT_COLLECTION_RETRY_DELAYS[0]:
+        return (max(0.0, float(TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS)),)
+    return DEFAULT_TRANSIENT_COLLECTION_RETRY_DELAYS
+
+
+def collect_source_with_fallback(source: Source, limit: int = DEFAULT_COLLECT_LIMIT) -> list[PressRelease]:
+    candidate_sources = _source_collection_candidates(source)
+    last_error: Exception | None = None
+    for index, candidate in enumerate(candidate_sources):
+        try:
+            releases = collect_source(candidate, limit=limit)
+        except Exception as exc:  # noqa: BLE001 - fallback should preserve the final useful failure.
+            last_error = exc
+            failure_stage, failure_reason = classify_collection_failure(exc)
+            if index < len(candidate_sources) - 1 and _should_try_fallback_url(failure_stage, failure_reason):
+                logger.warning(
+                    "source fallback url retry source_id=%s source_name=%s failed_url=%s stage=%s reason=%s next_url=%s",
+                    source.id,
+                    source.name,
+                    candidate.list_url or candidate.feed_url,
+                    failure_stage,
+                    failure_reason,
+                    candidate_sources[index + 1].list_url or candidate_sources[index + 1].feed_url,
+                )
+                continue
+            raise
+        if index > 0:
+            logger.info(
+                "source fallback url succeeded source_id=%s source_name=%s url=%s releases=%s",
+                source.id,
+                source.name,
+                candidate.list_url or candidate.feed_url,
+                len(releases),
+            )
+        return releases
+    assert last_error is not None
+    raise last_error
+
+
+def _source_collection_candidates(source: Source) -> list[Source]:
+    urls = []
+    if source.list_url:
+        urls.append(source.list_url)
+    urls.extend(source.fallback_urls)
+    if not urls:
+        return [source]
+
+    candidates: list[Source] = []
+    seen = set()
+    for url in urls:
+        normalized = url.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if normalized == source.list_url:
+            candidates.append(source)
+        else:
+            candidates.append(replace(source, list_url=normalized, base_url=normalized))
+    return candidates or [source]
+
+
+def _should_try_fallback_url(failure_stage: str, failure_reason: str = "") -> bool:
+    return failure_stage in {
+        "DNS 조회",
+        "외부 사이트 응답 지연",
+        "연결 강제 종료",
+        "사이트 접속",
+        "사이트 구조 변경",
+        "HTTP 상태 오류",
+    }
 
 
 def collection_retention_days() -> int:
@@ -440,8 +566,12 @@ def _collection_source_message(
     return f"{source_name}: {prefix} {releases_found}건{skipped_part}, 새로 저장 {inserted_count}건"
 
 
-def _should_retry_transient_collection_failure(failure_stage: str) -> bool:
-    return failure_stage in {"DNS 조회", "외부 사이트 응답 지연", "연결 강제 종료", "사이트 접속"}
+def _should_retry_transient_collection_failure(failure_stage: str, failure_reason: str = "") -> bool:
+    if failure_stage in {"DNS 조회", "외부 사이트 응답 지연", "연결 강제 종료", "사이트 접속"}:
+        return True
+    if failure_stage == "HTTP 상태 오류":
+        return any(code in failure_reason for code in ("429", "500", "502", "503", "504"))
+    return False
 
 
 def repair_missing_published_dates(store: Store, source: Source, limit: int = 20) -> int:
@@ -648,6 +778,8 @@ def classify_collection_failure(exc: Exception) -> tuple[str, str]:
     if isinstance(exc, CollectionError):
         if "설정" in message or "지원하지 않는" in message or "주소가 없습니다" in message:
             return "수집 설정", "수집 소스 설정 확인 필요"
+        if "구조" in message or "후보를 찾지 못" in message or "수집 결과 0건" in message:
+            return "사이트 구조 변경", "목록/본문 선택자 확인 필요"
         return "수집 처리", "수집 규칙 또는 사이트 구조 확인 필요"
     if isinstance(exc, (KeyError, TypeError, ValueError)):
         return "자료 파싱", "목록/본문 구조 해석 실패"

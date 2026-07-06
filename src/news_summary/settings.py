@@ -67,6 +67,7 @@ def load_sources(config_path: Path) -> list[Source]:
                 selectors=item.get("selectors") or {},
                 include_url_contains=list(item.get("include_url_contains") or []),
                 exclude_title_contains=list(item.get("exclude_title_contains") or []),
+                fallback_urls=list(item.get("fallback_urls") or []),
                 verify_ssl=bool(item.get("verify_ssl", True)),
             )
         )
