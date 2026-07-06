@@ -2014,7 +2014,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         has_success_today = last_success_date == today
         if last_status == "failed":
             if consecutive_failures < 3:
-                issue = "일시 지연"
+                issue = "" if has_success_today and today_releases > 0 else "일시 지연"
                 status_label = "정상" if has_success_today and today_releases > 0 else "일시 지연"
                 status_level = "ok" if has_success_today and today_releases > 0 else "warning"
                 temporary_cause = " · ".join(

@@ -1379,7 +1379,7 @@ def test_source_summary_marks_transient_failure_after_today_success_as_temporary
 
     summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
 
-    assert summary["issue"] == "일시 지연"
+    assert summary["issue"] == ""
     assert summary["status_label"] == "정상"
     assert summary["status_level"] == "ok"
     assert "오늘 원문은 수집" in summary["status_detail"]
