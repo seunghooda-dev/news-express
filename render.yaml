@@ -39,6 +39,16 @@ services:
         value: "900"
       - key: NEWS_SUMMARY_AUTO_RECOVERY_LIMIT
         value: "5"
+      - key: NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK
+        value: "1"
+      - key: NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR
+        value: "9"
+      - key: NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT
+        value: "3"
+      - key: NEWS_SUMMARY_AUTO_BACKUP_VERIFY
+        value: "1"
+      - key: NEWS_SUMMARY_GEMINI_FAILURE_RETRY_SECONDS
+        value: "900"
       - key: NEWS_SUMMARY_GITHUB_REPO
         value: seunghooda-dev/news-express
       - key: NEWS_SUMMARY_GITHUB_BRANCH

@@ -73,6 +73,20 @@ CREATE TABLE IF NOT EXISTS draft_history (
     FOREIGN KEY (draft_id) REFERENCES article_drafts(id)
 );
 
+CREATE TABLE IF NOT EXISTS draft_generation_failures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    press_release_id INTEGER NOT NULL,
+    failure_kind TEXT NOT NULL,
+    message TEXT NOT NULL,
+    attempted_models TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 1,
+    first_failed_at TEXT NOT NULL,
+    last_failed_at TEXT NOT NULL,
+    next_retry_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (press_release_id) REFERENCES press_releases(id)
+);
+
 CREATE TABLE IF NOT EXISTS source_collection_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id TEXT NOT NULL,
@@ -150,6 +164,19 @@ CREATE TABLE IF NOT EXISTS draft_history (
     model TEXT NOT NULL,
     change_type TEXT NOT NULL,
     changed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS draft_generation_failures (
+    id BIGSERIAL PRIMARY KEY,
+    press_release_id BIGINT NOT NULL REFERENCES press_releases(id),
+    failure_kind TEXT NOT NULL,
+    message TEXT NOT NULL,
+    attempted_models TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 1,
+    first_failed_at TEXT NOT NULL,
+    last_failed_at TEXT NOT NULL,
+    next_retry_at TEXT NOT NULL,
+    resolved_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS source_collection_runs (
@@ -420,6 +447,8 @@ class Store:
             "CREATE INDEX IF NOT EXISTS idx_press_releases_source_published ON press_releases(source_id, published_at, collected_at, id)",
             "CREATE INDEX IF NOT EXISTS idx_press_releases_region_published ON press_releases(region, published_at, collected_at, id)",
             "CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id)",
+            "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_press_release ON draft_generation_failures(press_release_id, resolved_at, next_retry_at)",
+            "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_retry ON draft_generation_failures(resolved_at, next_retry_at, id)",
             "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id)",
             "CREATE INDEX IF NOT EXISTS idx_visitor_access_logs_visited ON visitor_access_logs(visited_at, id)",
         ]
@@ -682,6 +711,167 @@ class Store:
                 (limit,),
             ).fetchall()
 
+    def pending_press_releases_ready_for_retry(self, limit: int) -> list[sqlite3.Row]:
+        now = _now()
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pr.*
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                LEFT JOIN draft_generation_failures dgf
+                  ON dgf.press_release_id = pr.id
+                 AND dgf.resolved_at IS NULL
+                WHERE ad.id IS NULL
+                  AND (dgf.id IS NULL OR dgf.next_retry_at <= ?)
+                ORDER BY CASE WHEN dgf.id IS NULL THEN 0 ELSE 1 END ASC,
+                         CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                         pr.published_at DESC,
+                         pr.collected_at DESC,
+                         pr.id DESC
+                LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+
+    def record_draft_generation_failure(
+        self,
+        press_release_id: int,
+        failure_kind: str,
+        message: str,
+        attempted_models: str,
+        next_retry_at: str,
+    ) -> None:
+        now = _now()
+        with self.connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT id, attempts
+                FROM draft_generation_failures
+                WHERE press_release_id = ?
+                  AND resolved_at IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (press_release_id,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE draft_generation_failures
+                    SET failure_kind = ?,
+                        message = ?,
+                        attempted_models = ?,
+                        attempts = ?,
+                        last_failed_at = ?,
+                        next_retry_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        failure_kind,
+                        message[:1000],
+                        attempted_models[:300],
+                        int(existing["attempts"] or 0) + 1,
+                        now,
+                        next_retry_at,
+                        existing["id"],
+                    ),
+                )
+                return
+            conn.execute(
+                """
+                INSERT INTO draft_generation_failures
+                (press_release_id, failure_kind, message, attempted_models,
+                 attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, NULL)
+                """,
+                (
+                    press_release_id,
+                    failure_kind,
+                    message[:1000],
+                    attempted_models[:300],
+                    now,
+                    now,
+                    next_retry_at,
+                ),
+            )
+
+    def mark_draft_generation_success(self, press_release_id: int) -> None:
+        with self.connect() as conn:
+            self._resolve_draft_generation_failures(conn, press_release_id)
+
+    def _resolve_draft_generation_failures(self, conn: Any, press_release_id: int) -> None:
+        conn.execute(
+            """
+            UPDATE draft_generation_failures
+            SET resolved_at = ?
+            WHERE press_release_id = ?
+              AND resolved_at IS NULL
+            """,
+            (_now(), press_release_id),
+        )
+
+    def draft_generation_failure_summary(self, limit: int = 5) -> dict[str, object]:
+        now = _now()
+        with self.connect() as conn:
+            total = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM draft_generation_failures
+                WHERE resolved_at IS NULL
+                """
+            ).fetchone()["count"]
+            due = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM draft_generation_failures
+                WHERE resolved_at IS NULL
+                  AND next_retry_at <= ?
+                """,
+                (now,),
+            ).fetchone()["count"]
+            by_kind = conn.execute(
+                """
+                SELECT failure_kind, COUNT(*) AS count
+                FROM draft_generation_failures
+                WHERE resolved_at IS NULL
+                GROUP BY failure_kind
+                ORDER BY count DESC, failure_kind ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            latest = conn.execute(
+                """
+                SELECT dgf.*, pr.title, pr.source_name
+                FROM draft_generation_failures dgf
+                JOIN press_releases pr ON pr.id = dgf.press_release_id
+                WHERE dgf.resolved_at IS NULL
+                ORDER BY dgf.last_failed_at DESC, dgf.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return {
+            "total": int(total or 0),
+            "due": int(due or 0),
+            "by_kind": [
+                {"kind": str(row["failure_kind"]), "count": int(row["count"])}
+                for row in by_kind
+            ],
+            "latest": [
+                {
+                    "press_release_id": int(row["press_release_id"]),
+                    "title": str(row["title"]),
+                    "source_name": str(row["source_name"]),
+                    "failure_kind": str(row["failure_kind"]),
+                    "attempts": int(row["attempts"] or 0),
+                    "next_retry_at": str(row["next_retry_at"]),
+                }
+                for row in latest
+            ],
+        }
+
     def pending_press_releases_for_date(
         self,
         published_date: str,
@@ -838,6 +1028,17 @@ class Store:
                 return {"press_releases": 0, "drafts": 0, "draft_history": 0}
             conn.execute(
                 f"""
+                DELETE FROM draft_generation_failures
+                WHERE press_release_id IN (
+                    SELECT id
+                    FROM press_releases
+                    WHERE {press_where}
+                )
+                """,
+                (cutoff_date,),
+            )
+            conn.execute(
+                f"""
                 DELETE FROM draft_history
                 WHERE draft_id IN (
                     SELECT ad.id
@@ -872,6 +1073,7 @@ class Store:
                 (draft.press_release_id,),
             ).fetchone()
             if existing:
+                self._resolve_draft_generation_failures(conn, draft.press_release_id)
                 return int(existing["id"])
             if self.is_postgres:
                 insert_sql = """
@@ -907,18 +1109,24 @@ class Store:
             if self.is_postgres:
                 row = cur.fetchone()
                 if row:
+                    self._resolve_draft_generation_failures(conn, draft.press_release_id)
                     return int(row["id"])
                 existing = conn.execute(
                     "SELECT id FROM article_drafts WHERE press_release_id = ?",
                     (draft.press_release_id,),
                 ).fetchone()
+                if existing:
+                    self._resolve_draft_generation_failures(conn, draft.press_release_id)
                 return int(existing["id"]) if existing else 0
             if cur.lastrowid:
+                self._resolve_draft_generation_failures(conn, draft.press_release_id)
                 return int(cur.lastrowid)
             existing = conn.execute(
                 "SELECT id FROM article_drafts WHERE press_release_id = ?",
                 (draft.press_release_id,),
             ).fetchone()
+            if existing:
+                self._resolve_draft_generation_failures(conn, draft.press_release_id)
             return int(existing["id"]) if existing else 0
 
     def counts(self) -> dict[str, int]:

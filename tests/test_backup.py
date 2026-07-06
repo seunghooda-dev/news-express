@@ -1,7 +1,7 @@
 from pathlib import Path
 import sqlite3
 
-from news_summary.backup import create_backup, restore_backup
+from news_summary.backup import create_backup, restore_backup, verify_backup
 
 
 def test_create_backup_includes_sqlite_and_config_files(tmp_path):
@@ -26,6 +26,9 @@ def test_create_backup_includes_sqlite_and_config_files(tmp_path):
     assert ".env" in restored_names
     assert "config/municipalities.yaml" in restored_names
     assert "data/writing_settings.json" in restored_names
+    verification = verify_backup(backup_path)
+    assert verification["ok"] is True
+    assert verification["checked_sqlite"] is True
 
 
 def test_restore_backup_rejects_path_traversal(tmp_path):
@@ -51,3 +54,13 @@ def test_restore_backup_does_not_accept_file_prefix_matches(tmp_path):
     restored = restore_backup(tmp_path, backup_path, dry_run=True)
 
     assert restored == ["exports/article.md"]
+
+
+def test_verify_backup_reports_bad_zip(tmp_path):
+    backup_path = tmp_path / "bad.zip"
+    backup_path.write_text("not a zip", encoding="utf-8")
+
+    verification = verify_backup(backup_path)
+
+    assert verification["ok"] is False
+    assert verification["status_label"] == "백업 확인 필요"

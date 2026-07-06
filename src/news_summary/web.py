@@ -17,11 +17,11 @@ from flask import Flask, Response, flash, g, jsonify, redirect, render_template,
 from werkzeug.exceptions import HTTPException
 
 from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, verify_admin_password
-from .backup import create_backup, restore_backup
+from .backup import create_backup, restore_backup, verify_backup
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .scheduler import AUTO_COLLECT_STATUS_KEY
-from .scheduler import AUTO_DAILY_REPORT_KEY
+from .scheduler import AUTO_BACKUP_VERIFY_STATUS_KEY, AUTO_DAILY_REPORT_KEY, AUTO_URL_DISCOVERY_STATUS_KEY
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
     business_days_between,
@@ -316,17 +316,21 @@ def create_app() -> Flask:
         admin_password_source = _configured_admin_password_source(store)
         admin_password_configured = bool(admin_password_source)
         pending_queue = store.pending_press_release_summary()
+        draft_failure_summary = store.draft_generation_failure_summary()
         return render_template(
             "operations.html",
             auto_collector_status=auto_status,
             retention_policy=_retention_policy_summary(),
             pending_queue=pending_queue,
+            draft_failure_summary=draft_failure_summary,
             operations_health=_operations_health_report(store, auto_status, pending_queue),
             deployment_version=_deployment_version_report(),
             db_health=_db_health_report(store, backup_dir),
             date_issue_report=_date_issue_report(store),
             daily_report=_daily_operations_report(store),
             fallback_report=_fallback_url_report(config_path),
+            url_discovery_report=_url_discovery_report(store),
+            backup_verify_report=_backup_verify_report(store, backup_dir),
             automation_settings=_automation_settings_report(),
             visitor_access=_visitor_access_overview(store),
             cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
@@ -1007,6 +1011,7 @@ def _daily_operations_report(store: Store) -> dict[str, object]:
             (today,),
         ).fetchone()["count"]
     pending = store.pending_press_release_summary(limit=1)
+    draft_failures = store.draft_generation_failure_summary(limit=1)
     return {
         "date": today,
         "updated_at": None,
@@ -1014,7 +1019,60 @@ def _daily_operations_report(store: Store) -> dict[str, object]:
         "today_drafts": int(drafts or 0),
         "pending_releases": int(pending.get("total") or 0),
         "failed_sources": 0,
+        "draft_failures": int(draft_failures.get("total") or 0),
+        "draft_retry_due": int(draft_failures.get("due") or 0),
         "messages": [],
+    }
+
+
+def _url_discovery_report(store: Store) -> dict[str, object]:
+    raw_value = store.get_app_metadata(AUTO_URL_DISCOVERY_STATUS_KEY)
+    if not raw_value:
+        return {"updated_at": None, "discoveries": []}
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {"updated_at": None, "discoveries": []}
+    if not isinstance(payload, dict):
+        return {"updated_at": None, "discoveries": []}
+    discoveries = payload.get("discoveries")
+    return {
+        "updated_at": payload.get("updated_at"),
+        "discoveries": discoveries if isinstance(discoveries, list) else [],
+    }
+
+
+def _backup_verify_report(store: Store, backup_dir: Path) -> dict[str, object]:
+    raw_value = store.get_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY)
+    if raw_value:
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            return {
+                "ok": bool(payload.get("ok")),
+                "status_label": str(payload.get("status_label") or "검증 기록"),
+                "message": str(payload.get("message") or ""),
+                "checked_sqlite": bool(payload.get("checked_sqlite")),
+                "backup_name": str(payload.get("backup_name") or ""),
+                "updated_at": payload.get("updated_at"),
+            }
+    latest_backup = _backup_files(backup_dir)[:1]
+    if not latest_backup:
+        return {
+            "ok": False,
+            "status_label": "백업 없음",
+            "message": "검증할 백업 파일이 없습니다.",
+            "checked_sqlite": False,
+            "backup_name": "",
+            "updated_at": None,
+        }
+    result = verify_backup(latest_backup[0]["path"])
+    return {
+        "backup_name": latest_backup[0]["name"],
+        "updated_at": None,
+        **result,
     }
 
 
@@ -1038,6 +1096,10 @@ def _automation_settings_report() -> dict[str, object]:
         "queue_limit": os.getenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT", "25"),
         "recovery_interval": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS", "900"),
         "recovery_limit": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "5"),
+        "quiet_recheck": os.getenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK", "1"),
+        "quiet_recheck_hour": os.getenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR", "9"),
+        "url_discovery_limit": os.getenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "3"),
+        "backup_verify": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "1"),
     }
 
 

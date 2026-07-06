@@ -94,6 +94,40 @@ def test_draft_pending_releases_starts_cooldown_after_gemini_quota(monkeypatch):
     assert len(store.pending_press_releases(5)) == 2
 
 
+def test_draft_pending_releases_records_generation_failure_queue(monkeypatch):
+    db_path = Path(f"data/.test_service_draft_failure_queue_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="Gemini 실패 큐 테스트",
+            url="https://example.com/press/failure-queue",
+            content="테스트 군은 새 사업을 추진한다고 밝혔다.",
+            published_at="2026-05-20",
+        )
+    )
+
+    def fail_gemini(item_id, item, model=None, require_gemini=False):
+        raise GeminiDraftError("Gemini 응답이 비어 있습니다.", ["gemini-3.5-flash"])
+
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_FAILURE_RETRY_SECONDS", "900")
+    monkeypatch.setattr("news_summary.service.generate_draft", fail_gemini)
+
+    first_messages = draft_pending_releases(store, limit=5, require_gemini=True)
+    second_messages = draft_pending_releases(store, limit=5, require_gemini=True)
+    summary = store.draft_generation_failure_summary()
+
+    assert any("초안 보류" in message for message in first_messages)
+    assert summary["total"] == 1
+    assert summary["due"] == 0
+    assert summary["by_kind"] == [{"kind": "generation_error", "count": 1}]
+    assert "Gemini 실패 큐 재시도 대기 중" in second_messages[0]
+    assert len(store.pending_press_releases(5)) == 1
+
+
 def test_gemini_cooldown_message_uses_korean_time_label():
     cooldown_until = datetime(2026, 7, 1, 21, 39, tzinfo=timezone.utc)
 
@@ -243,6 +277,56 @@ def test_auto_maintenance_recovers_failed_sources(monkeypatch):
     assert any("자동 복구 재검증 통과" in message for message in messages)
     assert status["status"] == "ok"
     assert status["releases_found"] == 1
+
+
+def test_auto_maintenance_rechecks_quiet_business_day_sources(monkeypatch):
+    db_path = Path(f"data/.test_auto_quiet_source_recheck_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="quiet", name="조용한 기관", region="전남", type="html_board")
+    store.record_source_collection_status(
+        source.id,
+        source.name,
+        "ok",
+        "원문 검증 통과 0건, 새로 저장 0건",
+        releases_found=0,
+    )
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+            return value if tz is None else value.astimezone(tz)
+
+    def fake_collect_source_with_fallback(source, limit):
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="업무일 보정 원문",
+                url="https://example.com/quiet-source-recheck",
+                content="업무일 보정 재점검으로 확인된 원문입니다.",
+                published_at="2026-07-06",
+            )
+        ]
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR", "9")
+    monkeypatch.setattr("news_summary.scheduler.datetime", FixedDatetime)
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
+    monkeypatch.setattr("news_summary.scheduler.collection_retention_cutoff_date", lambda: date(2026, 7, 2))
+    monkeypatch.setattr("news_summary.scheduler.collect_source_with_fallback", fake_collect_source_with_fallback)
+    monkeypatch.setattr("news_summary.scheduler.repair_missing_published_dates", lambda store, source, limit=20: 0)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    messages = collector._recover_failed_sources_once()
+    status = store.latest_source_collection_statuses()[source.id]
+
+    assert any("업무일 무수집 보정 점검 통과" in message for message in messages)
+    assert status["status"] == "ok"
+    assert status["inserted_count"] == 1
 
 
 def test_collect_enabled_sources_keeps_only_retention_window(monkeypatch):

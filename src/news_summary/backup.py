@@ -43,6 +43,59 @@ def create_backup(
     return backup_path
 
 
+def verify_backup(backup_path: Path) -> dict[str, object]:
+    backup_path = backup_path.resolve()
+    if not backup_path.exists() or not backup_path.is_file():
+        return {
+            "ok": False,
+            "status_label": "백업 없음",
+            "message": "검증할 백업 파일이 없습니다.",
+            "checked_sqlite": False,
+        }
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_root = Path(tmp)
+            with zipfile.ZipFile(backup_path, "r") as archive:
+                bad_member = archive.testzip()
+                if bad_member:
+                    return {
+                        "ok": False,
+                        "status_label": "백업 손상",
+                        "message": f"압축 파일 안의 {bad_member} 항목이 손상됐습니다.",
+                        "checked_sqlite": False,
+                    }
+                sqlite_members = [
+                    member
+                    for member in archive.infolist()
+                    if not member.is_dir() and member.filename.replace("\\", "/").endswith(".sqlite")
+                ]
+                for member in sqlite_members[:1]:
+                    extracted = temp_root / "verify.sqlite"
+                    with archive.open(member) as source, extracted.open("wb") as target:
+                        shutil.copyfileobj(source, target)
+                    _verify_sqlite_database(extracted)
+                    return {
+                        "ok": True,
+                        "status_label": "검증 정상",
+                        "message": f"{backup_path.name} 압축과 SQLite 무결성을 확인했습니다.",
+                        "checked_sqlite": True,
+                    }
+                return {
+                    "ok": True,
+                    "status_label": "검증 정상",
+                    "message": f"{backup_path.name} 압축 파일을 확인했습니다.",
+                    "checked_sqlite": False,
+                }
+    except (OSError, sqlite3.Error, zipfile.BadZipFile) as exc:
+        return {
+            "ok": False,
+            "status_label": "백업 확인 필요",
+            "message": f"{type(exc).__name__}: {exc}",
+            "checked_sqlite": False,
+        }
+
+
 def _unique_backup_path(backup_dir: Path, timestamp: str) -> Path:
     base_path = backup_dir / f"{BACKUP_FILE_PREFIX}-{timestamp}.zip"
     if not base_path.exists():
@@ -52,6 +105,17 @@ def _unique_backup_path(backup_dir: Path, timestamp: str) -> Path:
         if not candidate.exists():
             return candidate
     raise FileExistsError("사용 가능한 백업 파일명을 만들 수 없습니다.")
+
+
+def _verify_sqlite_database(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    try:
+        result = conn.execute("PRAGMA integrity_check").fetchone()
+    finally:
+        conn.close()
+    if not result or str(result[0]).lower() != "ok":
+        detail = result[0] if result else "결과 없음"
+        raise sqlite3.DatabaseError(f"SQLite integrity_check 실패: {detail}")
 
 
 def restore_backup(

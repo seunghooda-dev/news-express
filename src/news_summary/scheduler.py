@@ -6,7 +6,13 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
+import httpx
+from bs4 import BeautifulSoup
+
+from .backup import verify_backup
+from .models import Source
 from .ops_logging import get_logger
 from .service import (
     business_days_between,
@@ -20,7 +26,7 @@ from .service import (
     repair_missing_published_dates,
     retention_holidays,
 )
-from .settings import load_sources
+from .settings import env_path, load_sources
 from .storage import Store
 
 
@@ -35,8 +41,14 @@ AUTO_QUEUE_DRAIN_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS"
 AUTO_QUEUE_DRAIN_LIMIT_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT"
 AUTO_RECOVERY_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS"
 AUTO_RECOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_LIMIT"
+AUTO_QUIET_SOURCE_RECHECK_ENV = "NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK"
+AUTO_QUIET_SOURCE_RECHECK_HOUR_ENV = "NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR"
+AUTO_URL_DISCOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT"
+AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
 AUTO_DAILY_REPORT_KEY = "auto_daily_report_snapshot"
+AUTO_URL_DISCOVERY_STATUS_KEY = "auto_url_discovery_snapshot"
+AUTO_BACKUP_VERIFY_STATUS_KEY = "auto_backup_verify_snapshot"
 LOCAL_TZ = timezone(timedelta(hours=9))
 logger = get_logger("scheduler")
 
@@ -77,6 +89,12 @@ class AutoCollectorStatus:
     progress_total: int = 0
     progress_source_name: str | None = None
     progress_message: str = "대기 중"
+
+
+@dataclass(frozen=True)
+class SourceRecoveryCandidate:
+    source: Source
+    reason: str
 
 
 class AutoCollector:
@@ -391,24 +409,32 @@ class AutoCollector:
         queue_messages = self._drain_pending_queue_once()
         if queue_messages:
             messages.extend(queue_messages)
+        discovery_messages = self._discover_fallback_url_candidates_once()
+        if discovery_messages:
+            messages.extend(discovery_messages)
+        backup_message = self._verify_latest_backup_once()
+        if backup_message:
+            messages.append(backup_message)
         self._persist_daily_report_snapshot(messages, now)
 
     def _recover_failed_sources_once(self) -> list[str]:
         limit = env_int(AUTO_RECOVERY_LIMIT_ENV, 5, minimum=0)
         if limit <= 0:
             return []
-        candidates = _failed_source_candidates(self.store, self.config_path, limit)
+        candidates = _source_recovery_candidates(self.store, self.config_path, limit)
         if not candidates:
             return []
         messages: list[str] = []
         retention_cutoff = collection_retention_cutoff_date()
         logger.info("auto recovery source recheck started sources=%s", len(candidates))
-        for source in candidates:
+        for candidate in candidates:
+            source = candidate.source
+            prefix = "업무일 무수집 보정 점검" if candidate.reason == "quiet" else "자동 복구 재검증"
             try:
                 releases = collect_source_with_fallback(source, limit=max(5, min(self.collect_limit, 10)))
             except Exception as exc:  # noqa: BLE001 - recovery should record and continue per source.
                 failure_stage, failure_reason = classify_collection_failure(exc)
-                message = f"{source.name} 자동 복구 재검증 실패: {type(exc).__name__}: {exc}"
+                message = f"{source.name} {prefix} 실패: {type(exc).__name__}: {exc}"
                 self.store.record_source_collection_status(
                     source.id,
                     source.name,
@@ -428,7 +454,7 @@ class AutoCollector:
                     inserted += 1
             repaired_dates = repair_missing_published_dates(self.store, source, limit=max(5, min(self.collect_limit, 10)))
             message = (
-                f"{source.name} 자동 복구 재검증 통과: "
+                f"{source.name} {prefix} 통과: "
                 f"원문 {len(releases)}건, 새로 저장 {inserted}건"
             )
             if source_skipped:
@@ -451,6 +477,55 @@ class AutoCollector:
                 json.dumps({"updated_at": _now(), "messages": messages[-10:]}, ensure_ascii=False),
             )
         return messages
+
+    def _discover_fallback_url_candidates_once(self) -> list[str]:
+        limit = env_int(AUTO_URL_DISCOVERY_LIMIT_ENV, 3, minimum=0)
+        if limit <= 0:
+            return []
+        candidates = _url_discovery_candidates(self.store, self.config_path, limit)
+        if not candidates:
+            return []
+        discoveries: list[dict[str, object]] = []
+        messages: list[str] = []
+        for source in candidates:
+            urls = _discover_candidate_urls(source)
+            if not urls:
+                continue
+            discoveries.append(
+                {
+                    "source_id": source.id,
+                    "source_name": source.name,
+                    "urls": urls,
+                }
+            )
+            messages.append(f"{source.name} 대체 URL 후보 {len(urls)}개 발견")
+        if discoveries:
+            self.store.set_app_metadata(
+                AUTO_URL_DISCOVERY_STATUS_KEY,
+                json.dumps({"updated_at": _now(), "discoveries": discoveries[-10:]}, ensure_ascii=False),
+            )
+        return messages
+
+    def _verify_latest_backup_once(self) -> str | None:
+        if not env_bool(AUTO_BACKUP_VERIFY_ENV, True):
+            return None
+        backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
+        latest_backup = _latest_backup_file(backup_dir)
+        result = verify_backup(latest_backup) if latest_backup else {
+            "ok": False,
+            "status_label": "백업 없음",
+            "message": "검증할 백업 파일이 없습니다.",
+            "checked_sqlite": False,
+        }
+        payload = {
+            "updated_at": _now(),
+            "backup_name": latest_backup.name if latest_backup else "",
+            **result,
+        }
+        self.store.set_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY, json.dumps(payload, ensure_ascii=False))
+        if result.get("ok"):
+            return None
+        return f"백업 자동 검증 확인 필요: {result.get('message')}"
 
     def _drain_pending_queue_once(self) -> list[str]:
         if not env_bool(AUTO_QUEUE_DRAIN_ENV, True):
@@ -515,7 +590,21 @@ def _auto_recovery_interval_seconds() -> int:
     return env_int(AUTO_RECOVERY_INTERVAL_ENV, 900, minimum=60)
 
 
-def _failed_source_candidates(store: Store, config_path: Path, limit: int):
+def _source_recovery_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
+    failed = _failed_source_candidates(store, config_path, limit)
+    remaining = max(0, limit - len(failed))
+    quiet = _quiet_source_candidates(store, config_path, remaining) if remaining else []
+    seen: set[str] = set()
+    candidates: list[SourceRecoveryCandidate] = []
+    for candidate in [*failed, *quiet]:
+        if candidate.source.id in seen:
+            continue
+        seen.add(candidate.source.id)
+        candidates.append(candidate)
+    return candidates[:limit]
+
+
+def _failed_source_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
     source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
     with store.connect() as conn:
         rows = conn.execute(
@@ -533,7 +622,209 @@ def _failed_source_candidates(store: Store, config_path: Path, limit: int):
             """,
             (limit,),
         ).fetchall()
-    return [source_map[str(row["source_id"])] for row in rows if str(row["source_id"]) in source_map]
+    return [
+        SourceRecoveryCandidate(source_map[str(row["source_id"])], "failed")
+        for row in rows
+        if str(row["source_id"]) in source_map
+    ]
+
+
+def _quiet_source_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
+    if limit <= 0 or not env_bool(AUTO_QUIET_SOURCE_RECHECK_ENV, True):
+        return []
+    now = datetime.now(LOCAL_TZ)
+    today = now.date()
+    holidays = retention_holidays({today.year - 1, today.year, today.year + 1})
+    if not is_collection_business_day(today, holidays):
+        return []
+    check_hour = env_int(AUTO_QUIET_SOURCE_RECHECK_HOUR_ENV, 9, minimum=0)
+    if now.hour < min(check_hour, 23):
+        return []
+
+    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    if not source_map:
+        return []
+    local_start = datetime.combine(today, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc).isoformat()
+    date_expr = (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
+    with store.connect() as conn:
+        release_counts = {
+            str(row["source_id"]): int(row["count"] or 0)
+            for row in conn.execute(
+                f"""
+                SELECT source_id, COUNT(*) AS count
+                FROM press_releases
+                WHERE {date_expr} = ?
+                GROUP BY source_id
+                """,
+                (today.isoformat(),),
+            ).fetchall()
+        }
+        checked_today = {
+            str(row["source_id"])
+            for row in conn.execute(
+                """
+                SELECT DISTINCT source_id
+                FROM source_collection_runs
+                WHERE checked_at >= ?
+                  AND message LIKE ?
+                """,
+                (local_start, "%업무일 무수집 보정%"),
+            ).fetchall()
+        }
+        latest_statuses = {
+            str(row["source_id"]): str(row["status"])
+            for row in conn.execute(
+                """
+                SELECT scr.source_id, scr.status
+                FROM source_collection_runs scr
+                JOIN (
+                    SELECT source_id, MAX(id) AS max_id
+                    FROM source_collection_runs
+                    GROUP BY source_id
+                ) latest ON latest.max_id = scr.id
+                """
+            ).fetchall()
+        }
+    candidates = []
+    for source in source_map.values():
+        if release_counts.get(source.id, 0) > 0:
+            continue
+        if source.id in checked_today:
+            continue
+        if latest_statuses.get(source.id) == "failed":
+            continue
+        candidates.append(SourceRecoveryCandidate(source, "quiet"))
+    return candidates[:limit]
+
+
+def _url_discovery_candidates(store: Store, config_path: Path, limit: int) -> list[Source]:
+    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    if not source_map:
+        return []
+    with store.connect() as conn:
+        latest_rows = conn.execute(
+            """
+            SELECT scr.*
+            FROM source_collection_runs scr
+            JOIN (
+                SELECT source_id, MAX(id) AS max_id
+                FROM source_collection_runs
+                GROUP BY source_id
+            ) latest ON latest.max_id = scr.id
+            WHERE scr.status = 'failed'
+            ORDER BY scr.id DESC
+            LIMIT ?
+            """,
+            (max(limit * 3, limit),),
+        ).fetchall()
+        status_rows = conn.execute(
+            """
+            SELECT source_id, status
+            FROM source_collection_runs
+            ORDER BY source_id, id DESC
+            """
+        ).fetchall()
+    consecutive_failures = _consecutive_failure_counts(status_rows)
+    candidates = []
+    structural_stages = {"사이트 구조 변경", "수집 처리", "자료 파싱", "HTTP 상태 오류", "사이트 접속", "DNS 조회"}
+    for row in latest_rows:
+        source_id = str(row["source_id"])
+        if source_id not in source_map:
+            continue
+        if consecutive_failures.get(source_id, 0) < 3:
+            continue
+        if str(row["failure_stage"] or "") not in structural_stages:
+            continue
+        candidates.append(source_map[source_id])
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def _consecutive_failure_counts(rows) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    stopped_sources: set[str] = set()
+    for row in rows:
+        source_id = str(row["source_id"])
+        if source_id in stopped_sources:
+            continue
+        if str(row["status"]) == "failed":
+            counts[source_id] = counts.get(source_id, 0) + 1
+        else:
+            stopped_sources.add(source_id)
+    return counts
+
+
+def _discover_candidate_urls(source: Source, limit: int = 5) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    keywords = ("보도자료", "시정뉴스", "군정뉴스", "군정소식", "시정소식", "새소식", "뉴스")
+    with httpx.Client(timeout=8, follow_redirects=True, verify=source.verify_ssl) as client:
+        for home_url in _source_home_urls(source):
+            try:
+                response = client.get(home_url)
+                response.raise_for_status()
+            except Exception as exc:  # noqa: BLE001 - discovery is best-effort diagnostics.
+                logger.info("url discovery homepage failed source_id=%s url=%s error=%s", source.id, home_url, exc)
+                continue
+            soup = BeautifulSoup(response.text, "html.parser")
+            for node in soup.select("a[href]"):
+                href = str(node.get("href") or "").strip()
+                text = " ".join(node.get_text(" ").split())
+                haystack = f"{text} {href}"
+                if not any(keyword in haystack for keyword in keywords):
+                    continue
+                candidate_url = urljoin(str(response.url), href)
+                if not _same_host(candidate_url, home_url):
+                    continue
+                normalized = candidate_url.split("#", 1)[0]
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                urls.append(normalized)
+                if len(urls) >= limit:
+                    return urls
+    return urls
+
+
+def _source_home_urls(source: Source) -> list[str]:
+    raw_urls = [source.base_url, source.list_url, source.feed_url]
+    homes: list[str] = []
+    seen: set[str] = set()
+    for raw_url in raw_urls:
+        if not raw_url:
+            continue
+        parsed = urlparse(raw_url)
+        if not parsed.scheme or not parsed.netloc:
+            continue
+        for candidate in (raw_url, f"{parsed.scheme}://{parsed.netloc}/"):
+            if candidate not in seen:
+                seen.add(candidate)
+                homes.append(candidate)
+    return homes
+
+
+def _same_host(url: str, base_url: str) -> bool:
+    parsed = urlparse(url)
+    base = urlparse(base_url)
+    return bool(parsed.scheme and parsed.netloc and parsed.netloc == base.netloc)
+
+
+def _latest_backup_file(backup_dir: Path) -> Path | None:
+    if not backup_dir.exists():
+        return None
+    files = [path for path in backup_dir.glob("*.zip") if path.is_file()]
+    if not files:
+        return None
+    return max(files, key=lambda path: path.stat().st_mtime)
 
 
 def _daily_report_snapshot(store: Store, *, now: datetime, messages: list[str]) -> dict[str, object]:
@@ -575,6 +866,7 @@ def _daily_report_snapshot(store: Store, *, now: datetime, messages: list[str]) 
             WHERE scr.status = 'failed'
             """
         ).fetchone()["count"]
+    draft_failures = store.draft_generation_failure_summary(limit=1)
     return {
         "date": today,
         "updated_at": now.astimezone(timezone.utc).isoformat(),
@@ -582,6 +874,8 @@ def _daily_report_snapshot(store: Store, *, now: datetime, messages: list[str]) 
         "today_drafts": int(drafts or 0),
         "pending_releases": int(pending or 0),
         "failed_sources": int(failed_sources or 0),
+        "draft_failures": int(draft_failures.get("total") or 0),
+        "draft_retry_due": int(draft_failures.get("due") or 0),
         "messages": messages[-12:],
     }
 

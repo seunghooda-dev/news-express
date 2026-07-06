@@ -1187,6 +1187,13 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
         "일시 장애 1차 자동 재검증 통과, 원문 검증 통과 1건, 새로 저장 0건",
         releases_found=1,
     )
+    store.record_draft_generation_failure(
+        1,
+        "generation_error",
+        "Gemini 응답이 비어 있습니다.",
+        "gemini-3.5-flash",
+        (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+    )
 
     from news_summary import web as web_module
 
@@ -1230,7 +1237,10 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "일일 운영 리포트" in html
     assert "게시일 점검" in html
     assert "대체 URL 준비" in html
+    assert "URL 후보 탐색" in html
     assert "Gemini 미변환 큐" in html
+    assert "Gemini 실패 큐" in html
+    assert "generation_error 1건" in html
     assert "Gemini 대기 원문" not in html
     assert "테스트 기관 1건" in html
     assert "외부 접속" in html

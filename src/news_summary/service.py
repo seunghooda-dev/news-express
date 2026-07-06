@@ -30,6 +30,8 @@ logger = get_logger("service")
 GEMINI_COOLDOWN_UNTIL_KEY = "gemini_cooldown_until"
 GEMINI_COOLDOWN_REASON_KEY = "gemini_cooldown_reason"
 DEFAULT_GEMINI_COOLDOWN_SECONDS = 30 * 60
+GEMINI_DRAFT_FAILURE_RETRY_SECONDS_ENV = "NEWS_SUMMARY_GEMINI_FAILURE_RETRY_SECONDS"
+DEFAULT_GEMINI_DRAFT_FAILURE_RETRY_SECONDS = 15 * 60
 TRANSIENT_COLLECTION_RETRY_DELAY_SECONDS = 5.0
 DEFAULT_TRANSIENT_COLLECTION_RETRY_DELAYS = (5.0, 30.0)
 TRANSIENT_COLLECTION_RETRY_DELAYS_ENV = "NEWS_SUMMARY_TRANSIENT_RETRY_DELAYS"
@@ -650,8 +652,13 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
             logger.info("draft skipped gemini cooldown until=%s", cooldown_until.isoformat())
             return [gemini_cooldown_message(cooldown_until)]
 
-    rows = store.pending_press_releases(limit)
+    rows = store.pending_press_releases_ready_for_retry(limit)
     if not rows:
+        pending_total = int(store.pending_press_release_summary(limit=1).get("total") or 0)
+        failure_total = int(store.draft_generation_failure_summary(limit=1).get("total") or 0)
+        if pending_total and failure_total:
+            logger.info("draft skipped pending releases waiting for retry pending=%s failures=%s", pending_total, failure_total)
+            return [f"Gemini 실패 큐 재시도 대기 중입니다. 대기 원문 {pending_total}건, 실패 큐 {failure_total}건"]
         logger.info("draft skipped no pending releases")
         return ["초안을 만들 새 원문이 없습니다."]
 
@@ -723,6 +730,10 @@ def _draft_rows(
             models = ", ".join(exc.attempted_models)
             suffix = f" 시도한 모델: {models}" if models else ""
             messages.append(f"{row['source_name']} 초안 보류: {exc}{suffix}")
+            is_quota_error = _is_gemini_quota_message(str(exc))
+            next_retry_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=gemini_draft_failure_retry_seconds())
+            ).isoformat()
             logger.warning(
                 "draft held source_name=%s press_release_id=%s models=%s error=%s",
                 row["source_name"],
@@ -730,10 +741,19 @@ def _draft_rows(
                 models,
                 exc,
             )
-            if _is_gemini_quota_message(str(exc)):
+            if is_quota_error:
                 cooldown_until = mark_gemini_cooldown(store, reason=f"자동 초안 생성 한도 초과: {exc}")
+                next_retry_at = cooldown_until.isoformat()
                 messages.append(gemini_cooldown_message(cooldown_until))
                 logger.warning("gemini cooldown started until=%s", cooldown_until.isoformat())
+            store.record_draft_generation_failure(
+                int(row["id"]),
+                "quota" if is_quota_error else "generation_error",
+                str(exc),
+                models,
+                next_retry_at,
+            )
+            if is_quota_error:
                 break
             continue
         draft_id = store.add_article_draft(draft)
@@ -748,6 +768,13 @@ def _draft_rows(
         if sleep_seconds > 0 and index < len(rows):
             time.sleep(sleep_seconds)
     return messages
+
+
+def gemini_draft_failure_retry_seconds() -> int:
+    try:
+        return max(60, int(os.getenv(GEMINI_DRAFT_FAILURE_RETRY_SECONDS_ENV, str(DEFAULT_GEMINI_DRAFT_FAILURE_RETRY_SECONDS))))
+    except ValueError:
+        return DEFAULT_GEMINI_DRAFT_FAILURE_RETRY_SECONDS
 
 
 def _report_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
