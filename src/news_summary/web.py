@@ -2015,8 +2015,8 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         if last_status == "failed":
             if consecutive_failures < 3:
                 issue = "일시 지연"
-                status_label = "일시 지연"
-                status_level = "warning"
+                status_label = "정상" if has_success_today and today_releases > 0 else "일시 지연"
+                status_level = "ok" if has_success_today and today_releases > 0 else "warning"
                 temporary_cause = " · ".join(
                     item for item in (str(failure_stage or ""), str(failure_reason or "")) if item
                 )
@@ -2024,7 +2024,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 if has_success_today and today_releases > 0:
                     status_detail = (
                         f"오늘 원문은 수집됐고 최근 {consecutive_failures}회 연결 점검만 실패했습니다. "
-                        f"3회 연속 실패 전까지 일시 지연으로 봅니다.{cause_suffix}"
+                        f"3회 연속 실패 전까지 정상 수집으로 봅니다.{cause_suffix}"
                     )
                 else:
                     status_detail = (
