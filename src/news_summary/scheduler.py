@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ DEFAULT_AUTO_INTERVAL_SECONDS = 3600
 DEFAULT_AUTO_COLLECT_LIMIT = 30
 AUTO_COLLECT_ENABLED_KEY = "auto_collect_enabled"
 LAST_AUTO_COLLECT_FINISHED_AT_KEY = "last_auto_collect_finished_at"
+AUTO_COLLECT_STATUS_KEY = "auto_collect_status_snapshot"
 STARTUP_CATCHUP_ENV = "NEWS_SUMMARY_STARTUP_CATCHUP"
 LOCAL_TZ = timezone(timedelta(hours=9))
 logger = get_logger("scheduler")
@@ -194,6 +196,7 @@ class AutoCollector:
             self._status.progress_total = total_sources
             self._status.progress_source_name = None
             self._status.progress_message = f"{label} 준비 중"
+        self._persist_status_snapshot()
 
         try:
             messages = collect_and_draft_cycle(
@@ -229,6 +232,7 @@ class AutoCollector:
                 self._status.progress_message = "수집 실패" if error else "수집 완료"
                 if error:
                     self._status.last_error = error
+            self._persist_status_snapshot()
         logger.info("collector run finished label=%s error=%s messages=%s", label, bool(error), len(messages))
 
         return messages
@@ -280,6 +284,7 @@ class AutoCollector:
             self._status.next_run_at = next_run_at.astimezone(timezone.utc).isoformat()
             if message and not self._status.running:
                 self._status.progress_message = message
+        self._persist_status_snapshot()
 
     def _update_progress(self, event: dict[str, object]) -> None:
         with self._state_lock:
@@ -293,6 +298,7 @@ class AutoCollector:
                 self._status.progress_source_name = str(event["source_name"] or "")
             if "message" in event:
                 self._status.progress_message = str(event["message"] or "")
+        self._persist_status_snapshot()
 
     def _enabled_source_count(self) -> int:
         try:
@@ -300,6 +306,30 @@ class AutoCollector:
         except Exception:  # noqa: BLE001 - progress should still render even if config is temporarily invalid.
             logger.exception("enabled source count failed config=%s", self.config_path)
             return 0
+
+    def _persist_status_snapshot(self) -> None:
+        try:
+            with self._state_lock:
+                payload = {
+                    "enabled": self._status.enabled,
+                    "running": self._status.running,
+                    "active_label": self._status.active_label or "",
+                    "progress_current": self._status.progress_current,
+                    "progress_total": self._status.progress_total,
+                    "progress_message": self._status.progress_message,
+                    "progress_source_name": self._status.progress_source_name or "",
+                    "progress_phase": self._status.progress_phase,
+                    "last_error": self._status.last_error,
+                    "last_started_at": self._status.last_started_at,
+                    "last_finished_at": self._status.last_finished_at,
+                    "last_auto_finished_at": self._status.last_auto_finished_at,
+                    "next_run_at": self._status.next_run_at,
+                    "run_count": self._status.run_count,
+                    "status_updated_at": _now(),
+                }
+            self.store.set_app_metadata(AUTO_COLLECT_STATUS_KEY, json.dumps(payload, ensure_ascii=False))
+        except Exception:  # noqa: BLE001 - status persistence should not stop collection.
+            logger.exception("auto collector status snapshot persistence failed")
 
     def _startup_catchup_needed(self) -> bool:
         if not env_bool(STARTUP_CATCHUP_ENV, True):

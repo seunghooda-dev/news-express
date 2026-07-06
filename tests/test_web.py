@@ -1619,6 +1619,46 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
     assert "gemini_cooldown_until" in status
 
 
+def test_recrawl_status_uses_persisted_auto_collector_snapshot(monkeypatch):
+    db_path = Path(f"data/.test_recrawl_persisted_status_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.scheduler import AUTO_COLLECT_STATUS_KEY
+    from news_summary.web import create_app
+
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata(
+        AUTO_COLLECT_STATUS_KEY,
+        (
+            '{"enabled": true, "running": true, "active_label": "자동 수집", '
+            '"progress_current": 7, "progress_total": 29, '
+            '"progress_message": "7/29 수집 중", "progress_source_name": "전남광주통합특별시청 보도자료", '
+            '"progress_phase": "collecting", "last_error": null, '
+            '"last_started_at": "2026-07-06T04:36:22+00:00", "last_finished_at": null, '
+            '"last_auto_finished_at": "2026-07-03T04:15:43+00:00", "next_run_at": null, '
+            '"run_count": 0, "status_updated_at": "2026-07-06T04:39:54+00:00"}'
+        ),
+    )
+
+    class IdleCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(enabled=True, progress_total=29, progress_message="대기 중")
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = IdleCollector()
+    app.testing = True
+    client = app.test_client()
+
+    status = client.get("/recrawl/status").get_json()
+
+    assert status["running"] is True
+    assert status["active_label"] == "자동 수집"
+    assert status["progress_current"] == 7
+    assert status["progress_message"] == "7/29 수집 중"
+    assert status["progress_source_name"] == "시청 보도자료"
+
+
 def test_draft_actions_can_advance_to_next_review_item(monkeypatch):
     db_path = Path(f"data/.test_next_review_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

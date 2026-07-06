@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import os
 import subprocess
@@ -16,6 +17,7 @@ from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, veri
 from .backup import create_backup, restore_backup
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
+from .scheduler import AUTO_COLLECT_STATUS_KEY
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
     business_days_between,
@@ -108,7 +110,7 @@ def create_app() -> Flask:
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        if request.endpoint in {"operations", "ops_logs"}:
+        if request.endpoint in {"operations", "ops_logs", "recrawl_status"}:
             response.headers.setdefault("Cache-Control", "no-store")
         try:
             _record_visitor_access(store, response.status_code)
@@ -763,24 +765,10 @@ def create_app() -> Flask:
             )
         status = auto_collector.snapshot()
         cooldown_until = gemini_cooldown_until(store)
-        return jsonify(
-            {
-                "enabled": status.enabled,
-                "running": status.running,
-                "active_label": status.active_label or "",
-                "progress_current": status.progress_current,
-                "progress_total": status.progress_total,
-                "progress_message": status.progress_message,
-                "progress_source_name": source_display_label(status.progress_source_name or ""),
-                "progress_phase": status.progress_phase,
-                "last_error": status.last_error,
-                "last_finished_at": status.last_finished_at,
-                "last_auto_finished_at": status.last_auto_finished_at,
-                "next_run_at": status.next_run_at,
-                "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
-                "run_count": status.run_count,
-            }
-        )
+        payload = _auto_collector_status_payload(store, status)
+        payload["gemini_cooldown_until"] = cooldown_until.isoformat() if cooldown_until else None
+        payload["progress_source_name"] = source_display_label(payload.get("progress_source_name") or "")
+        return jsonify(payload)
 
     @app.post("/draft")
     def draft():
@@ -937,6 +925,50 @@ def _safe_next(default_endpoint: str = "dashboard") -> str:
     if not target.startswith("/") or target.startswith("//"):
         return url_for(default_endpoint)
     return target
+
+
+def _auto_collector_status_payload(store: Store, status) -> dict[str, object]:
+    payload = {
+        "enabled": status.enabled,
+        "running": status.running,
+        "active_label": status.active_label or "",
+        "progress_current": status.progress_current,
+        "progress_total": status.progress_total,
+        "progress_message": status.progress_message,
+        "progress_source_name": status.progress_source_name or "",
+        "progress_phase": status.progress_phase,
+        "last_error": status.last_error,
+        "last_started_at": status.last_started_at,
+        "last_finished_at": status.last_finished_at,
+        "last_auto_finished_at": status.last_auto_finished_at,
+        "next_run_at": status.next_run_at,
+        "run_count": status.run_count,
+    }
+    stored_payload = _stored_auto_collector_status_payload(store)
+    if not stored_payload:
+        return payload
+
+    stored_updated_at = _parse_datetime(stored_payload.get("status_updated_at"))
+    current_updated_at = _parse_datetime(payload.get("last_finished_at") or payload.get("last_started_at"))
+    if bool(stored_payload.get("running")) or current_updated_at is None or (
+        stored_updated_at and stored_updated_at >= current_updated_at
+    ):
+        for key in payload:
+            if key in stored_payload:
+                payload[key] = stored_payload[key]
+        payload["status_updated_at"] = stored_payload.get("status_updated_at")
+    return payload
+
+
+def _stored_auto_collector_status_payload(store: Store) -> dict[str, object]:
+    raw_value = store.get_app_metadata(AUTO_COLLECT_STATUS_KEY)
+    if not raw_value:
+        return {}
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _client_ip() -> str:
