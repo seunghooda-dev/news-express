@@ -46,6 +46,17 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>배포 버전</h2>
+      <span class="badge {% if deployment_version.status_level == 'ok' %}badge-gemini{% elif deployment_version.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ deployment_version.status_label }}
+      </span>
+    </div>
+    <p class="meta">운영 {{ deployment_version.running_commit or '확인 불가' }} · GitHub {{ deployment_version.latest_commit or '확인 불가' }}</p>
+    <p class="meta">{{ deployment_version.repo }} / {{ deployment_version.branch }}</p>
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>자동 복구 점검</h2>
       <span class="badge {% if operations_health.status_level == 'ok' %}badge-gemini{% elif operations_health.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
         {{ operations_health.status_label }}
@@ -55,6 +66,7 @@
       최근 24시간 실패 {{ operations_health.failure_count }}건 · 자동 복구 {{ operations_health.retry_success_count }}건 · 미복구 {{ operations_health.unresolved_count }}건
     </p>
     <p class="meta">마지막 자동 수집 {{ operations_health.last_auto_finished_at|date_label }}</p>
+    <p class="meta">실패 재검증 {{ automation_settings.recovery_interval }}초마다 최대 {{ automation_settings.recovery_limit }}곳 · Gemini 큐 {{ automation_settings.queue_interval }}초마다 최대 {{ automation_settings.queue_limit }}건</p>
     {% if operations_health.top_failure_stages %}
       <p class="gemini-models">
         주요 원인:
@@ -71,6 +83,23 @@
       </ul>
     {% else %}
       <p class="meta">자동 수집, DB 연결, Gemini 대기열이 정상 범위입니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>일일 운영 리포트</h2>
+      <span class="badge badge-neutral">{{ daily_report.date }}</span>
+    </div>
+    <p class="meta">오늘 원문 {{ daily_report.today_releases }}건 · 오늘 초안 {{ daily_report.today_drafts }}건 · 미변환 {{ daily_report.pending_releases }}건</p>
+    <p class="meta">실패 기관 {{ daily_report.failed_sources }}곳 · 갱신 {{ daily_report.updated_at|date_label }}</p>
+    {% if daily_report.messages %}
+      <p class="gemini-models">
+        최근 작업:
+        {% for message in daily_report.messages[:3] %}
+          <span>{{ message }}</span>
+        {% endfor %}
+      </p>
     {% endif %}
   </article>
 
@@ -104,6 +133,43 @@
       </p>
     {% else %}
       <p class="meta">Gemini 초안으로 변환할 대기 원문이 없습니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>게시일 점검</h2>
+      <span class="badge {% if date_issue_report.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">
+        {{ date_issue_report.status_label }}
+      </span>
+    </div>
+    <p class="meta">최근 원문 기준 게시일 확인 필요 {{ date_issue_report.issue_count }}건</p>
+    {% if date_issue_report.by_source %}
+      <p class="gemini-models">
+        기관별:
+        {% for item in date_issue_report.by_source %}
+          <span>{{ item.source_name }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+    {% else %}
+      <p class="meta">최근 원문 게시일 파싱이 정상 범위입니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>대체 URL 준비</h2>
+      <span class="badge badge-neutral">{{ fallback_report.prepared_count }}/{{ fallback_report.total_count }}</span>
+    </div>
+    <p class="meta">사이트 구조 변경이나 접속 장애 때 순차 시도할 대체 경로입니다.</p>
+    {% if fallback_report.sources %}
+      <p class="gemini-models">
+        {% for item in fallback_report.sources %}
+          <span>{{ item.name }} {{ item.count }}개</span>
+        {% endfor %}
+      </p>
+    {% else %}
+      <p class="meta">아직 대체 URL이 등록된 기관이 없습니다.</p>
     {% endif %}
   </article>
 
@@ -161,8 +227,11 @@
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>DB 백업</h2>
-      <span class="badge badge-neutral">{{ backup_files|length }}개</span>
+      <span class="badge {% if db_health.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">{{ db_health.status_label }}</span>
     </div>
+    <p class="meta">{{ db_health.database_kind }} · 응답 {{ db_health.latency_ms if db_health.latency_ms is not none else '미상' }}ms · 백업 {{ db_health.backup_count }}개</p>
+    <p class="meta">최근 백업 {{ db_health.latest_backup.modified_at|date_label if db_health.latest_backup else '없음' }}</p>
+    <p class="meta">{{ db_health.note }}</p>
     <p class="meta">현재 DB: {{ db_path }}</p>
     <p class="meta">백업 폴더: {{ backup_dir }}</p>
     <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">

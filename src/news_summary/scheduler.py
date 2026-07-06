@@ -8,7 +8,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .ops_logging import get_logger
-from .service import business_days_between, collect_and_draft_cycle, is_collection_business_day, retention_holidays
+from .service import (
+    business_days_between,
+    classify_collection_failure,
+    collect_and_draft_cycle,
+    collect_source_with_fallback,
+    collection_retention_cutoff_date,
+    draft_pending_releases,
+    filter_releases_by_retention,
+    is_collection_business_day,
+    repair_missing_published_dates,
+    retention_holidays,
+)
 from .settings import load_sources
 from .storage import Store
 
@@ -19,6 +30,13 @@ AUTO_COLLECT_ENABLED_KEY = "auto_collect_enabled"
 LAST_AUTO_COLLECT_FINISHED_AT_KEY = "last_auto_collect_finished_at"
 AUTO_COLLECT_STATUS_KEY = "auto_collect_status_snapshot"
 STARTUP_CATCHUP_ENV = "NEWS_SUMMARY_STARTUP_CATCHUP"
+AUTO_QUEUE_DRAIN_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN"
+AUTO_QUEUE_DRAIN_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS"
+AUTO_QUEUE_DRAIN_LIMIT_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT"
+AUTO_RECOVERY_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS"
+AUTO_RECOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_LIMIT"
+AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
+AUTO_DAILY_REPORT_KEY = "auto_daily_report_snapshot"
 LOCAL_TZ = timezone(timedelta(hours=9))
 logger = get_logger("scheduler")
 
@@ -82,6 +100,7 @@ class AutoCollector:
         self._state_lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._next_maintenance_at: datetime | None = None
         source_count = self._enabled_source_count()
         self._status = AutoCollectorStatus(
             enabled=enabled,
@@ -274,10 +293,18 @@ class AutoCollector:
             wait_seconds = _wait_seconds_until(next_run_at)
             self._set_next_run_at(next_run_at, message="다음 정각 자동 수집 대기 중")
             logger.info("auto collector waiting for hourly run wait_seconds=%s next_run_at=%s", wait_seconds, next_run_at.isoformat())
-            if self._stop_event.wait(wait_seconds):
+            while not self._stop_event.is_set():
+                remaining = _wait_seconds_until(next_run_at)
+                if remaining <= 0:
+                    break
+                if self._stop_event.wait(min(remaining, self._maintenance_poll_seconds())):
+                    break
+                self._run_maintenance_if_due()
+            if self._stop_event.is_set():
                 break
 
             self.run_once()
+            self._run_maintenance_if_due(force=True)
 
     def _set_next_run_at(self, next_run_at: datetime, message: str | None = None) -> None:
         with self._state_lock:
@@ -339,6 +366,120 @@ class AutoCollector:
             interval_seconds=self.interval_seconds,
         )
 
+    def _maintenance_poll_seconds(self) -> int:
+        return max(60, min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds(), 600))
+
+    def _run_maintenance_if_due(self, force: bool = False) -> None:
+        now = datetime.now(timezone.utc)
+        if self._next_maintenance_at and not force and now < self._next_maintenance_at:
+            return
+        interval = min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds())
+        self._next_maintenance_at = now + timedelta(seconds=interval)
+        if not self._run_lock.acquire(blocking=False):
+            logger.info("auto maintenance skipped collector busy")
+            return
+        try:
+            self._execute_maintenance_once(now)
+        finally:
+            self._run_lock.release()
+
+    def _execute_maintenance_once(self, now: datetime) -> None:
+        messages: list[str] = []
+        source_messages = self._recover_failed_sources_once()
+        if source_messages:
+            messages.extend(source_messages)
+        queue_messages = self._drain_pending_queue_once()
+        if queue_messages:
+            messages.extend(queue_messages)
+        self._persist_daily_report_snapshot(messages, now)
+
+    def _recover_failed_sources_once(self) -> list[str]:
+        limit = env_int(AUTO_RECOVERY_LIMIT_ENV, 5, minimum=0)
+        if limit <= 0:
+            return []
+        candidates = _failed_source_candidates(self.store, self.config_path, limit)
+        if not candidates:
+            return []
+        messages: list[str] = []
+        retention_cutoff = collection_retention_cutoff_date()
+        logger.info("auto recovery source recheck started sources=%s", len(candidates))
+        for source in candidates:
+            try:
+                releases = collect_source_with_fallback(source, limit=max(5, min(self.collect_limit, 10)))
+            except Exception as exc:  # noqa: BLE001 - recovery should record and continue per source.
+                failure_stage, failure_reason = classify_collection_failure(exc)
+                message = f"{source.name} 자동 복구 재검증 실패: {type(exc).__name__}: {exc}"
+                self.store.record_source_collection_status(
+                    source.id,
+                    source.name,
+                    "failed",
+                    message,
+                    failure_stage=failure_stage,
+                    failure_reason=failure_reason,
+                )
+                messages.append(message)
+                logger.warning("auto recovery source recheck failed source_id=%s error=%s", source.id, exc)
+                continue
+
+            retained_releases, source_skipped = filter_releases_by_retention(releases, retention_cutoff)
+            inserted = 0
+            for release in retained_releases:
+                if self.store.add_press_release(release):
+                    inserted += 1
+            repaired_dates = repair_missing_published_dates(self.store, source, limit=max(5, min(self.collect_limit, 10)))
+            message = (
+                f"{source.name} 자동 복구 재검증 통과: "
+                f"원문 {len(releases)}건, 새로 저장 {inserted}건"
+            )
+            if source_skipped:
+                message += f", 보관 제외 {source_skipped}건"
+            if repaired_dates:
+                message += f", 게시일 보정 {repaired_dates}건"
+            self.store.record_source_collection_status(
+                source.id,
+                source.name,
+                "ok",
+                message.removeprefix(f"{source.name} "),
+                releases_found=len(releases),
+                inserted_count=inserted,
+                repaired_dates=repaired_dates,
+            )
+            messages.append(message)
+        if messages:
+            self.store.set_app_metadata(
+                AUTO_RECOVERY_STATUS_KEY,
+                json.dumps({"updated_at": _now(), "messages": messages[-10:]}, ensure_ascii=False),
+            )
+        return messages
+
+    def _drain_pending_queue_once(self) -> list[str]:
+        if not env_bool(AUTO_QUEUE_DRAIN_ENV, True):
+            return []
+        limit = env_int(AUTO_QUEUE_DRAIN_LIMIT_ENV, 25, minimum=0)
+        if limit <= 0:
+            return []
+        pending_total = int(self.store.pending_press_release_summary(limit=1).get("total") or 0)
+        if pending_total <= 0:
+            return []
+        logger.info("auto queue drain started pending=%s limit=%s", pending_total, limit)
+        messages = draft_pending_releases(self.store, limit=limit, require_gemini=self.require_gemini)
+        self.store.set_app_metadata(
+            AUTO_RECOVERY_STATUS_KEY,
+            json.dumps(
+                {
+                    "updated_at": _now(),
+                    "queue_pending_before": pending_total,
+                    "queue_drain_messages": messages[-10:],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        return [f"Gemini 미변환 큐 자동 소진: 대기 {pending_total}건, 처리 한도 {limit}건"] + messages
+
+    def _persist_daily_report_snapshot(self, messages: list[str], now: datetime) -> None:
+        report = _daily_report_snapshot(self.store, now=now, messages=messages)
+        self.store.set_app_metadata(AUTO_DAILY_REPORT_KEY, json.dumps(report, ensure_ascii=False))
+
 
 def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollector | None:
     collect_limit = env_int("NEWS_SUMMARY_AUTO_COLLECT_LIMIT", DEFAULT_AUTO_COLLECT_LIMIT)
@@ -364,6 +505,85 @@ def auto_collect_enabled(store: Store) -> bool:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _auto_queue_drain_interval_seconds() -> int:
+    return env_int(AUTO_QUEUE_DRAIN_INTERVAL_ENV, 900, minimum=60)
+
+
+def _auto_recovery_interval_seconds() -> int:
+    return env_int(AUTO_RECOVERY_INTERVAL_ENV, 900, minimum=60)
+
+
+def _failed_source_candidates(store: Store, config_path: Path, limit: int):
+    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT scr.source_id, scr.source_name, scr.failure_stage, scr.failure_reason, scr.checked_at
+            FROM source_collection_runs scr
+            JOIN (
+                SELECT source_id, MAX(id) AS max_id
+                FROM source_collection_runs
+                GROUP BY source_id
+            ) latest ON latest.max_id = scr.id
+            WHERE scr.status = 'failed'
+            ORDER BY scr.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [source_map[str(row["source_id"])] for row in rows if str(row["source_id"]) in source_map]
+
+
+def _daily_report_snapshot(store: Store, *, now: datetime, messages: list[str]) -> dict[str, object]:
+    today = now.astimezone(LOCAL_TZ).date().isoformat()
+    with store.connect() as conn:
+        releases = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM press_releases
+            WHERE SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10) = ?
+            """,
+            (today,),
+        ).fetchone()["count"]
+        drafts = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM article_drafts
+            WHERE SUBSTR(TRIM(COALESCE(updated_at, created_at, '')), 1, 10) = ?
+            """,
+            (today,),
+        ).fetchone()["count"]
+        pending = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM press_releases pr
+            LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+            WHERE ad.id IS NULL
+            """
+        ).fetchone()["count"]
+        failed_sources = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM source_collection_runs scr
+            JOIN (
+                SELECT source_id, MAX(id) AS max_id
+                FROM source_collection_runs
+                GROUP BY source_id
+            ) latest ON latest.max_id = scr.id
+            WHERE scr.status = 'failed'
+            """
+        ).fetchone()["count"]
+    return {
+        "date": today,
+        "updated_at": now.astimezone(timezone.utc).isoformat(),
+        "today_releases": int(releases or 0),
+        "today_drafts": int(drafts or 0),
+        "pending_releases": int(pending or 0),
+        "failed_sources": int(failed_sources or 0),
+        "messages": messages[-12:],
+    }
 
 
 def _next_hourly_run_at(now: datetime | None = None) -> datetime:

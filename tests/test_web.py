@@ -1201,6 +1201,18 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
             "label": "외부 접속 정상",
         },
     )
+    monkeypatch.setattr(
+        web_module,
+        "_deployment_version_report",
+        lambda: {
+            "status_label": "최신 배포",
+            "status_level": "ok",
+            "running_commit": "abc1234",
+            "latest_commit": "abc1234",
+            "repo": "seunghooda-dev/news-express",
+            "branch": "codex/news-express",
+        },
+    )
     app = web_module.create_app()
     app.testing = True
     client = app.test_client()
@@ -1213,6 +1225,11 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "최근 24시간 실패 1건" in html
     assert "자동 복구 1건" in html
     assert "외부 사이트 응답 지연 1건" in html
+    assert "배포 버전" in html
+    assert "최신 배포" in html
+    assert "일일 운영 리포트" in html
+    assert "게시일 점검" in html
+    assert "대체 URL 준비" in html
     assert "Gemini 미변환 큐" in html
     assert "Gemini 대기 원문" not in html
     assert "테스트 기관 1건" in html

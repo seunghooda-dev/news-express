@@ -166,6 +166,85 @@ def test_startup_catchup_runs_when_hourly_runs_were_missed():
     assert not _should_run_startup_catchup(previous, now=fresh_same_day)
 
 
+def test_auto_maintenance_drains_pending_queue(monkeypatch):
+    db_path = Path(f"data/.test_auto_queue_drain_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="자동 큐 소진 원문",
+            url="https://example.com/auto-queue-drain",
+            content="자동 큐 소진으로 초안을 만들 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+
+    def fake_generate_draft(item_id, item, require_gemini=False):
+        return ArticleDraft(
+            press_release_id=item_id,
+            title=item.title,
+            body="자동 큐 소진 초안입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "0")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+    monkeypatch.setattr("news_summary.service.generate_draft", fake_generate_draft)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+    messages = collector._drain_pending_queue_once()
+
+    assert any("Gemini 미변환 큐 자동 소진" in message for message in messages)
+    assert store.pending_press_release_summary()["total"] == 0
+
+
+def test_auto_maintenance_recovers_failed_sources(monkeypatch):
+    db_path = Path(f"data/.test_auto_source_recovery_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="sample", name="테스트 기관", region="전남", type="html_board")
+    store.record_source_collection_status(
+        source.id,
+        source.name,
+        "failed",
+        "테스트 기관 수집 실패: TLS 연결 시간 초과",
+        failure_stage="외부 사이트 응답 지연",
+        failure_reason="TLS 연결 시간 초과",
+    )
+
+    def fake_collect_source_with_fallback(source, limit):
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="자동 복구 원문",
+                url="https://example.com/auto-source-recovery",
+                content="자동 복구 재검증으로 확인된 원문입니다.",
+                published_at="2026-07-06",
+            )
+        ]
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "1")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
+    monkeypatch.setattr("news_summary.scheduler.collect_source_with_fallback", fake_collect_source_with_fallback)
+    monkeypatch.setattr("news_summary.scheduler.repair_missing_published_dates", lambda store, source, limit=20: 0)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    messages = collector._recover_failed_sources_once()
+    status = store.latest_source_collection_statuses()[source.id]
+
+    assert any("자동 복구 재검증 통과" in message for message in messages)
+    assert status["status"] == "ok"
+    assert status["releases_found"] == 1
+
+
 def test_collect_enabled_sources_keeps_only_retention_window(monkeypatch):
     db_path = Path(f"data/.test_service_retention_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

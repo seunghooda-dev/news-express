@@ -10,7 +10,9 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import quote
 
+import httpx
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
@@ -19,6 +21,7 @@ from .backup import create_backup, restore_backup
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .scheduler import AUTO_COLLECT_STATUS_KEY
+from .scheduler import AUTO_DAILY_REPORT_KEY
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
     business_days_between,
@@ -236,9 +239,10 @@ def create_app() -> Flask:
                     "database": "ok",
                     "auto_collector": auto_label,
                     "last_auto_finished_at": auto_status.last_auto_finished_at,
+                    "commit": _running_commit_short(),
                 }
             )
-        return jsonify({"ok": True, "database": "ok", "auto_collector": "unavailable"})
+        return jsonify({"ok": True, "database": "ok", "auto_collector": "unavailable", "commit": _running_commit_short()})
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -318,6 +322,12 @@ def create_app() -> Flask:
             retention_policy=_retention_policy_summary(),
             pending_queue=pending_queue,
             operations_health=_operations_health_report(store, auto_status, pending_queue),
+            deployment_version=_deployment_version_report(),
+            db_health=_db_health_report(store, backup_dir),
+            date_issue_report=_date_issue_report(store),
+            daily_report=_daily_operations_report(store),
+            fallback_report=_fallback_url_report(config_path),
+            automation_settings=_automation_settings_report(),
             visitor_access=_visitor_access_overview(store),
             cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
             backup_dir=backup_dir,
@@ -825,6 +835,209 @@ def _retention_policy_summary() -> dict[str, object]:
         "days": collection_retention_days(),
         "cutoff_date": cutoff.isoformat(),
         "description": "주말과 공휴일을 제외한 최근 운영일 기준입니다.",
+    }
+
+
+def _deployment_version_report() -> dict[str, object]:
+    running_commit = _running_commit()
+    repo = os.getenv("NEWS_SUMMARY_GITHUB_REPO", "seunghooda-dev/news-express").strip()
+    branch = os.getenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express").strip()
+    latest_commit = _latest_github_commit(repo, branch) if repo and branch else None
+    if running_commit and latest_commit:
+        is_current = running_commit.lower().startswith(latest_commit[:12].lower()) or latest_commit.lower().startswith(
+            running_commit[:12].lower()
+        )
+        status_label = "최신 배포" if is_current else "배포 필요"
+        status_level = "ok" if is_current else "warning"
+    elif running_commit:
+        status_label = "실행 버전 확인"
+        status_level = "neutral"
+    else:
+        status_label = "버전 확인 불가"
+        status_level = "warning"
+    return {
+        "status_label": status_label,
+        "status_level": status_level,
+        "running_commit": _short_commit(running_commit),
+        "latest_commit": _short_commit(latest_commit),
+        "repo": repo,
+        "branch": branch,
+    }
+
+
+def _running_commit_short() -> str | None:
+    return _short_commit(_running_commit())
+
+
+def _running_commit() -> str | None:
+    for key in ("RENDER_GIT_COMMIT", "NEWS_SUMMARY_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
+        value = os.getenv(key)
+        if value:
+            return value.strip()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=True,
+        )
+    except Exception:
+        return None
+    return result.stdout.strip() or None
+
+
+def _latest_github_commit(repo: str, branch: str) -> str | None:
+    url = f"https://api.github.com/repos/{repo}/commits/{quote(branch, safe='')}"
+    try:
+        response = httpx.get(url, timeout=2.5, headers={"Accept": "application/vnd.github+json"})
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return None
+    sha = payload.get("sha") if isinstance(payload, dict) else None
+    return str(sha).strip() if sha else None
+
+
+def _short_commit(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value[:7]
+
+
+def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
+    started = time.perf_counter()
+    try:
+        with store.connect() as conn:
+            conn.execute("SELECT 1").fetchone()
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        status_label = "정상"
+        status_level = "ok"
+    except Exception as exc:  # noqa: BLE001 - operations diagnostics should report DB health.
+        return {
+            "status_label": "DB 오류",
+            "status_level": "error",
+            "latency_ms": None,
+            "database_kind": "PostgreSQL" if store.is_postgres else "SQLite",
+            "latest_backup": None,
+            "backup_count": 0,
+            "note": f"{type(exc).__name__}: {exc}",
+        }
+
+    backups = _backup_files(backup_dir)
+    latest_backup = backups[0] if backups else None
+    if store.is_postgres:
+        note = "PostgreSQL은 Neon 백업/스냅샷도 함께 확인하는 구성이 안전합니다."
+    elif not latest_backup:
+        note = "아직 로컬 백업 파일이 없습니다."
+    else:
+        note = "최근 백업 파일이 확인됐습니다."
+    return {
+        "status_label": status_label,
+        "status_level": status_level,
+        "latency_ms": latency_ms,
+        "database_kind": "PostgreSQL" if store.is_postgres else "SQLite",
+        "latest_backup": latest_backup,
+        "backup_count": len(backups),
+        "note": note,
+    }
+
+
+def _date_issue_report(store: Store) -> dict[str, object]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, source_name, title, published_at
+            FROM press_releases
+            ORDER BY id DESC
+            LIMIT 1000
+            """
+        ).fetchall()
+    issues = []
+    by_source: Counter[str] = Counter()
+    for row in rows:
+        published_at = str(row["published_at"] or "").strip()
+        if not published_at or _parse_date(published_at) is None:
+            source_name = source_display_label(row["source_name"])
+            by_source[source_name] += 1
+            if len(issues) < 5:
+                issues.append(
+                    {
+                        "id": row["id"],
+                        "source_name": source_name,
+                        "title": row["title"],
+                        "published_at": published_at or "게시일 없음",
+                    }
+                )
+    return {
+        "status_label": "정상" if not issues else "확인 필요",
+        "status_level": "ok" if not issues else "warning",
+        "issue_count": sum(by_source.values()),
+        "by_source": [{"source_name": name, "count": count} for name, count in by_source.most_common(5)],
+        "samples": issues,
+    }
+
+
+def _daily_operations_report(store: Store) -> dict[str, object]:
+    raw_value = store.get_app_metadata(AUTO_DAILY_REPORT_KEY)
+    if raw_value:
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            return payload
+    today = datetime.now(LOCAL_TZ).date().isoformat()
+    with store.connect() as conn:
+        releases = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM press_releases
+            WHERE SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10) = ?
+            """,
+            (today,),
+        ).fetchone()["count"]
+        drafts = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM article_drafts
+            WHERE SUBSTR(TRIM(COALESCE(updated_at, created_at, '')), 1, 10) = ?
+            """,
+            (today,),
+        ).fetchone()["count"]
+    pending = store.pending_press_release_summary(limit=1)
+    return {
+        "date": today,
+        "updated_at": None,
+        "today_releases": int(releases or 0),
+        "today_drafts": int(drafts or 0),
+        "pending_releases": int(pending.get("total") or 0),
+        "failed_sources": 0,
+        "messages": [],
+    }
+
+
+def _fallback_url_report(config_path: Path) -> dict[str, object]:
+    sources = [source for source in load_sources(config_path) if source.enabled]
+    prepared = [source for source in sources if source.fallback_urls]
+    return {
+        "prepared_count": len(prepared),
+        "total_count": len(sources),
+        "sources": [
+            {"name": source_display_label(source.name), "count": len(source.fallback_urls)}
+            for source in prepared[:8]
+        ],
+    }
+
+
+def _automation_settings_report() -> dict[str, object]:
+    return {
+        "queue_drain": os.getenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "1"),
+        "queue_interval": os.getenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS", "900"),
+        "queue_limit": os.getenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT", "25"),
+        "recovery_interval": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS", "900"),
+        "recovery_limit": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "5"),
     }
 
 
