@@ -1788,13 +1788,31 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 """
             ).fetchall()
         }
+        latest_success = {
+            row["source_id"]: row
+            for row in conn.execute(
+                """
+                SELECT scr.source_id, scr.checked_at
+                FROM source_collection_runs scr
+                JOIN (
+                    SELECT source_id, MAX(id) AS max_id
+                    FROM source_collection_runs
+                    WHERE status = 'ok'
+                    GROUP BY source_id
+                ) latest ON latest.max_id = scr.id
+                """
+            ).fetchall()
+        }
 
     summaries = []
     for source in sources:
         stat = stats.get(source.id)
         latest_row = latest.get(source.id)
         status_row = source_statuses.get(source.id)
+        success_row = latest_success.get(source.id)
         releases = int(stat["releases"]) if stat else 0
+        today_releases = int(stat["today_releases"] or 0) if stat else 0
+        yesterday_releases = int(stat["yesterday_releases"] or 0) if stat else 0
         issue = ""
         last_status = str(status_row["status"]) if status_row else ""
         last_checked_at = status_row["checked_at"] if status_row else None
@@ -1814,11 +1832,20 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         status_label = "정상"
         status_level = "ok"
         status_detail = ""
+        last_success_datetime = _parse_datetime(success_row["checked_at"]) if success_row else None
+        last_success_date = last_success_datetime.astimezone(LOCAL_TZ).date() if last_success_datetime else None
+        has_success_today = last_success_date == today
         if last_status == "failed":
-            issue = str(failure_stage or "수집 실패")
-            status_label = "수집 실패"
-            status_level = "error"
-            status_detail = str(failure_reason or last_message or "")
+            if has_success_today and today_releases > 0:
+                issue = "일시 지연"
+                status_label = "일시 지연"
+                status_level = "warning"
+                status_detail = "오늘 원문은 수집됐지만 마지막 연결 점검이 일시적으로 실패했습니다."
+            else:
+                issue = str(failure_stage or "수집 실패")
+                status_label = "수집 실패"
+                status_level = "error"
+                status_detail = str(failure_reason or last_message or "")
         elif business_gap is not None and business_gap > 1:
             issue = "점검 지연"
             status_label = "점검 지연"
@@ -1847,8 +1874,8 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "name": source.name,
                 "region": source.region,
                 "releases": releases,
-                "yesterday_releases": int(stat["yesterday_releases"] or 0) if stat else 0,
-                "today_releases": int(stat["today_releases"] or 0) if stat else 0,
+                "yesterday_releases": yesterday_releases,
+                "today_releases": today_releases,
                 "last_collected": stat["last_collected"] if stat else None,
                 "issue": issue,
                 "status_label": status_label,

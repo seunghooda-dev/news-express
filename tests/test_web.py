@@ -1300,6 +1300,72 @@ def test_source_summary_marks_stale_business_day_gap_as_delayed(monkeypatch):
     assert summary["status_level"] == "warning"
 
 
+def test_source_summary_marks_transient_failure_after_today_success_as_temporary_delay(monkeypatch):
+    db_path = Path(f"data/.test_source_temporary_delay_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+    from news_summary.models import Source
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 7, 6, 15, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [Source(id="gangjin", name="강진군청 보도자료", region="전남 강진", type="html_board")],
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="gangjin",
+            source_name="강진군청 보도자료",
+            region="전남 강진",
+            title="강진군, 지역 사업 추진",
+            url="https://example.com/gangjin/1",
+            content="강진군은 지역 사업을 추진한다고 밝혔다. 주민 편의를 높이기 위해 현장 점검을 이어갈 계획이라고 설명했다.",
+            published_at="2026-07-06",
+            collected_at="2026-07-06T05:05:00+00:00",
+        )
+    )
+    with store.connect() as conn:
+        for status, checked_at in (
+            ("ok", "2026-07-06T05:05:00+00:00"),
+            ("failed", "2026-07-06T05:11:00+00:00"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "gangjin",
+                    "강진군청 보도자료",
+                    status,
+                    "TLS 연결 시간 초과" if status == "failed" else "원문 검증 통과 1건, 새로 저장 1건",
+                    "외부 사이트 응답 지연" if status == "failed" else "",
+                    "TLS 연결 시간 초과" if status == "failed" else "",
+                    0 if status == "failed" else 1,
+                    0 if status == "failed" else 1,
+                    0,
+                    checked_at,
+                ),
+            )
+
+    summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
+
+    assert summary["issue"] == "일시 지연"
+    assert summary["status_label"] == "일시 지연"
+    assert summary["status_level"] == "warning"
+    assert "오늘 원문은 수집" in summary["status_detail"]
+
+
 def test_operations_page_records_masked_visitor_access(monkeypatch):
     db_path = Path(f"data/.test_visitor_access_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
