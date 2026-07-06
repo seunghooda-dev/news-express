@@ -35,6 +35,7 @@ VOLATILE_DETAIL_QUERY_PARAMS = {
     "searchType",
     "vlist_no_npage",
 }
+SUNCHEON_NEWS_HOST_ALIASES = {"www.suncheon.go.kr", "m.suncheon.go.kr", "sc.go.kr"}
 logger = get_logger("collectors")
 
 
@@ -473,6 +474,9 @@ def _is_allowed_link(source: Source, url: str, title: str) -> bool:
 
 def _canonical_url(url: str) -> str:
     parts = urlsplit(url)
+    netloc = parts.netloc
+    if netloc.lower() in SUNCHEON_NEWS_HOST_ALIASES and parts.path.startswith("/kr/news/0006/0001"):
+        netloc = "sc.go.kr"
     path = re.sub(r";[^/?#]*", "", parts.path)
     query = urlencode(
         [
@@ -482,7 +486,7 @@ def _canonical_url(url: str) -> str:
         ],
         doseq=True,
     )
-    return urlunsplit((parts.scheme, parts.netloc, path, query, parts.fragment))
+    return urlunsplit((parts.scheme, netloc, path, query, parts.fragment))
 
 
 def _validated_release(

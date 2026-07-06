@@ -182,8 +182,8 @@ sources:
     region: 전남광주통합특별시 순천
     enabled: true
     type: html_board
-    list_url: "https://www.suncheon.go.kr/kr/news/0006/0001"
-    base_url: "https://www.suncheon.go.kr/kr/news/0006/0001/"
+    list_url: "https://sc.go.kr/kr/news/0006/0001/"
+    base_url: "https://sc.go.kr/kr/news/0006/0001/"
     include_url_contains:
       - "/kr/news/0006/0001/"
       - "mode=view"

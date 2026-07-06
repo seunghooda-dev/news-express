@@ -406,6 +406,17 @@ def test_canonical_url_strips_board_session_path_segments():
     )
 
 
+def test_canonical_url_normalizes_suncheon_press_release_aliases():
+    assert (
+        _canonical_url("https://www.suncheon.go.kr/kr/news/0006/0001/?mode=view&seq=71413")
+        == "https://sc.go.kr/kr/news/0006/0001/?mode=view&seq=71413"
+    )
+    assert (
+        _canonical_url("https://m.suncheon.go.kr/kr/news/0006/0001/?mode=view&seq=71413")
+        == "https://sc.go.kr/kr/news/0006/0001/?mode=view&seq=71413"
+    )
+
+
 def test_validated_release_records_original_text_check():
     source = Source(
         id="sample",
