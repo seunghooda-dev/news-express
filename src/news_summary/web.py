@@ -18,13 +18,17 @@ from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
+    business_days_between,
     collection_retention_cutoff_date,
     collection_retention_days,
     collect_and_draft_cycle,
     collect_enabled_sources,
     draft_pending_releases,
     gemini_cooldown_until,
+    has_collection_non_business_day_between,
+    is_collection_business_day,
     mark_gemini_cooldown,
+    retention_holidays,
 )
 from .settings import PROJECT_ROOT, env_database, env_path, load_environment, load_sources
 from .storage import Store
@@ -1695,6 +1699,8 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
     sources = [source for source in load_sources(config_path) if source.enabled]
     today = datetime.now(LOCAL_TZ).date()
     yesterday = today - timedelta(days=1)
+    holidays = retention_holidays({today.year - 1, today.year, today.year + 1})
+    is_business_today = is_collection_business_day(today, holidays)
     source_statuses = store.latest_source_collection_statuses()
     with store.connect() as conn:
         stats = {
@@ -1763,18 +1769,46 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         last_message = status_row["message"] if status_row else ""
         failure_stage = status_row["failure_stage"] if status_row else ""
         failure_reason = status_row["failure_reason"] if status_row else ""
+        releases_found = int(status_row["releases_found"] or 0) if status_row else 0
         failure_stage, failure_reason = _source_failure_display(failure_stage, failure_reason, last_message)
         last_checked_datetime = _parse_datetime(last_checked_at)
+        last_checked_date = last_checked_datetime.astimezone(LOCAL_TZ).date() if last_checked_datetime else None
+        business_gap = business_days_between(last_checked_date, today, holidays) if last_checked_date else None
+        holiday_gap = (
+            has_collection_non_business_day_between(last_checked_date, today, holidays)
+            if last_checked_date
+            else False
+        )
+        status_label = "정상"
+        status_level = "ok"
+        status_detail = ""
         if last_status == "failed":
             issue = str(failure_stage or "수집 실패")
-        elif last_checked_datetime and last_checked_datetime < datetime.now(LOCAL_TZ) - timedelta(days=2):
+            status_label = "수집 실패"
+            status_level = "error"
+            status_detail = str(failure_reason or last_message or "")
+        elif business_gap is not None and business_gap > 1:
             issue = "점검 지연"
-        elif releases == 0:
-            issue = "수집 없음"
-        elif releases < 3:
-            issue = "수집량 적음"
+            status_label = "점검 지연"
+            status_level = "warning"
+            status_detail = "영업일 기준 자동 수집 점검이 지연됐습니다."
+        elif not status_row:
+            issue = "점검 기록 없음"
+            status_label = "점검 전"
+            status_level = "warning"
+        elif not is_business_today:
+            status_label = "휴일 대기"
+            status_detail = "주말 또는 공휴일이라 새 보도자료가 없을 수 있습니다."
+        elif holiday_gap and last_checked_date != today:
+            status_label = "휴일 이후 대기"
+            status_detail = "연휴 이후 첫 영업일 보정 수집 대상입니다."
+        elif last_status == "ok" and (releases_found == 0 or releases == 0):
+            status_label = "새 기사 없음"
+            status_detail = "사이트 점검은 성공했지만 보관 기준 안의 새 원문이 없습니다."
         elif latest_row and _parse_date(latest_row["published_at"]) is None:
             issue = "게시일 확인"
+            status_label = "게시일 확인"
+            status_level = "warning"
         summaries.append(
             {
                 "id": source.id,
@@ -1785,6 +1819,10 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 "today_releases": int(stat["today_releases"] or 0) if stat else 0,
                 "last_collected": stat["last_collected"] if stat else None,
                 "issue": issue,
+                "status_label": status_label,
+                "status_level": status_level,
+                "status_detail": status_detail,
+                "business_gap": business_gap,
                 "last_status": last_status or "unknown",
                 "last_checked_at": last_checked_at,
                 "last_message": last_message,
@@ -1809,6 +1847,10 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "today_releases": 0,
         "last_collected": None,
         "issue": "수집 없음",
+        "status_label": "점검 전",
+        "status_level": "warning",
+        "status_detail": "기관 설정은 있지만 아직 수집 점검 기록이 없습니다.",
+        "business_gap": None,
         "last_status": "unknown",
         "last_checked_at": None,
         "last_message": "",

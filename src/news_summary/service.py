@@ -18,6 +18,11 @@ from .settings import load_sources
 from .storage import Store
 from .writer import GeminiDraftError, generate_draft
 
+try:
+    import holidays as holidays_lib
+except ModuleNotFoundError:  # pragma: no cover - Render installs this, local editable env may not be refreshed yet.
+    holidays_lib = None
+
 
 ProgressCallback = Callable[[dict[str, object]], None]
 logger = get_logger("service")
@@ -325,6 +330,7 @@ def collection_retention_cutoff_date(today: date | None = None) -> date:
 def retention_holidays(years: set[int] | None = None) -> set[date]:
     years = years or set()
     holidays = {holiday for holiday in BUILT_IN_KOREA_PUBLIC_HOLIDAYS if not years or holiday.year in years}
+    holidays.update(_library_korea_holidays(years))
     holidays.update(_env_holidays())
     return holidays
 
@@ -332,6 +338,31 @@ def retention_holidays(years: set[int] | None = None) -> set[date]:
 def is_collection_business_day(target: date, holidays: set[date] | None = None) -> bool:
     holidays = holidays or retention_holidays({target.year})
     return target.weekday() < 5 and target not in holidays
+
+
+def business_days_between(start_date: date, end_date: date, holidays: set[date] | None = None) -> int:
+    if end_date <= start_date:
+        return 0
+    holidays = holidays or retention_holidays({start_date.year, end_date.year})
+    count = 0
+    cursor = start_date + timedelta(days=1)
+    while cursor <= end_date:
+        if is_collection_business_day(cursor, holidays):
+            count += 1
+        cursor += timedelta(days=1)
+    return count
+
+
+def has_collection_non_business_day_between(start_date: date, end_date: date, holidays: set[date] | None = None) -> bool:
+    if end_date <= start_date:
+        return False
+    holidays = holidays or retention_holidays({start_date.year, end_date.year})
+    cursor = start_date + timedelta(days=1)
+    while cursor <= end_date:
+        if not is_collection_business_day(cursor, holidays):
+            return True
+        cursor += timedelta(days=1)
+    return False
 
 
 def filter_releases_by_retention(
@@ -381,6 +412,16 @@ def _env_holidays() -> set[date]:
         except ValueError:
             logger.warning("invalid retention holiday ignored value=%s", value)
     return holidays
+
+
+def _library_korea_holidays(years: set[int]) -> set[date]:
+    if holidays_lib is None or not years:
+        return set()
+    try:
+        return {item for item in holidays_lib.country_holidays("KR", years=sorted(years))}
+    except Exception as exc:  # noqa: BLE001 - holiday fallback should keep collection running.
+        logger.warning("korea holiday library failed years=%s error=%s", sorted(years), exc)
+        return set()
 
 
 def _collection_source_message(

@@ -10,6 +10,7 @@ from news_summary.scheduler import (
     AutoCollector,
     build_auto_collector_from_env,
     _next_hourly_run_at,
+    _should_run_startup_catchup,
     _wait_seconds_until,
 )
 from news_summary.service import (
@@ -144,6 +145,24 @@ def test_collection_retention_cutoff_skips_weekends_and_holidays(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "2026-06-26")
 
     assert collection_retention_cutoff_date(today=date(2026, 6, 29)) == date(2026, 6, 24)
+
+
+def test_startup_catchup_runs_after_weekend_but_not_on_holiday():
+    friday_finished = "2026-07-03T05:15:00+00:00"
+    monday_noon = datetime(2026, 7, 6, 3, 0, tzinfo=timezone.utc)
+    sunday_noon = datetime(2026, 7, 5, 3, 0, tzinfo=timezone.utc)
+
+    assert _should_run_startup_catchup(friday_finished, now=monday_noon)
+    assert not _should_run_startup_catchup(friday_finished, now=sunday_noon)
+
+
+def test_startup_catchup_runs_when_hourly_runs_were_missed():
+    previous = "2026-07-06T00:00:00+00:00"
+    late_same_day = datetime(2026, 7, 6, 2, 45, tzinfo=timezone.utc)
+    fresh_same_day = datetime(2026, 7, 6, 0, 50, tzinfo=timezone.utc)
+
+    assert _should_run_startup_catchup(previous, now=late_same_day)
+    assert not _should_run_startup_catchup(previous, now=fresh_same_day)
 
 
 def test_collect_enabled_sources_keeps_only_retention_window(monkeypatch):

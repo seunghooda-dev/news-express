@@ -494,7 +494,7 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     assert "mobile-source-board" not in dashboard_html
     assert "광주청사 보도자료" in dashboard_html
     assert "전남광주통합특별시 광주청사 보도자료" not in dashboard_html
-    assert "비정상" in dashboard_html
+    assert "수집 실패" in dashboard_html
     assert 'href="/sources/gwangju-city"' in dashboard_html
 
 
@@ -1200,6 +1200,104 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
     assert "https://sample.trycloudflare.com" in html
+
+
+def test_source_summary_treats_weekend_gap_as_holiday_wait(monkeypatch):
+    db_path = Path(f"data/.test_source_holiday_wait_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+    from news_summary.models import Source
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 7, 6, 12, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [Source(id="sample", name="테스트 기관", region="전남", type="html_board")],
+    )
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_collection_runs
+            (source_id, source_name, status, message, failure_stage, failure_reason,
+             releases_found, inserted_count, repaired_dates, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "sample",
+                "테스트 기관",
+                "ok",
+                "원문 검증 통과 0건, 새로 저장 0건",
+                "",
+                "",
+                0,
+                0,
+                0,
+                "2026-07-03T05:00:00+00:00",
+            ),
+        )
+
+    summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
+
+    assert summary["issue"] == ""
+    assert summary["status_label"] == "휴일 이후 대기"
+    assert summary["status_level"] == "ok"
+
+
+def test_source_summary_marks_stale_business_day_gap_as_delayed(monkeypatch):
+    db_path = Path(f"data/.test_source_business_delay_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+    from news_summary.models import Source
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 7, 7, 12, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [Source(id="sample", name="테스트 기관", region="전남", type="html_board")],
+    )
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_collection_runs
+            (source_id, source_name, status, message, failure_stage, failure_reason,
+             releases_found, inserted_count, repaired_dates, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "sample",
+                "테스트 기관",
+                "ok",
+                "원문 검증 통과 0건, 새로 저장 0건",
+                "",
+                "",
+                0,
+                0,
+                0,
+                "2026-07-03T05:00:00+00:00",
+            ),
+        )
+
+    summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
+
+    assert summary["issue"] == "점검 지연"
+    assert summary["status_label"] == "점검 지연"
+    assert summary["status_level"] == "warning"
 
 
 def test_operations_page_records_masked_visitor_access(monkeypatch):

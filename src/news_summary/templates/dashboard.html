@@ -73,10 +73,10 @@
     </div>
     <div class="source-grid">
       {% for source in source_summaries %}
-        <a class="source-card {% if source.issue %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
+        <a class="source-card {% if source.status_level in ['warning', 'error'] %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
           <span class="source-card-titleline">
             <strong>{{ source_display_label(source.name) }}</strong>
-            <em>{% if source.issue %}비정상{% else %}정상{% endif %}</em>
+            <em>{{ source.status_label }}</em>
           </span>
           <span class="source-card-counts"><span class="source-card-region">{{ region_display_label(source.region) }} · </span>어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
           <span class="source-card-detail">최근 수집 {{ source.last_collected|date_label }}</span>
@@ -86,6 +86,8 @@
             {% if source.failure_reason %}
               <span class="source-card-detail">원인 {{ source.failure_reason }}</span>
             {% endif %}
+          {% elif source.status_detail %}
+            <span class="source-card-detail">{{ source.status_detail }}</span>
           {% endif %}
         </a>
       {% endfor %}

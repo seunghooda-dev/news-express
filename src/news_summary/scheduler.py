@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .ops_logging import get_logger
-from .service import collect_and_draft_cycle
+from .service import business_days_between, collect_and_draft_cycle, is_collection_business_day, retention_holidays
 from .settings import load_sources
 from .storage import Store
 
@@ -16,6 +16,8 @@ DEFAULT_AUTO_INTERVAL_SECONDS = 3600
 DEFAULT_AUTO_COLLECT_LIMIT = 30
 AUTO_COLLECT_ENABLED_KEY = "auto_collect_enabled"
 LAST_AUTO_COLLECT_FINISHED_AT_KEY = "last_auto_collect_finished_at"
+STARTUP_CATCHUP_ENV = "NEWS_SUMMARY_STARTUP_CATCHUP"
+LOCAL_TZ = timezone(timedelta(hours=9))
 logger = get_logger("scheduler")
 
 
@@ -256,6 +258,11 @@ class AutoCollector:
             )
 
     def _loop(self) -> None:
+        if self._startup_catchup_needed():
+            logger.info("auto collector startup catch-up run requested last_auto_finished_at=%s", self._status.last_auto_finished_at)
+            self._set_next_run_at(datetime.now(timezone.utc), message="누락 자동 수집 보정 중")
+            self.run_once()
+
         while not self._stop_event.is_set():
             if not self.snapshot().enabled:
                 break
@@ -293,6 +300,14 @@ class AutoCollector:
         except Exception:  # noqa: BLE001 - progress should still render even if config is temporarily invalid.
             logger.exception("enabled source count failed config=%s", self.config_path)
             return 0
+
+    def _startup_catchup_needed(self) -> bool:
+        if not env_bool(STARTUP_CATCHUP_ENV, True):
+            return False
+        return _should_run_startup_catchup(
+            self._status.last_auto_finished_at,
+            interval_seconds=self.interval_seconds,
+        )
 
 
 def build_auto_collector_from_env(store: Store, config_path: Path) -> AutoCollector | None:
@@ -339,3 +354,42 @@ def _wait_seconds_until(target: datetime, now: datetime | None = None) -> int:
     if remaining <= 0:
         return 0
     return max(1, int(remaining + 0.999))
+
+
+def _should_run_startup_catchup(
+    last_finished_at: str | None,
+    *,
+    now: datetime | None = None,
+    interval_seconds: int = DEFAULT_AUTO_INTERVAL_SECONDS,
+) -> bool:
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    local_today = now.astimezone(LOCAL_TZ).date()
+    holidays = retention_holidays({local_today.year - 1, local_today.year, local_today.year + 1})
+    if not is_collection_business_day(local_today, holidays):
+        return False
+    if not last_finished_at:
+        return True
+
+    last_finished = _parse_datetime(last_finished_at)
+    if last_finished is None:
+        return True
+    elapsed = now.astimezone(timezone.utc) - last_finished.astimezone(timezone.utc)
+    if elapsed >= timedelta(seconds=max(interval_seconds * 1.5, interval_seconds + 900)):
+        return True
+
+    last_local_date = last_finished.astimezone(LOCAL_TZ).date()
+    return business_days_between(last_local_date, local_today, holidays) >= 1
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed

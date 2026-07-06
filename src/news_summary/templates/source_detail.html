@@ -15,7 +15,7 @@
   <div class="metric-link metric-static"><b>{{ summary.releases }}</b><span>누적 원문</span></div>
   <div class="metric-link metric-static"><b>{{ summary.today_releases }}</b><span>오늘 수집</span></div>
   <a class="metric-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}"><b>{{ pending_drafts|length }}</b><span>검수 대기</span></a>
-  <div class="metric-link metric-static"><b>{{ summary.issue or "정상" }}</b><span>현재 상태</span></div>
+  <div class="metric-link metric-static"><b>{{ summary.status_label }}</b><span>현재 상태</span></div>
 </section>
 
 <section class="source-health">
@@ -29,6 +29,9 @@
       {% if summary.failure_stage %}<strong>{{ summary.failure_stage }}</strong>{% endif %}
       {% if summary.failure_reason %}<span>{{ summary.failure_reason }}</span>{% endif %}
     </p>
+  {% endif %}
+  {% if summary.status_detail %}
+    <p class="meta">{{ summary.status_detail }}</p>
   {% endif %}
   <p class="meta">{{ summary.last_message or "아직 수집 점검 기록이 없습니다." }}</p>
 </section>
