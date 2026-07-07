@@ -349,8 +349,12 @@ sources:
     enabled: true
     type: html_board
     verify_ssl: false
-    list_url: "https://www.gangjin.go.kr/www/government/news/press"
+    list_url: "https://www.gangjin.go.kr/www/government/press"
+    fallback_urls:
+      - "https://www.gangjin.go.kr/www/government/news/press"
+      - "http://www.gangjin.go.kr/www/ijwok1@"
     include_url_contains:
+      - "/www/government/press"
       - "/www/government/news/press"
       - "mode=view"
     selectors:
