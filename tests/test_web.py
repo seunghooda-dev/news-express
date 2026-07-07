@@ -1486,8 +1486,64 @@ def test_source_summary_keeps_current_day_releases_normal_after_repeated_transie
     assert "자동 복구 대상" in summary["status_detail"]
 
 
-def test_source_summary_marks_three_consecutive_failures_as_failed(monkeypatch):
-    db_path = Path(f"data/.test_source_three_failures_{uuid4().hex}.sqlite").resolve()
+def test_source_summary_marks_repeated_network_failures_as_connection_waiting(monkeypatch):
+    db_path = Path(f"data/.test_source_repeated_network_failure_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+    from news_summary.models import Source
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 7, 6, 15, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [Source(id="gangjin", name="강진군청 보도자료", region="전남 강진", type="html_board")],
+    )
+    with store.connect() as conn:
+        for checked_at in (
+            "2026-07-06T05:00:00+00:00",
+            "2026-07-06T05:10:00+00:00",
+            "2026-07-06T05:20:00+00:00",
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "gangjin",
+                    "강진군청 보도자료",
+                    "failed",
+                    "TLS 연결 시간 초과",
+                    "외부 사이트 응답 지연",
+                    "TLS 연결 시간 초과",
+                    0,
+                    0,
+                    0,
+                    checked_at,
+                ),
+            )
+
+    summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
+
+    assert summary["issue"] == "연결 대기"
+    assert summary["status_label"] == "연결 대기"
+    assert summary["status_level"] == "warning"
+    assert summary["consecutive_failures"] == 3
+    assert "외부 사이트 연결 장애" in summary["status_detail"]
+
+
+def test_source_summary_marks_three_consecutive_structural_failures_as_failed(monkeypatch):
+    db_path = Path(f"data/.test_source_three_structural_failures_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
     store.init_db()
 
@@ -1523,9 +1579,9 @@ def test_source_summary_marks_three_consecutive_failures_as_failed(monkeypatch):
                     "suncheon",
                     "순천시청 보도자료",
                     "failed",
-                    "TLS 연결 시간 초과",
-                    "외부 사이트 응답 지연",
-                    "TLS 연결 시간 초과",
+                    "목록 후보를 찾지 못했습니다",
+                    "사이트 구조 변경",
+                    "목록/본문 선택자 확인 필요",
                     0,
                     0,
                     0,
@@ -1535,7 +1591,7 @@ def test_source_summary_marks_three_consecutive_failures_as_failed(monkeypatch):
 
     summary = web_module._source_summaries(store, Path("unused.yaml"))[0]
 
-    assert summary["issue"] == "외부 사이트 응답 지연"
+    assert summary["issue"] == "사이트 구조 변경"
     assert summary["status_label"] == "수집 실패"
     assert summary["status_level"] == "error"
     assert summary["consecutive_failures"] == 3

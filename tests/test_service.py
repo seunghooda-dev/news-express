@@ -252,6 +252,11 @@ def test_auto_maintenance_recovers_failed_sources(monkeypatch):
         failure_stage="외부 사이트 응답 지연",
         failure_reason="TLS 연결 시간 초과",
     )
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE source_collection_runs SET checked_at = ? WHERE source_id = ?",
+            ("2000-01-01T00:00:00+00:00", source.id),
+        )
 
     def fake_collect_source_with_fallback(source, limit):
         return [
@@ -278,6 +283,58 @@ def test_auto_maintenance_recovers_failed_sources(monkeypatch):
     assert any("자동 복구 재검증 통과" in message for message in messages)
     assert status["status"] == "ok"
     assert status["releases_found"] == 1
+
+
+def test_auto_maintenance_skips_recent_transient_network_failures(monkeypatch):
+    db_path = Path(f"data/.test_auto_source_recovery_cooldown_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="sample", name="테스트 기관", region="전남", type="html_board")
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_collection_runs
+            (source_id, source_name, status, message, failure_stage, failure_reason,
+             releases_found, inserted_count, repaired_dates, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source.id,
+                source.name,
+                "failed",
+                "테스트 기관 수집 실패: TLS 연결 시간 초과",
+                "외부 사이트 응답 지연",
+                "TLS 연결 시간 초과",
+                0,
+                0,
+                0,
+                "2026-07-07T00:50:00+00:00",
+            ),
+        )
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 7, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+            return value if tz is None else value.astimezone(tz)
+
+    calls = {"count": 0}
+
+    def fake_collect_source_with_fallback(source, limit):
+        calls["count"] += 1
+        return []
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_SECONDS", "21600")
+    monkeypatch.setattr("news_summary.scheduler.datetime", FixedDatetime)
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
+    monkeypatch.setattr("news_summary.scheduler.collect_source_with_fallback", fake_collect_source_with_fallback)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    messages = collector._recover_failed_sources_once()
+
+    assert messages == []
+    assert calls["count"] == 0
 
 
 def test_auto_maintenance_rechecks_quiet_business_day_sources(monkeypatch):

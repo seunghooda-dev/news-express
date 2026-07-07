@@ -40,6 +40,7 @@ from .service import (
     draft_pending_releases,
     gemini_cooldown_until,
     has_collection_non_business_day_between,
+    is_transient_site_failure,
     is_collection_business_day,
     mark_gemini_cooldown,
     retention_holidays,
@@ -1184,6 +1185,7 @@ def _automation_settings_report() -> dict[str, object]:
         "queue_limit": os.getenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT", "25"),
         "recovery_interval": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS", "900"),
         "recovery_limit": os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "5"),
+        "network_recheck_cooldown": os.getenv("NEWS_SUMMARY_AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_SECONDS", "21600"),
         "quiet_recheck": os.getenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK", "1"),
         "quiet_recheck_hour": os.getenv("NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR", "9"),
         "focused_recrawl_limit": os.getenv("NEWS_SUMMARY_AUTO_FOCUSED_RECRAWL_LIMIT", "3"),
@@ -1262,11 +1264,16 @@ def _operations_health_report(
         row
         for row in latest_rows
         if str(row["status"]) == "failed" and consecutive_failures.get(str(row["source_id"]), 0) >= 3
+        and not is_transient_site_failure(str(row["failure_stage"] or ""), str(row["failure_reason"] or ""))
     ]
     temporary_rows = [
         row
         for row in latest_rows
-        if str(row["status"]) == "failed" and consecutive_failures.get(str(row["source_id"]), 0) < 3
+        if str(row["status"]) == "failed"
+        and (
+            consecutive_failures.get(str(row["source_id"]), 0) < 3
+            or is_transient_site_failure(str(row["failure_stage"] or ""), str(row["failure_reason"] or ""))
+        )
     ]
 
     if unresolved_rows:
@@ -2382,6 +2389,7 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
         has_success_today = last_success_date == today
         has_current_day_data = today_releases > 0 or last_collected_date == today
         if last_status == "failed":
+            transient_site_failure = is_transient_site_failure(failure_stage, failure_reason)
             if consecutive_failures < 3 or has_current_day_data:
                 issue = "" if has_current_day_data or has_success_today else "일시 지연"
                 status_label = "정상" if has_current_day_data or has_success_today else "일시 지연"
@@ -2410,6 +2418,19 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                         f"최근 {consecutive_failures}회 연결 점검이 실패했습니다. "
                         f"3회 연속 실패 전까지 일시 지연으로 봅니다.{cause_suffix}"
                     )
+            elif transient_site_failure:
+                issue = "연결 대기"
+                status_label = "연결 대기"
+                status_level = "warning"
+                temporary_cause = " · ".join(
+                    item for item in (str(failure_stage or ""), str(failure_reason or "")) if item
+                )
+                cause_suffix = f" 최근 원인: {temporary_cause}" if temporary_cause else ""
+                status_detail = (
+                    "외부 사이트 연결 장애가 지속 중입니다. "
+                    "자동 수집과 복구 점검이 낮은 빈도로 계속 재시도합니다."
+                    f"{cause_suffix}"
+                )
             else:
                 issue = str(failure_stage or "수집 실패")
                 status_label = "수집 실패"

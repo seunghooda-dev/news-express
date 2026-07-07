@@ -22,6 +22,7 @@ from .service import (
     collection_retention_cutoff_date,
     draft_pending_releases,
     filter_releases_by_retention,
+    is_transient_site_failure,
     is_collection_business_day,
     repair_missing_published_dates,
     retention_holidays,
@@ -41,6 +42,7 @@ AUTO_QUEUE_DRAIN_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS"
 AUTO_QUEUE_DRAIN_LIMIT_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT"
 AUTO_RECOVERY_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS"
 AUTO_RECOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_LIMIT"
+AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_ENV = "NEWS_SUMMARY_AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_SECONDS"
 AUTO_QUIET_SOURCE_RECHECK_ENV = "NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK"
 AUTO_QUIET_SOURCE_RECHECK_HOUR_ENV = "NEWS_SUMMARY_AUTO_QUIET_SOURCE_RECHECK_HOUR"
 AUTO_FOCUSED_RECRAWL_LIMIT_ENV = "NEWS_SUMMARY_AUTO_FOCUSED_RECRAWL_LIMIT"
@@ -690,6 +692,10 @@ def _auto_recovery_interval_seconds() -> int:
     return env_int(AUTO_RECOVERY_INTERVAL_ENV, 900, minimum=60)
 
 
+def _network_failure_recheck_cooldown_seconds() -> int:
+    return env_int(AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_ENV, 21600, minimum=900)
+
+
 def _source_recovery_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
     failed = _failed_source_candidates(store, config_path, limit)
     remaining = max(0, limit - len(failed))
@@ -708,6 +714,8 @@ def _source_recovery_candidates(store: Store, config_path: Path, limit: int) -> 
 
 def _failed_source_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
     source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    now = datetime.now(timezone.utc)
+    network_cooldown = timedelta(seconds=_network_failure_recheck_cooldown_seconds())
     with store.connect() as conn:
         rows = conn.execute(
             """
@@ -722,13 +730,24 @@ def _failed_source_candidates(store: Store, config_path: Path, limit: int) -> li
             ORDER BY scr.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (max(limit * 4, limit),),
         ).fetchall()
-    return [
-        SourceRecoveryCandidate(source_map[str(row["source_id"])], "failed")
-        for row in rows
-        if str(row["source_id"]) in source_map
-    ]
+    candidates: list[SourceRecoveryCandidate] = []
+    for row in rows:
+        source_id = str(row["source_id"])
+        if source_id not in source_map:
+            continue
+        stage = str(row["failure_stage"] or "")
+        reason = str(row["failure_reason"] or "")
+        checked_at = _parse_datetime(str(row["checked_at"] or ""))
+        if is_transient_site_failure(stage, reason) and checked_at:
+            elapsed = now.astimezone(timezone.utc) - checked_at.astimezone(timezone.utc)
+            if elapsed < network_cooldown:
+                continue
+        candidates.append(SourceRecoveryCandidate(source_map[source_id], "failed"))
+        if len(candidates) >= limit:
+            break
+    return candidates
 
 
 def _quiet_source_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:

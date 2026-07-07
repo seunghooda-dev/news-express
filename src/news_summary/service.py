@@ -813,6 +813,15 @@ def classify_collection_failure(exc: Exception) -> tuple[str, str]:
     return "기타 오류", type(exc).__name__
 
 
+def is_transient_site_failure(failure_stage: str, failure_reason: str = "") -> bool:
+    stage = str(failure_stage or "")
+    reason = str(failure_reason or "")
+    if stage in {"DNS 조회", "외부 사이트 응답 지연", "연결 강제 종료", "사이트 접속"}:
+        return True
+    lowered = reason.lower()
+    return any(keyword in lowered for keyword in ("timeout", "timed out", "connect", "reset"))
+
+
 def gemini_cooldown_until(store: Store) -> datetime | None:
     raw_value = store.get_app_metadata(GEMINI_COOLDOWN_UNTIL_KEY)
     if not raw_value:
