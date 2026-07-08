@@ -9,6 +9,7 @@ from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, S
 from news_summary.scheduler import AutoCollectorStatus
 from news_summary.storage import Store
 from news_summary.web import (
+    _asset_request_headers,
     _date_warning,
     _filter_drafts_by_review,
     _filter_drafts_by_date,
@@ -1471,6 +1472,98 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
         "https://example.com/download?fileId=1",
         "https://example.com/download?fileId=1",
     ]
+
+
+def test_asset_request_headers_include_press_referer_for_image_assets():
+    headers = _asset_request_headers(
+        "https://files.example.go.kr/download/photo.jpg",
+        {
+            "is_image": 1,
+            "press_url": "https://www.example.go.kr/news/press?idx=10&mode=view",
+        },
+    )
+
+    assert headers["Referer"] == "https://www.example.go.kr/news/press?idx=10&mode=view"
+    assert headers["Accept"].startswith("image/")
+    assert "NewsExpress" in headers["User-Agent"]
+    assert "ko-KR" in headers["Accept-Language"]
+
+
+def test_asset_preview_sends_browser_like_headers(monkeypatch):
+    db_path = Path(f"data/.test_asset_preview_headers_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_url = "https://www.example.go.kr/news/press?idx=20&mode=view"
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="헤더 첨부 테스트 원문",
+            url=release_url,
+            content="테스트 군은 첨부 미리보기 요청 헤더를 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://files.example.go.kr/download/photo.jpg",
+                    title="첨부 사진",
+                    filename="photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeImageResponse:
+        content = b"\xff\xd8\xff" + b"\x00" * 12
+        headers = {"content-type": "image/jpeg"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self.content
+
+    client_headers = []
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            client_headers.append(kwargs.get("headers") or {})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            assert method == "GET"
+            assert url == "https://files.example.go.kr/download/photo.jpg"
+            return FakeImageResponse()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/preview")
+
+    assert response.status_code == 200
+    assert client_headers
+    assert client_headers[0]["Referer"] == release_url
+    assert client_headers[0]["Accept"].startswith("image/")
+    assert "NewsExpress" in client_headers[0]["User-Agent"]
 
 
 def test_default_asset_preview_limit_allows_large_press_photos(monkeypatch):

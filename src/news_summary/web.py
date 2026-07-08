@@ -1267,15 +1267,55 @@ def _download_asset_content_from_url(
     max_bytes: int | None = None,
 ) -> tuple[str, bytes]:
     timeout = httpx.Timeout(30.0, connect=10.0)
+    headers = _asset_request_headers(asset_url, asset)
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+        with httpx.Client(follow_redirects=True, timeout=timeout, headers=headers) as client:
             return _download_asset_content(client, asset_url, asset, max_bytes=max_bytes)
     except httpx.ConnectError as exc:
         if not _should_retry_asset_download_without_tls_verify(asset_url, exc):
             raise
         logger.warning("asset download ssl verification failed; retrying without verification url=%s", asset_url)
-        with httpx.Client(follow_redirects=True, timeout=timeout, verify=False) as client:
+        with httpx.Client(follow_redirects=True, timeout=timeout, headers=headers, verify=False) as client:
             return _download_asset_content(client, asset_url, asset, max_bytes=max_bytes)
+
+
+def _asset_request_headers(asset_url: str, asset) -> dict[str, str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0 Safari/537.36 NewsExpress/1.0"
+        ),
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+    }
+    if _asset_row_bool(asset, "is_image"):
+        headers["Accept"] = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+    else:
+        headers["Accept"] = "application/octet-stream,*/*;q=0.8"
+    press_url = str(_asset_row_value(asset, "press_url") or "").strip()
+    if press_url.startswith(("http://", "https://")):
+        headers["Referer"] = press_url
+    else:
+        try:
+            parsed = urlparse(asset_url)
+        except ValueError:
+            parsed = None
+        if parsed and parsed.scheme and parsed.netloc:
+            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+    return headers
+
+
+def _asset_row_value(asset, key: str):
+    try:
+        return asset[key]
+    except (KeyError, IndexError, TypeError):
+        if isinstance(asset, dict):
+            return asset.get(key)
+    return None
+
+
+def _asset_row_bool(asset, key: str) -> bool:
+    return bool(_asset_row_value(asset, key))
 
 
 def _should_redirect_asset_preview(asset_url: str) -> bool:
