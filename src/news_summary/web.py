@@ -2712,6 +2712,7 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
         return {
             "source_collection_status": "error",
             "source_collection_recent_failure_count": None,
+            "source_collection_recovered_recent_failure_count": None,
             "source_collection_unresolved_count": None,
             "source_collection_temporary_count": None,
             "source_collection_recent_failed_sources": [],
@@ -2721,6 +2722,12 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
         }
 
     failure_rows = [row for row in recent_rows if str(row["status"]) == "failed"]
+    latest_status_by_source = {str(row["source_id"]): str(row["status"]) for row in latest_rows}
+    recovered_failure_rows = [
+        row
+        for row in failure_rows
+        if latest_status_by_source.get(str(row["source_id"])) == "ok"
+    ]
     failure_source_counts: Counter[str] = Counter(str(row["source_id"]) for row in failure_rows)
     source_latest_failure = {}
     for row in failure_rows:
@@ -2751,6 +2758,9 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
     elif temporary_rows:
         status = "warning"
         message = f"일시 장애 재검증 대상 {len(temporary_rows)}곳"
+    elif failure_rows and len(recovered_failure_rows) == len(failure_rows):
+        status = "ok"
+        message = f"최근 실패 {len(failure_rows)}건은 최신 점검에서 복구됐습니다."
     elif failure_rows:
         status = "warning"
         message = f"최근 24시간 수집 실패 {len(failure_rows)}건"
@@ -2760,6 +2770,7 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
     return {
         "source_collection_status": status,
         "source_collection_recent_failure_count": len(failure_rows),
+        "source_collection_recovered_recent_failure_count": len(recovered_failure_rows),
         "source_collection_unresolved_count": len(unresolved_rows),
         "source_collection_temporary_count": len(temporary_rows),
         "source_collection_recent_failed_sources": [

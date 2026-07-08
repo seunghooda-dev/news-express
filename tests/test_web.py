@@ -3480,6 +3480,59 @@ def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
     ]
 
 
+def test_healthz_treats_recent_collection_failures_recovered_by_latest_ok_as_ok(monkeypatch):
+    db_path = Path(f"data/.test_healthz_source_collection_recovered_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    with store.connect() as conn:
+        for status, checked_at in (
+            ("failed", "2026-07-08T23:00:00+00:00"),
+            ("failed", "2026-07-08T23:05:00+00:00"),
+            ("ok", "2026-07-08T23:10:00+00:00"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "sample-source",
+                    "전남광주통합특별시 테스트 기관 보도자료",
+                    status,
+                    "최신 점검 정상" if status == "ok" else "일시 연결 지연",
+                    "외부 사이트 응답 지연" if status == "failed" else "",
+                    "ReadTimeout" if status == "failed" else "",
+                    1 if status == "ok" else 0,
+                    1 if status == "ok" else 0,
+                    0,
+                    checked_at,
+                ),
+            )
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 9, 8, 30, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["source_collection_status"] == "ok"
+    assert payload["source_collection_recent_failure_count"] == 2
+    assert payload["source_collection_recovered_recent_failure_count"] == 2
+    assert payload["source_collection_unresolved_count"] == 0
+    assert payload["source_collection_temporary_count"] == 0
+    assert payload["source_collection_message"] == "최근 실패 2건은 최신 점검에서 복구됐습니다."
+
+
 def test_healthz_reports_gemini_queue_warning(monkeypatch):
     db_path = Path(f"data/.test_healthz_gemini_queue_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
