@@ -326,6 +326,7 @@ def create_app() -> Flask:
             logger.warning("health check failed error=%s", exc)
             return jsonify({"ok": False, "database": "error"}), 503
         gemini_queue_health = _gemini_queue_health_payload(store)
+        source_collection_health = _source_collection_health_payload(store)
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
             _ensure_auto_collector_running(auto_collector)
@@ -348,6 +349,7 @@ def create_app() -> Flask:
                     "next_run_at": auto_status["next_run_at"],
                     "commit": _running_commit_short(),
                     **gemini_queue_health,
+                    **source_collection_health,
                 }
             )
         return jsonify(
@@ -357,6 +359,7 @@ def create_app() -> Flask:
                 "auto_collector": "unavailable",
                 "commit": _running_commit_short(),
                 **gemini_queue_health,
+                **source_collection_health,
             }
         )
 
@@ -2598,6 +2601,96 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
         "gemini_cooldown_reason": cooldown_reason,
         "gemini_queue_message": message,
+    }
+
+
+def _source_collection_health_payload(store: Store) -> dict[str, object]:
+    since = (datetime.now(LOCAL_TZ) - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
+    try:
+        with store.connect() as conn:
+            recent_rows = conn.execute(
+                """
+                SELECT *
+                FROM source_collection_runs
+                WHERE checked_at >= ?
+                ORDER BY id DESC
+                """,
+                (since,),
+            ).fetchall()
+            latest_rows = conn.execute(
+                """
+                SELECT scr.*
+                FROM source_collection_runs scr
+                JOIN (
+                    SELECT source_id, MAX(id) AS max_id
+                    FROM source_collection_runs
+                    GROUP BY source_id
+                ) latest ON latest.max_id = scr.id
+                """
+            ).fetchall()
+            status_sequence_rows = conn.execute(
+                """
+                SELECT source_id, status
+                FROM source_collection_runs
+                ORDER BY source_id, id DESC
+                """
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001 - health check should expose collection diagnostics failures.
+        logger.warning("source collection health check failed error=%s", exc)
+        return {
+            "source_collection_status": "error",
+            "source_collection_recent_failure_count": None,
+            "source_collection_unresolved_count": None,
+            "source_collection_temporary_count": None,
+            "source_collection_unresolved_sources": [],
+            "source_collection_message": f"수집 상태 확인 실패: {type(exc).__name__}",
+        }
+
+    failure_rows = [row for row in recent_rows if str(row["status"]) == "failed"]
+    consecutive_failures = _consecutive_failure_counts(status_sequence_rows)
+    unresolved_rows = [
+        row
+        for row in latest_rows
+        if str(row["status"]) == "failed"
+        and consecutive_failures.get(str(row["source_id"]), 0) >= 3
+        and not is_transient_site_failure(str(row["failure_stage"] or ""), str(row["failure_reason"] or ""))
+    ]
+    temporary_rows = [
+        row
+        for row in latest_rows
+        if str(row["status"]) == "failed"
+        and (
+            consecutive_failures.get(str(row["source_id"]), 0) < 3
+            or is_transient_site_failure(str(row["failure_stage"] or ""), str(row["failure_reason"] or ""))
+        )
+    ]
+    if unresolved_rows:
+        status = "error"
+        message = f"미복구 수집 실패 기관 {len(unresolved_rows)}곳"
+    elif temporary_rows:
+        status = "warning"
+        message = f"일시 장애 재검증 대상 {len(temporary_rows)}곳"
+    elif failure_rows:
+        status = "warning"
+        message = f"최근 24시간 수집 실패 {len(failure_rows)}건"
+    else:
+        status = "ok"
+        message = "지자체 수집 상태 정상 범위"
+    return {
+        "source_collection_status": status,
+        "source_collection_recent_failure_count": len(failure_rows),
+        "source_collection_unresolved_count": len(unresolved_rows),
+        "source_collection_temporary_count": len(temporary_rows),
+        "source_collection_unresolved_sources": [
+            {
+                "source_id": str(row["source_id"]),
+                "source_name": source_display_label(str(row["source_name"])),
+                "consecutive_failures": consecutive_failures.get(str(row["source_id"]), 0),
+                "failure_stage": str(row["failure_stage"] or "수집 실패"),
+            }
+            for row in unresolved_rows[:5]
+        ],
+        "source_collection_message": message,
     }
 
 

@@ -3197,8 +3197,49 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["gemini_cooldown_active"] is False
     assert payload["gemini_cooldown_until"] is None
     assert payload["gemini_cooldown_reason"] is None
+    assert payload["source_collection_status"] == "ok"
+    assert payload["source_collection_recent_failure_count"] == 0
+    assert payload["source_collection_unresolved_count"] == 0
+    assert payload["source_collection_temporary_count"] == 0
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
+
+
+def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
+    db_path = Path(f"data/.test_healthz_source_collection_failures_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    for _ in range(3):
+        store.record_source_collection_status(
+            "sample-source",
+            "전남광주통합특별시 테스트 기관 보도자료",
+            "failed",
+            "테스트 기관 수집 실패: 본문 구조 변경",
+            failure_stage="본문 파싱 실패",
+            failure_reason="본문 선택자를 찾지 못했습니다",
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz").get_json()
+
+    assert payload["ok"] is True
+    assert payload["source_collection_status"] == "error"
+    assert payload["source_collection_recent_failure_count"] == 3
+    assert payload["source_collection_unresolved_count"] == 1
+    assert payload["source_collection_temporary_count"] == 0
+    assert payload["source_collection_message"] == "미복구 수집 실패 기관 1곳"
+    assert payload["source_collection_unresolved_sources"] == [
+        {
+            "source_id": "sample-source",
+            "source_name": "테스트 기관 보도자료",
+            "consecutive_failures": 3,
+            "failure_stage": "본문 파싱 실패",
+        }
+    ]
 
 
 def test_healthz_reports_gemini_queue_warning(monkeypatch):
