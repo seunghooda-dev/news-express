@@ -1913,6 +1913,14 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
         status_level = "ok"
         status_label = "휴일 대기"
         message = "주말 또는 공휴일이라 오늘 점검 누락을 경고하지 않습니다."
+    elif failed_ids:
+        status_level = "warning"
+        status_label = "실패 포함"
+        message = f"전체 기관은 점검됐고 실패 기록 {len(failed_ids)}곳은 자동 복구 대상입니다."
+    elif not unchecked_ids:
+        status_level = "ok"
+        status_label = "정상"
+        message = "오늘 활성 기관이 모두 점검됐습니다."
     elif now.hour < check_hour:
         status_level = "ok"
         status_label = "점검 대기"
@@ -1921,10 +1929,6 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
         status_level = "warning"
         status_label = "미점검"
         message = f"오늘 아직 점검되지 않은 기관이 {len(unchecked_ids)}곳 있습니다."
-    elif failed_ids:
-        status_level = "warning"
-        status_label = "실패 포함"
-        message = f"전체 기관은 점검됐고 실패 기록 {len(failed_ids)}곳은 자동 복구 대상입니다."
     else:
         status_level = "ok"
         status_label = "정상"
