@@ -90,6 +90,7 @@ VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
 DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
 DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
 DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
+DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
@@ -1652,6 +1653,7 @@ def _operations_cached_report_bundle(
         "date_issue_report": _date_issue_report(store),
         "daily_report": _daily_operations_report(store),
         "operations_summary": _operations_summary_report(store),
+        "collection_check_coverage_report": _collection_check_coverage_report(store, config_path),
         "source_coverage_report": _source_coverage_report(config_path),
         "server_health_report": _server_health_report(store),
         "anomaly_report": _collection_anomaly_report(store),
@@ -1755,6 +1757,146 @@ def _source_coverage_report(config_path: Path) -> dict[str, object]:
         "extra_ids": extra_ids,
         "message": message,
     }
+
+
+def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[str, object]:
+    try:
+        sources = [source for source in load_sources(config_path) if source.enabled]
+    except Exception as exc:  # noqa: BLE001 - operations page should surface config errors.
+        return {
+            "status_level": "warning",
+            "status_label": "확인 필요",
+            "date": datetime.now(LOCAL_TZ).date().isoformat(),
+            "enabled_total": 0,
+            "checked_today": 0,
+            "success_today": 0,
+            "failed_today": 0,
+            "today_release_sources": 0,
+            "unchecked_labels": [],
+            "failed_labels": [],
+            "message": f"수집 설정을 읽지 못했습니다: {type(exc).__name__}",
+        }
+
+    now = datetime.now(LOCAL_TZ)
+    today = now.date()
+    holidays = retention_holidays({today.year - 1, today.year, today.year + 1})
+    is_business_day = is_collection_business_day(today, holidays)
+    check_hour = _collection_coverage_check_hour()
+    local_start = datetime.combine(today, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc).isoformat()
+    date_expr = (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(published_at, ''), collected_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
+    try:
+        with store.connect() as conn:
+            status_rows = conn.execute(
+                """
+                SELECT source_id,
+                       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok_count,
+                       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+                FROM source_collection_runs
+                WHERE checked_at >= ?
+                GROUP BY source_id
+                """,
+                (local_start,),
+            ).fetchall()
+            release_rows = conn.execute(
+                f"""
+                SELECT source_id, COUNT(*) AS release_count
+                FROM press_releases
+                WHERE {date_expr} = ?
+                GROUP BY source_id
+                """,
+                (today.isoformat(),),
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001 - diagnostics should not break operations page.
+        return {
+            "status_level": "warning",
+            "status_label": "확인 필요",
+            "date": today.isoformat(),
+            "enabled_total": len(sources),
+            "checked_today": 0,
+            "success_today": 0,
+            "failed_today": 0,
+            "today_release_sources": 0,
+            "unchecked_labels": [],
+            "failed_labels": [],
+            "message": f"오늘 수집 점검 현황을 읽지 못했습니다: {type(exc).__name__}",
+        }
+
+    source_labels = {source.id: source_display_label(source.name) for source in sources}
+    source_ids = set(source_labels)
+    checked_ids = {str(row["source_id"]) for row in status_rows if str(row["source_id"]) in source_ids}
+    success_ids = {
+        str(row["source_id"])
+        for row in status_rows
+        if str(row["source_id"]) in source_ids and int(row["ok_count"] or 0) > 0
+    }
+    failed_ids = {
+        str(row["source_id"])
+        for row in status_rows
+        if str(row["source_id"]) in source_ids and int(row["failed_count"] or 0) > 0
+    }
+    release_ids = {str(row["source_id"]) for row in release_rows if str(row["source_id"]) in source_ids}
+    unchecked_ids = [source.id for source in sources if source.id not in checked_ids]
+    failed_labels = [source_labels[source_id] for source_id in sorted(failed_ids, key=source_labels.get)]
+    unchecked_labels = [source_labels[source_id] for source_id in unchecked_ids]
+
+    if not sources:
+        status_level = "warning"
+        status_label = "점검 전"
+        message = "활성화된 수집 기관이 없습니다."
+    elif not is_business_day:
+        status_level = "ok"
+        status_label = "휴일 대기"
+        message = "주말 또는 공휴일이라 오늘 점검 누락을 경고하지 않습니다."
+    elif now.hour < check_hour:
+        status_level = "ok"
+        status_label = "점검 대기"
+        message = f"{check_hour}시 이후 오늘 기관별 점검 누락을 판정합니다."
+    elif unchecked_ids:
+        status_level = "warning"
+        status_label = "미점검"
+        message = f"오늘 아직 점검되지 않은 기관이 {len(unchecked_ids)}곳 있습니다."
+    elif failed_ids:
+        status_level = "warning"
+        status_label = "실패 포함"
+        message = f"전체 기관은 점검됐고 실패 기록 {len(failed_ids)}곳은 자동 복구 대상입니다."
+    else:
+        status_level = "ok"
+        status_label = "정상"
+        message = "오늘 활성 기관이 모두 점검됐습니다."
+
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "date": today.isoformat(),
+        "enabled_total": len(sources),
+        "checked_today": len(checked_ids),
+        "success_today": len(success_ids),
+        "failed_today": len(failed_ids),
+        "today_release_sources": len(release_ids),
+        "unchecked_labels": unchecked_labels,
+        "failed_labels": failed_labels,
+        "message": message,
+    }
+
+
+def _collection_coverage_check_hour() -> int:
+    raw_value = os.getenv(
+        "NEWS_SUMMARY_COLLECTION_COVERAGE_CHECK_HOUR",
+        str(DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR),
+    )
+    try:
+        hour = int(raw_value)
+    except ValueError:
+        return DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR
+    return max(0, min(hour, 23))
 
 
 def _recovery_candidate_report(store: Store, config_path: Path) -> dict[str, object]:

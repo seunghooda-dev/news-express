@@ -10,6 +10,7 @@ from news_summary.scheduler import AutoCollectorStatus
 from news_summary.storage import Store
 from news_summary.web import (
     _asset_request_headers,
+    _collection_check_coverage_report,
     _date_warning,
     _filter_drafts_by_review,
     _filter_drafts_by_date,
@@ -3266,6 +3267,131 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     assert "수집 대상 커버리지" in html
     assert "29/29" in html
     assert "광주·전남 필수 수집 대상이 모두 포함되어 있습니다." in html
+
+
+def test_collection_check_coverage_report_flags_unchecked_business_day_sources(monkeypatch):
+    db_path = Path(f"data/.test_collection_check_coverage_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [
+        Source(id="checked", name="점검 기관", region="전남", type="html_board"),
+        Source(id="missing", name="미점검 기관", region="전남", type="html_board"),
+    ]
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 10, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setenv("NEWS_SUMMARY_COLLECTION_COVERAGE_CHECK_HOUR", "9")
+    monkeypatch.setattr(web_module, "load_sources", lambda config_path: sources)
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_collection_runs
+            (source_id, source_name, status, message, failure_stage, failure_reason,
+             releases_found, inserted_count, repaired_dates, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "checked",
+                "점검 기관",
+                "ok",
+                "원문 검증 통과 1건, 새로 저장 1건",
+                "",
+                "",
+                1,
+                1,
+                0,
+                "2026-07-06T00:30:00+00:00",
+            ),
+        )
+    store.add_press_release(
+        PressRelease(
+            source_id="checked",
+            source_name="점검 기관",
+            region="전남",
+            title="오늘 원문",
+            url="https://example.com/today-release",
+            content="오늘 수집 커버리지 점검용 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+
+    report = _collection_check_coverage_report(store, Path("unused.yaml"))
+
+    assert report["status_level"] == "warning"
+    assert report["status_label"] == "미점검"
+    assert report["enabled_total"] == 2
+    assert report["checked_today"] == 1
+    assert report["success_today"] == 1
+    assert report["today_release_sources"] == 1
+    assert report["unchecked_labels"] == ["미점검 기관"]
+
+
+def test_collection_check_coverage_report_does_not_warn_on_holidays(monkeypatch):
+    db_path = Path(f"data/.test_collection_check_coverage_holiday_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="holiday", name="휴일 기관", region="전남", type="html_board")
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 5, 12, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(web_module, "load_sources", lambda config_path: [source])
+
+    report = _collection_check_coverage_report(store, Path("unused.yaml"))
+
+    assert report["status_level"] == "ok"
+    assert report["status_label"] == "휴일 대기"
+    assert report["enabled_total"] == 1
+    assert report["checked_today"] == 0
+    assert "공휴일" in report["message"]
+
+
+def test_operations_page_shows_collection_check_coverage_card(monkeypatch):
+    db_path = Path(f"data/.test_operations_collection_check_coverage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+    from news_summary.web import create_app
+
+    monkeypatch.setattr(
+        web_module,
+        "_collection_check_coverage_report",
+        lambda store, config_path: {
+            "status_level": "warning",
+            "status_label": "미점검",
+            "date": "2026-07-06",
+            "enabled_total": 2,
+            "checked_today": 1,
+            "success_today": 1,
+            "failed_today": 0,
+            "today_release_sources": 1,
+            "unchecked_labels": ["미점검 기관"],
+            "failed_labels": [],
+            "message": "오늘 아직 점검되지 않은 기관이 1곳 있습니다.",
+        },
+    )
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "오늘 수집 점검 커버리지" in html
+    assert "1/2" in html
+    assert "오늘 아직 점검되지 않은 기관이 1곳 있습니다." in html
+    assert "미점검 미점검 기관" in html
 
 
 def test_recovery_candidate_report_lists_sources_due_for_recheck(monkeypatch):
