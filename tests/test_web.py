@@ -2325,10 +2325,11 @@ def test_refine_route_updates_current_draft_with_gemini(monkeypatch):
     detail_html = detail.data.decode("utf-8")
     assert 'data-refine-url="' in detail_html
     assert 'data-initial-url="' in detail_html
-    assert "처음으로" in detail_html
-    assert "내용 90%" in detail_html
+    assert "최초 초안 복원" in detail_html
+    assert "제목 간결화" in detail_html
+    assert "본문 간결화" in detail_html
     assert "90% 수준으로 분량을 줄여 간결하게 작성해줘." in detail_html
-    assert "내용 110%" in detail_html
+    assert "본문 보강" in detail_html
     assert "다듬는 중..." in detail_html
     assert "현재 원문에서 빠진 핵심 정보가 있으면 보충해서 문장 내용을 110% 로 더 풍부하게 다듬어줘. 단, 원문에 없는 사실은 추가하지 말고 문단 형식은 유지해줘." in detail_html
     assert "3문단 재정리" not in detail_html
