@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 DEFAULT_BACKUP_DIR = Path("data/backups")
 BACKUP_FILE_PREFIX = "news-express"
+POSTGRES_EXPORT_ARCHIVE_NAME = "data/postgres_export.json"
+POSTGRES_BACKUP_TABLES = (
+    "press_releases",
+    "press_release_assets",
+    "article_drafts",
+    "app_metadata",
+    "draft_history",
+    "draft_generation_failures",
+    "source_collection_runs",
+    "visitor_access_logs",
+)
 ALLOWED_RESTORE_ROOTS = (
     ".env",
     "config/municipalities.yaml",
@@ -23,11 +36,11 @@ ALLOWED_DATA_SUFFIXES = (".sqlite", ".json")
 
 def create_backup(
     project_root: Path,
-    db_path: Path,
+    db_path: Path | str,
     backup_dir: Path = DEFAULT_BACKUP_DIR,
 ) -> Path:
     project_root = project_root.resolve()
-    backup_dir = _resolve_under(project_root, backup_dir)
+    backup_dir = _resolve_backup_dir(project_root, backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_path = _unique_backup_path(backup_dir, timestamp)
@@ -35,7 +48,10 @@ def create_backup(
     with tempfile.TemporaryDirectory() as tmp:
         temp_root = Path(tmp)
         with zipfile.ZipFile(backup_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            _add_sqlite_backup(archive, temp_root, project_root, _resolve_under(project_root, db_path))
+            if _is_postgres_location(db_path):
+                _add_postgres_export(archive, str(db_path))
+            else:
+                _add_sqlite_backup(archive, temp_root, project_root, _resolve_under(project_root, Path(db_path)))
             for relative in (".env", "data/writing_settings.json", "config/municipalities.yaml"):
                 _add_file_if_exists(archive, project_root, relative)
             _add_directory_if_exists(archive, project_root, "exports")
@@ -70,6 +86,11 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
                     for member in archive.infolist()
                     if not member.is_dir() and member.filename.replace("\\", "/").endswith(".sqlite")
                 ]
+                postgres_members = [
+                    member
+                    for member in archive.infolist()
+                    if not member.is_dir() and member.filename.replace("\\", "/") == POSTGRES_EXPORT_ARCHIVE_NAME
+                ]
                 for member in sqlite_members[:1]:
                     extracted = temp_root / "verify.sqlite"
                     with archive.open(member) as source, extracted.open("wb") as target:
@@ -81,13 +102,25 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
                         "message": f"{backup_path.name} 압축과 SQLite 무결성을 확인했습니다.",
                         "checked_sqlite": True,
                     }
+                for member in postgres_members[:1]:
+                    with archive.open(member) as source:
+                        payload = json.load(source)
+                    _verify_postgres_export_payload(payload)
+                    return {
+                        "ok": True,
+                        "status_label": "검증 정상",
+                        "message": f"{backup_path.name} 압축과 PostgreSQL JSON 덤프 구조를 확인했습니다.",
+                        "checked_sqlite": False,
+                        "checked_database_export": True,
+                    }
                 return {
                     "ok": True,
                     "status_label": "검증 정상",
                     "message": f"{backup_path.name} 압축 파일을 확인했습니다.",
                     "checked_sqlite": False,
+                    "checked_database_export": False,
                 }
-    except (OSError, sqlite3.Error, zipfile.BadZipFile) as exc:
+    except (OSError, sqlite3.Error, zipfile.BadZipFile, json.JSONDecodeError, ValueError) as exc:
         return {
             "ok": False,
             "status_label": "백업 확인 필요",
@@ -165,6 +198,50 @@ def _add_sqlite_backup(archive: zipfile.ZipFile, temp_root: Path, project_root: 
     archive.write(temp_db, _relative_archive_name(project_root, db_path))
 
 
+def _add_postgres_export(archive: zipfile.ZipFile, database_url: str) -> None:
+    exported_at = datetime.now(timezone.utc).isoformat()
+    tables: dict[str, list[dict[str, Any]]] = {}
+    with _connect_postgres(database_url) as conn:
+        for table in POSTGRES_BACKUP_TABLES:
+            order_column = "key" if table == "app_metadata" else "id"
+            rows = conn.execute(f"SELECT * FROM {table} ORDER BY {order_column}").fetchall()
+            tables[table] = [dict(row) for row in rows]
+    payload = {
+        "format": "news-express-postgres-json-v1",
+        "exported_at": exported_at,
+        "tables": tables,
+    }
+    archive.writestr(
+        POSTGRES_EXPORT_ARCHIVE_NAME,
+        json.dumps(payload, ensure_ascii=False, default=str, indent=2),
+    )
+
+
+def _connect_postgres(database_url: str):
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+    except ModuleNotFoundError as exc:  # pragma: no cover - PostgreSQL deployments install psycopg.
+        raise RuntimeError("PostgreSQL 백업을 생성하려면 psycopg 패키지가 필요합니다.") from exc
+    return psycopg.connect(database_url, row_factory=dict_row)
+
+
+def _verify_postgres_export_payload(payload: object) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("PostgreSQL 덤프가 JSON 객체가 아닙니다.")
+    if payload.get("format") != "news-express-postgres-json-v1":
+        raise ValueError("PostgreSQL 덤프 형식이 올바르지 않습니다.")
+    tables = payload.get("tables")
+    if not isinstance(tables, dict):
+        raise ValueError("PostgreSQL 덤프 테이블 정보가 없습니다.")
+    missing = [table for table in POSTGRES_BACKUP_TABLES if table not in tables]
+    if missing:
+        raise ValueError("PostgreSQL 덤프에 누락된 테이블이 있습니다: " + ", ".join(missing))
+    for table, rows in tables.items():
+        if not isinstance(rows, list):
+            raise ValueError(f"PostgreSQL 덤프 테이블 형식이 올바르지 않습니다: {table}")
+
+
 def _add_file_if_exists(archive: zipfile.ZipFile, project_root: Path, relative: str) -> None:
     path = project_root / relative
     if path.exists() and path.is_file():
@@ -191,6 +268,17 @@ def _resolve_under(project_root: Path, path: Path) -> Path:
     return resolved
 
 
+def _resolve_backup_dir(project_root: Path, path: Path) -> Path:
+    path = Path(path)
+    if path.is_absolute():
+        return path.resolve()
+    return _resolve_under(project_root, path)
+
+
+def _is_postgres_location(value: Path | str) -> bool:
+    return str(value).startswith(("postgresql://", "postgres://"))
+
+
 def _is_within(root: Path, path: Path) -> bool:
     try:
         os.path.commonpath([str(root), str(path)]) == str(root)
@@ -201,6 +289,8 @@ def _is_within(root: Path, path: Path) -> bool:
 
 def _is_allowed_restore_path(name: str) -> bool:
     normalized = name.strip("/")
+    if normalized == POSTGRES_EXPORT_ARCHIVE_NAME:
+        return False
     if normalized.startswith("data/") and normalized.endswith(ALLOWED_DATA_SUFFIXES):
         return True
     for allowed in ALLOWED_RESTORE_ROOTS:

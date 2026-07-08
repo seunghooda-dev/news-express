@@ -113,7 +113,7 @@ news-summary migrate-sqlite-to-postgres --sqlite-db data/news_summary.sqlite --d
 
 대상 PostgreSQL DB에 이미 데이터가 있으면 명령은 중단됩니다. 기존 데이터를 비우고 다시 넣어야 할 때만 `--replace`를 추가합니다.
 
-PostgreSQL 모드에서는 앱의 SQLite zip 백업 기능 대신 클라우드 DB 제공자의 백업/스냅샷 기능을 사용합니다.
+PostgreSQL 모드에서는 앱 백업 ZIP 안에 `data/postgres_export.json` 논리 덤프가 포함됩니다. 운영 복구 안정성을 위해 이 앱 백업과 함께 클라우드 DB 제공자의 백업/스냅샷도 유지합니다.
 
 ## Render Starter 배포
 
@@ -207,7 +207,7 @@ Secret이 아직 없으면 워크플로는 실패하지 않고 보완 배포를 
 .\scripts\install_startup_task.ps1
 ```
 
-- 백업 대상: SQLite DB, 기사 설정, 수집 설정, `.env`, `exports/`
+- 백업 대상: SQLite DB 또는 PostgreSQL JSON 덤프, 기사 설정, 수집 설정, `.env`, `exports/`
 - `install_startup_task.ps1`은 Windows 작업 스케줄러에 5분마다 서버 생존 확인 작업을 등록합니다.
 
 ## 검수 화면

@@ -453,10 +453,12 @@ def create_app() -> Flask:
 
     @app.post("/operations/backup")
     def create_backup_route():
-        if store.is_postgres:
-            flash("PostgreSQL 모드에서는 SQLite zip 백업 대신 클라우드 DB 백업/스냅샷을 사용하세요.")
+        try:
+            backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
+        except Exception as exc:  # noqa: BLE001 - backup failures should be visible in operations.
+            logger.exception("backup creation failed")
+            flash(f"백업 생성에 실패했습니다: {type(exc).__name__}: {exc}")
             return redirect(url_for("operations"))
-        backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
         _clear_operations_report_cache()
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")
@@ -1471,7 +1473,10 @@ def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
     backups = _backup_files(backup_dir)
     latest_backup = backups[0] if backups else None
     if store.is_postgres:
-        note = "PostgreSQL은 Neon 백업/스냅샷도 함께 확인하는 구성이 안전합니다."
+        if latest_backup:
+            note = "최근 앱 백업 ZIP이 확인됐습니다. Neon 백업/스냅샷도 함께 유지하는 구성이 안전합니다."
+        else:
+            note = "앱 백업 ZIP이 아직 없습니다. PostgreSQL 백업은 JSON 덤프로 생성되며 Neon 스냅샷도 함께 확인하는 구성이 안전합니다."
     elif not latest_backup:
         note = "아직 로컬 백업 파일이 없습니다."
     else:
