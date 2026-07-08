@@ -1529,3 +1529,23 @@ def test_auto_collector_enabled_state_can_be_persisted(monkeypatch):
 
     assert restored is not None
     assert restored.snapshot().enabled is True
+
+
+def test_auto_collector_snapshot_reports_thread_alive(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_thread_alive_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    monkeypatch.setenv("NEWS_SUMMARY_STARTUP_CATCHUP", "false")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector.snapshot().thread_alive is False
+
+    collector.start()
+    try:
+        assert collector.snapshot().thread_alive is True
+    finally:
+        collector.stop()
+        if collector._thread:
+            collector._thread.join(timeout=1)

@@ -84,6 +84,7 @@ def env_int(name: str, default: int, minimum: int = 1) -> int:
 class AutoCollectorStatus:
     enabled: bool = False
     running: bool = False
+    thread_alive: bool | None = None
     interval_seconds: int = DEFAULT_AUTO_INTERVAL_SECONDS
     collect_limit: int = DEFAULT_AUTO_COLLECT_LIMIT
     draft_limit: int = 250
@@ -304,10 +305,12 @@ class AutoCollector:
             logger.exception("collection report snapshot refresh failed")
 
     def snapshot(self) -> AutoCollectorStatus:
+        thread_alive = bool(self._thread and self._thread.is_alive())
         with self._state_lock:
             return AutoCollectorStatus(
                 enabled=self._status.enabled,
                 running=self._status.running,
+                thread_alive=thread_alive,
                 interval_seconds=self._status.interval_seconds,
                 collect_limit=self._status.collect_limit,
                 draft_limit=self._status.draft_limit,
@@ -387,6 +390,7 @@ class AutoCollector:
                 payload = {
                     "enabled": self._status.enabled,
                     "running": self._status.running,
+                    "thread_alive": bool(self._thread and self._thread.is_alive()),
                     "interval_seconds": self._status.interval_seconds,
                     "collect_limit": self._status.collect_limit,
                     "draft_limit": self._status.draft_limit,
@@ -481,15 +485,22 @@ class AutoCollector:
             status_updated_at = _parse_datetime(self._status.last_finished_at or self._status.last_started_at)
             collector_enabled = self._status.enabled
             collector_running = self._status.running
+            collector_thread_alive = bool(self._thread and self._thread.is_alive())
         if collector_enabled and not collector_running and status_updated_at:
             stale_minutes = int((started - status_updated_at.astimezone(timezone.utc)).total_seconds() // 60)
             if stale_minutes >= 120:
                 status_level = "warning" if status_level == "ok" else status_level
                 checks.append({"name": "auto_collector", "ok": False, "message": f"자동 수집 최근 실행 후 {stale_minutes}분 경과"})
+            elif not collector_thread_alive:
+                status_level = "warning" if status_level == "ok" else status_level
+                checks.append({"name": "auto_collector", "ok": False, "message": "자동 수집 백그라운드 스레드 중단"})
             else:
                 checks.append({"name": "auto_collector", "ok": True, "message": "자동 수집 상태 정상"})
         elif collector_enabled and collector_running:
             checks.append({"name": "auto_collector", "ok": True, "message": "자동 수집 실행 중"})
+        elif collector_enabled and not collector_thread_alive:
+            status_level = "warning" if status_level == "ok" else status_level
+            checks.append({"name": "auto_collector", "ok": False, "message": "자동 수집 백그라운드 스레드 미시작"})
         elif not collector_enabled:
             status_level = "warning" if status_level == "ok" else status_level
             checks.append({"name": "auto_collector", "ok": False, "message": "자동 수집 꺼짐"})

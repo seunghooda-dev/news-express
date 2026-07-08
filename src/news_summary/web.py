@@ -285,12 +285,13 @@ def create_app() -> Flask:
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
             auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
-            auto_label = "running" if auto_status["running"] else ("enabled" if auto_status["enabled"] else "disabled")
+            auto_label = _auto_collector_health_label(auto_status)
             return jsonify(
                 {
                     "ok": True,
                     "database": "ok",
                     "auto_collector": auto_label,
+                    "auto_collector_thread_alive": auto_status.get("thread_alive"),
                     "last_auto_finished_at": auto_status["last_auto_finished_at"],
                     "next_run_at": auto_status["next_run_at"],
                     "commit": _running_commit_short(),
@@ -1953,6 +1954,7 @@ def _operations_health_report(
 
     auto_enabled = bool(_auto_status_value(auto_status, "enabled"))
     auto_running = bool(_auto_status_value(auto_status, "running"))
+    auto_thread_alive = _auto_status_value(auto_status, "thread_alive")
     last_auto_finished_at = _auto_status_value(auto_status, "last_auto_finished_at")
     last_auto_finished = _parse_datetime(last_auto_finished_at)
     stale_running_snapshot_at = _auto_status_value(auto_status, "stale_running_snapshot_at")
@@ -1963,6 +1965,8 @@ def _operations_health_report(
         issues.append(f"오래된 자동 수집 실행 표시 자동 보정: {label}")
     elif not auto_enabled:
         issues.append("자동 수집 꺼짐")
+    elif auto_thread_alive is False and not auto_running:
+        issues.append("자동 수집 백그라운드 스레드 중단")
     elif last_auto_finished:
         minutes_since_auto = int((now - last_auto_finished.astimezone(LOCAL_TZ)).total_seconds() // 60)
         if minutes_since_auto >= 90 and not auto_running:
@@ -2008,6 +2012,16 @@ def _auto_status_value(auto_status: object | None, name: str) -> object | None:
     if isinstance(auto_status, dict):
         return auto_status.get(name)
     return getattr(auto_status, name, None)
+
+
+def _auto_collector_health_label(auto_status: dict[str, object]) -> str:
+    if auto_status.get("running"):
+        return "running"
+    if not auto_status.get("enabled"):
+        return "disabled"
+    if auto_status.get("thread_alive") is False:
+        return "stopped"
+    return "enabled"
 
 
 def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, object]:
@@ -2182,6 +2196,7 @@ def _auto_collector_status_payload(store: Store, status) -> dict[str, object]:
     payload = {
         "enabled": status.enabled,
         "running": status.running,
+        "thread_alive": getattr(status, "thread_alive", None),
         "interval_seconds": status.interval_seconds,
         "collect_limit": status.collect_limit,
         "draft_limit": status.draft_limit,

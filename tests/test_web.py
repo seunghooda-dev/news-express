@@ -2976,7 +2976,38 @@ def test_healthz_reports_database_status(monkeypatch):
     payload = response.get_json()
     assert payload["database"] == "ok"
     assert payload["ok"] is True
-    assert payload["auto_collector"] in {"enabled", "running", "disabled", "unavailable"}
+    assert payload["auto_collector"] in {"enabled", "running", "disabled", "stopped", "unavailable"}
+    if payload["auto_collector"] != "unavailable":
+        assert "auto_collector_thread_alive" in payload
+
+
+def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):
+    db_path = Path(f"data/.test_healthz_stopped_collector_thread_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    class StoppedCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=False,
+                thread_alive=False,
+                progress_total=29,
+                progress_message="다음 정각 자동 수집 대기 중",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = StoppedCollector()
+    app.testing = True
+    client = app.test_client()
+
+    health = client.get("/healthz").get_json()
+    operations_html = client.get("/operations").data.decode("utf-8")
+
+    assert health["auto_collector"] == "stopped"
+    assert health["auto_collector_thread_alive"] is False
+    assert "자동 수집 백그라운드 스레드 중단" in operations_html
 
 
 def test_operations_page_creates_and_restores_backup(monkeypatch):
