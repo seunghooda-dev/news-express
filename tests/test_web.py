@@ -2662,6 +2662,33 @@ def test_operations_page_records_masked_visitor_access(monkeypatch):
     assert "Chrome" in html
 
 
+def test_visitor_access_prune_is_throttled(monkeypatch):
+    db_path = Path(f"data/.test_visitor_prune_throttle_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_visitor_access_last_pruned_at", 0.0)
+    prune_calls = []
+
+    def fake_prune(self, cutoff_iso):
+        prune_calls.append(cutoff_iso)
+        return 0
+
+    monkeypatch.setattr(Store, "prune_visitor_access_logs", fake_prune)
+
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    first = client.get("/drafts")
+    second = client.get("/press-releases")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(prune_calls) == 1
+
+
 def test_operations_page_filters_visitor_access_by_recent_date(monkeypatch):
     db_path = Path(f"data/.test_visitor_access_date_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

@@ -82,11 +82,14 @@ DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
 LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
+VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
 
 AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]]
 _latest_github_commit_cache: dict[tuple[str, str], tuple[float, str | None]] = {}
 _operations_report_cache: dict[tuple[str, ...], tuple[float, dict[str, object]]] = {}
 _operations_report_cache_lock = RLock()
+_visitor_access_prune_lock = RLock()
+_visitor_access_last_pruned_at = 0.0
 
 
 class AssetDownloadError(RuntimeError):
@@ -2131,7 +2134,18 @@ def _record_visitor_access(store: Store, status_code: int) -> None:
         status_code,
         _browser_label(request.headers.get("User-Agent")),
     )
-    store.prune_visitor_access_logs(cutoff_iso)
+    if _should_prune_visitor_access_logs():
+        store.prune_visitor_access_logs(cutoff_iso)
+
+
+def _should_prune_visitor_access_logs() -> bool:
+    global _visitor_access_last_pruned_at
+    now = time.monotonic()
+    with _visitor_access_prune_lock:
+        if now - _visitor_access_last_pruned_at < VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS:
+            return False
+        _visitor_access_last_pruned_at = now
+        return True
 
 
 def _visitor_access_overview(store: Store) -> dict[str, object]:
