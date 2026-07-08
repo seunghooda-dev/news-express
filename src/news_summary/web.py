@@ -11,6 +11,7 @@ from collections import Counter, OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from threading import RLock
 from urllib.parse import quote
 
 import httpx
@@ -122,6 +123,7 @@ def create_app() -> Flask:
     store.sync_source_metadata(source_options)
     app.config["NEWS_SUMMARY_LOG_PATH"] = log_path
     asset_preview_cache: AssetPreviewCache = OrderedDict()
+    asset_preview_cache_lock = RLock()
 
     @app.context_processor
     def inject_auth_state():
@@ -642,7 +644,8 @@ def create_app() -> Flask:
         if not asset_url.startswith(("http://", "https://")):
             return Response("이미지 미리보기를 표시할 수 없습니다.", status=404, content_type="text/plain; charset=utf-8")
         cache_key = (int(asset_id), asset_url)
-        cached_preview = _asset_preview_cache_get(asset_preview_cache, cache_key)
+        with asset_preview_cache_lock:
+            cached_preview = _asset_preview_cache_get(asset_preview_cache, cache_key)
         if cached_preview:
             response_content_type, response_content = cached_preview
             return _asset_preview_response(response_content_type, response_content, "HIT")
@@ -656,18 +659,20 @@ def create_app() -> Flask:
                 )
         except (httpx.HTTPError, AssetDownloadError) as exc:
             logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
-            stale_preview = _asset_preview_cache_get(asset_preview_cache, cache_key, allow_stale=True)
+            with asset_preview_cache_lock:
+                stale_preview = _asset_preview_cache_get(asset_preview_cache, cache_key, allow_stale=True)
             if stale_preview:
                 response_content_type, response_content = stale_preview
                 return _asset_preview_response(response_content_type, response_content, "STALE")
             return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
 
-        _asset_preview_cache_put(
-            asset_preview_cache,
-            cache_key,
-            response_content_type,
-            response_content,
-        )
+        with asset_preview_cache_lock:
+            _asset_preview_cache_put(
+                asset_preview_cache,
+                cache_key,
+                response_content_type,
+                response_content,
+            )
         return _asset_preview_response(response_content_type, response_content, "MISS")
 
     @app.get("/sources/<source_id>")
