@@ -3201,6 +3201,8 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["source_collection_recent_failure_count"] == 0
     assert payload["source_collection_unresolved_count"] == 0
     assert payload["source_collection_temporary_count"] == 0
+    assert payload["source_collection_recent_failed_sources"] == []
+    assert payload["source_collection_failure_stages"] == []
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
 
@@ -3232,6 +3234,17 @@ def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
     assert payload["source_collection_unresolved_count"] == 1
     assert payload["source_collection_temporary_count"] == 0
     assert payload["source_collection_message"] == "미복구 수집 실패 기관 1곳"
+    assert payload["source_collection_recent_failed_sources"] == [
+        {
+            "source_id": "sample-source",
+            "source_name": "테스트 기관 보도자료",
+            "failure_count": 3,
+            "latest_failure_stage": "본문 파싱 실패",
+        }
+    ]
+    assert payload["source_collection_failure_stages"] == [
+        {"stage": "본문 파싱 실패", "count": 3}
+    ]
     assert payload["source_collection_unresolved_sources"] == [
         {
             "source_id": "sample-source",

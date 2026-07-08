@@ -2642,11 +2642,20 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
             "source_collection_recent_failure_count": None,
             "source_collection_unresolved_count": None,
             "source_collection_temporary_count": None,
+            "source_collection_recent_failed_sources": [],
+            "source_collection_failure_stages": [],
             "source_collection_unresolved_sources": [],
             "source_collection_message": f"수집 상태 확인 실패: {type(exc).__name__}",
         }
 
     failure_rows = [row for row in recent_rows if str(row["status"]) == "failed"]
+    failure_source_counts: Counter[str] = Counter(str(row["source_id"]) for row in failure_rows)
+    source_latest_failure = {}
+    for row in failure_rows:
+        source_id = str(row["source_id"])
+        if source_id not in source_latest_failure:
+            source_latest_failure[source_id] = row
+    failure_stage_counts = Counter(str(row["failure_stage"] or "수집 실패") for row in failure_rows)
     consecutive_failures = _consecutive_failure_counts(status_sequence_rows)
     unresolved_rows = [
         row
@@ -2681,6 +2690,20 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
         "source_collection_recent_failure_count": len(failure_rows),
         "source_collection_unresolved_count": len(unresolved_rows),
         "source_collection_temporary_count": len(temporary_rows),
+        "source_collection_recent_failed_sources": [
+            {
+                "source_id": source_id,
+                "source_name": source_display_label(str(source_latest_failure[source_id]["source_name"])),
+                "failure_count": count,
+                "latest_failure_stage": str(source_latest_failure[source_id]["failure_stage"] or "수집 실패"),
+            }
+            for source_id, count in failure_source_counts.most_common(5)
+            if source_id in source_latest_failure
+        ],
+        "source_collection_failure_stages": [
+            {"stage": stage, "count": count}
+            for stage, count in failure_stage_counts.most_common(5)
+        ],
         "source_collection_unresolved_sources": [
             {
                 "source_id": str(row["source_id"]),
