@@ -11,7 +11,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .backup import verify_backup
+from .backup import create_backup, verify_backup
 from .models import Source
 from .ops_logging import get_logger
 from .service import (
@@ -28,7 +28,7 @@ from .service import (
     repair_missing_published_dates,
     retention_holidays,
 )
-from .settings import env_path, load_sources
+from .settings import PROJECT_ROOT, env_path, load_sources
 from .storage import Store
 
 
@@ -51,6 +51,8 @@ AUTO_ANOMALY_CHECK_HOUR_ENV = "NEWS_SUMMARY_AUTO_ANOMALY_CHECK_HOUR"
 AUTO_DEDUPLICATE_ENV = "NEWS_SUMMARY_AUTO_DEDUPLICATE"
 AUTO_DEDUPLICATE_LIMIT_ENV = "NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT"
 AUTO_URL_DISCOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT"
+AUTO_BACKUP_CREATE_ENV = "NEWS_SUMMARY_AUTO_BACKUP_CREATE"
+AUTO_BACKUP_MAX_AGE_HOURS_ENV = "NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
 PUBLIC_URL_ENV = "NEWS_SUMMARY_PUBLIC_URL"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
@@ -476,6 +478,9 @@ class AutoCollector:
         discovery_messages = self._discover_fallback_url_candidates_once()
         if discovery_messages:
             messages.extend(discovery_messages)
+        backup_create_message = self._create_backup_if_needed_once(now)
+        if backup_create_message:
+            messages.append(backup_create_message)
         backup_message = self._verify_latest_backup_once()
         if backup_message:
             messages.append(backup_message)
@@ -675,6 +680,23 @@ class AutoCollector:
         if result.get("ok"):
             return None
         return f"백업 자동 검증 확인 필요: {result.get('message')}"
+
+    def _create_backup_if_needed_once(self, now: datetime) -> str | None:
+        if not env_bool(AUTO_BACKUP_CREATE_ENV, True):
+            return None
+        backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
+        latest_backup = _latest_backup_file(backup_dir)
+        max_age_hours = env_int(AUTO_BACKUP_MAX_AGE_HOURS_ENV, 24, minimum=1)
+        if latest_backup and not _backup_is_stale(latest_backup, now, max_age_hours):
+            return None
+        try:
+            backup_path = create_backup(PROJECT_ROOT, self.store.path, backup_dir)
+        except Exception as exc:  # noqa: BLE001 - maintenance should report backup failures without stopping.
+            logger.exception("auto backup creation failed")
+            return f"자동 백업 생성 실패: {type(exc).__name__}: {exc}"
+        reason = "백업 없음" if not latest_backup else f"최근 백업 {max_age_hours}시간 초과"
+        logger.info("auto backup created path=%s reason=%s", backup_path, reason)
+        return f"자동 백업 생성: {backup_path.name} ({reason})"
 
     def _drain_pending_queue_once(self) -> list[str]:
         if not env_bool(AUTO_QUEUE_DRAIN_ENV, True):
@@ -1036,6 +1058,14 @@ def _latest_backup_file(backup_dir: Path) -> Path | None:
     if not files:
         return None
     return max(files, key=lambda path: path.stat().st_mtime)
+
+
+def _backup_is_stale(backup_path: Path, now: datetime, max_age_hours: int) -> bool:
+    try:
+        modified_at = datetime.fromtimestamp(backup_path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return True
+    return now.astimezone(timezone.utc) - modified_at >= timedelta(hours=max_age_hours)
 
 
 def _collection_anomaly_snapshot(store: Store, config_path: Path, *, now: datetime) -> dict[str, object]:

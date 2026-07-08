@@ -106,7 +106,8 @@
     <p class="meta">마지막 자동 수집 {{ operations_health.last_auto_finished_at|date_label }}</p>
     <p class="meta">실패 재검증 {{ automation_settings.recovery_interval }}초마다 최대 {{ automation_settings.recovery_limit }}곳 · 네트워크 장애 재검증 {{ automation_settings.network_recheck_cooldown }}초 쿨다운 · Gemini 큐 {{ automation_settings.queue_interval }}초마다 최대 {{ automation_settings.queue_limit }}건</p>
     <p class="meta">업무일 무수집 보정 {{ automation_settings.quiet_recheck_hour }}시 이후 · 이상치 집중 재수집 최대 {{ automation_settings.focused_recrawl_limit }}곳</p>
-    <p class="meta">URL 후보 탐색 최대 {{ automation_settings.url_discovery_limit }}곳 · 중복 정리 최대 {{ automation_settings.deduplicate_limit }}건 · 백업 검증 {% if automation_settings.backup_verify in ['1', 'true', 'True'] %}켜짐{% else %}꺼짐{% endif %}</p>
+    <p class="meta">URL 후보 탐색 최대 {{ automation_settings.url_discovery_limit }}곳 · 중복 정리 최대 {{ automation_settings.deduplicate_limit }}건</p>
+    <p class="meta">백업 자동 생성 {% if automation_settings.backup_create in ['1', 'true', 'True'] %}켜짐{% else %}꺼짐{% endif %} · 최대 {{ automation_settings.backup_max_age_hours }}시간 간격 · 백업 검증 {% if automation_settings.backup_verify in ['1', 'true', 'True'] %}켜짐{% else %}꺼짐{% endif %}</p>
     {% if operations_health.top_failure_stages %}
       <p class="gemini-models">
         주요 원인:

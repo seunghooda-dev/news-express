@@ -2330,6 +2330,8 @@ def _automation_settings_report() -> dict[str, object]:
         "anomaly_check_hour": os.getenv("NEWS_SUMMARY_AUTO_ANOMALY_CHECK_HOUR", "10"),
         "deduplicate_limit": os.getenv("NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT", "50"),
         "url_discovery_limit": os.getenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "3"),
+        "backup_create": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_CREATE", "1"),
+        "backup_max_age_hours": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS", "24"),
         "backup_verify": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "1"),
     }
 

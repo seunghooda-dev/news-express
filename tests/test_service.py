@@ -8,6 +8,7 @@ import httpx
 from news_summary.collectors import CollectionError
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, Source
 from news_summary.scheduler import (
+    AUTO_BACKUP_VERIFY_STATUS_KEY,
     AUTO_COLLECTION_ANOMALY_STATUS_KEY,
     DEFAULT_AUTO_COLLECT_LIMIT,
     AUTO_DAILY_REPORT_KEY,
@@ -383,6 +384,44 @@ def test_auto_maintenance_drains_pending_queue(monkeypatch):
 
     assert any("Gemini 미변환 큐 자동 소진" in message for message in messages)
     assert store.pending_press_release_summary()["total"] == 0
+
+
+def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):
+    db_path = Path(f"data/.test_auto_backup_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_auto_backup_{uuid4().hex}").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="자동 백업 대상 원문",
+            url="https://example.com/auto-backup",
+            content="자동 백업 생성 검증용 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_CREATE", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_DEDUPLICATE", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "0")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+    collector._execute_maintenance_once(datetime(2026, 7, 6, 3, 0, tzinfo=timezone.utc))
+
+    backups = sorted(backup_dir.glob("*.zip"))
+    assert len(backups) == 1
+    verify_payload = json.loads(store.get_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY) or "{}")
+    assert verify_payload["ok"] is True
+    assert verify_payload["backup_name"] == backups[0].name
+    daily_report = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
+    assert any("자동 백업 생성" in message for message in daily_report["messages"])
 
 
 def test_auto_maintenance_recovers_failed_sources(monkeypatch):
