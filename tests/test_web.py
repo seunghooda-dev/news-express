@@ -3205,8 +3205,69 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["source_collection_temporary_count"] == 0
     assert payload["source_collection_recent_failed_sources"] == []
     assert payload["source_collection_failure_stages"] == []
+    assert "collection_check_coverage_status" in payload
+    assert "collection_check_coverage_checked_today" in payload
+    assert "collection_check_coverage_enabled_total" in payload
+    assert "collection_check_coverage_message" in payload
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
+
+
+def test_healthz_reports_collection_check_coverage(monkeypatch):
+    db_path = Path(f"data/.test_healthz_collection_check_coverage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_COLLECTION_COVERAGE_CHECK_HOUR", "9")
+    store = Store(db_path)
+    store.init_db()
+    sources = [
+        Source(id="checked", name="점검 기관", region="전남", type="html_board"),
+        Source(id="missing", name="미점검 기관", region="전남", type="html_board"),
+    ]
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 10, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(web_module, "load_sources", lambda config_path: sources)
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_collection_runs
+            (source_id, source_name, status, message, failure_stage, failure_reason,
+             releases_found, inserted_count, repaired_dates, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "checked",
+                "점검 기관",
+                "ok",
+                "원문 검증 통과 1건, 새로 저장 1건",
+                "",
+                "",
+                1,
+                1,
+                0,
+                "2026-07-06T00:30:00+00:00",
+            ),
+        )
+
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz").get_json()
+
+    assert payload["collection_check_coverage_status"] == "warning"
+    assert payload["collection_check_coverage_label"] == "미점검"
+    assert payload["collection_check_coverage_enabled_total"] == 2
+    assert payload["collection_check_coverage_checked_today"] == 1
+    assert payload["collection_check_coverage_success_today"] == 1
+    assert payload["collection_check_coverage_failed_today"] == 0
+    assert payload["collection_check_coverage_unchecked_count"] == 1
+    assert payload["collection_check_coverage_unchecked_sources"] == ["미점검 기관"]
 
 
 def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):

@@ -327,6 +327,7 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "database": "error"}), 503
         gemini_queue_health = _gemini_queue_health_payload(store)
         source_collection_health = _source_collection_health_payload(store)
+        collection_coverage_health = _collection_check_coverage_health_payload(store, config_path)
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
             _ensure_auto_collector_running(auto_collector)
@@ -350,6 +351,7 @@ def create_app() -> Flask:
                     "commit": _running_commit_short(),
                     **gemini_queue_health,
                     **source_collection_health,
+                    **collection_coverage_health,
                 }
             )
         return jsonify(
@@ -360,6 +362,7 @@ def create_app() -> Flask:
                 "commit": _running_commit_short(),
                 **gemini_queue_health,
                 **source_collection_health,
+                **collection_coverage_health,
             }
         )
 
@@ -1934,6 +1937,26 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
         "unchecked_labels": unchecked_labels,
         "failed_labels": failed_labels,
         "message": message,
+    }
+
+
+def _collection_check_coverage_health_payload(store: Store, config_path: Path) -> dict[str, object]:
+    report = _collection_check_coverage_report(store, config_path)
+    unchecked_labels = list(report.get("unchecked_labels") or [])
+    failed_labels = list(report.get("failed_labels") or [])
+    return {
+        "collection_check_coverage_status": report.get("status_level"),
+        "collection_check_coverage_label": report.get("status_label"),
+        "collection_check_coverage_date": report.get("date"),
+        "collection_check_coverage_enabled_total": int(report.get("enabled_total") or 0),
+        "collection_check_coverage_checked_today": int(report.get("checked_today") or 0),
+        "collection_check_coverage_success_today": int(report.get("success_today") or 0),
+        "collection_check_coverage_failed_today": int(report.get("failed_today") or 0),
+        "collection_check_coverage_unchecked_count": len(unchecked_labels),
+        "collection_check_coverage_today_release_sources": int(report.get("today_release_sources") or 0),
+        "collection_check_coverage_unchecked_sources": unchecked_labels[:5],
+        "collection_check_coverage_failed_sources": failed_labels[:5],
+        "collection_check_coverage_message": report.get("message"),
     }
 
 
