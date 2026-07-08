@@ -68,7 +68,7 @@ DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
-AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
+AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "healthz_details", "login", "logout", "admin_setup", "static"}
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
@@ -317,28 +317,26 @@ def create_app() -> Flask:
     def favicon():
         return Response(status=204)
 
-    @app.get("/healthz")
-    def healthz():
+    def _healthz_response(*, include_details: bool):
         try:
             with store.connect() as conn:
                 conn.execute("SELECT 1").fetchone()
         except Exception as exc:  # noqa: BLE001 - health endpoint should return a clear degraded state.
             logger.warning("health check failed error=%s", exc)
             return jsonify({"ok": False, "database": "error"}), 503
-        gemini_queue_health = _gemini_queue_health_payload(store)
-        source_collection_health = _source_collection_health_payload(store)
-        collection_coverage_health = _collection_check_coverage_health_payload(store, config_path)
-        draft_conversion_health = _draft_conversion_coverage_health_payload(store)
+        payload: dict[str, object] = {
+            "ok": True,
+            "database": "ok",
+            "commit": _running_commit_short(),
+        }
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
             _ensure_auto_collector_running(auto_collector)
             auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
             auto_label = _auto_collector_health_label(auto_status)
             timing_health = _auto_collector_timing_health(auto_status)
-            return jsonify(
+            payload.update(
                 {
-                    "ok": True,
-                    "database": "ok",
                     "auto_collector": auto_label,
                     "auto_collector_thread_alive": auto_status.get("thread_alive"),
                     "auto_collector_timing": timing_health["status"],
@@ -349,25 +347,26 @@ def create_app() -> Flask:
                     "auto_collector_health_message": timing_health["message"],
                     "last_auto_finished_at": auto_status["last_auto_finished_at"],
                     "next_run_at": auto_status["next_run_at"],
-                    "commit": _running_commit_short(),
-                    **gemini_queue_health,
-                    **source_collection_health,
-                    **collection_coverage_health,
-                    **draft_conversion_health,
                 }
             )
-        return jsonify(
-            {
-                "ok": True,
-                "database": "ok",
-                "auto_collector": "unavailable",
-                "commit": _running_commit_short(),
-                **gemini_queue_health,
-                **source_collection_health,
-                **collection_coverage_health,
-                **draft_conversion_health,
-            }
-        )
+        else:
+            payload["auto_collector"] = "unavailable"
+        if include_details:
+            payload.update(_gemini_queue_health_payload(store))
+            payload.update(_source_collection_health_payload(store))
+            payload.update(_collection_check_coverage_health_payload(store, config_path))
+            payload.update(_draft_conversion_coverage_health_payload(store))
+        else:
+            payload["details_url"] = url_for("healthz_details")
+        return jsonify(payload)
+
+    @app.get("/healthz")
+    def healthz():
+        return _healthz_response(include_details=False)
+
+    @app.get("/healthz/details")
+    def healthz_details():
+        return _healthz_response(include_details=True)
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -3218,7 +3217,7 @@ def _browser_label(user_agent: object) -> str:
 def _should_record_visitor_access(endpoint: str, method: str) -> bool:
     if method.upper() not in {"GET", "POST"}:
         return False
-    if endpoint in {"static", "favicon", "healthz", "recrawl_status"}:
+    if endpoint in {"static", "favicon", "healthz", "healthz_details", "recrawl_status"}:
         return False
     if request.path.startswith("/static/"):
         return False

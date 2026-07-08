@@ -3192,27 +3192,11 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["database"] == "ok"
     assert payload["ok"] is True
     assert payload["auto_collector"] in {"enabled", "running", "disabled", "stopped", "unavailable"}
-    assert payload["gemini_queue_status"] == "ok"
-    assert payload["gemini_pending_total"] == 0
-    assert payload["gemini_failure_total"] == 0
-    assert payload["gemini_retry_due"] == 0
-    assert payload["gemini_cooldown_active"] is False
-    assert payload["gemini_cooldown_until"] is None
-    assert payload["gemini_cooldown_reason"] is None
-    assert payload["source_collection_status"] == "ok"
-    assert payload["source_collection_recent_failure_count"] == 0
-    assert payload["source_collection_unresolved_count"] == 0
-    assert payload["source_collection_temporary_count"] == 0
-    assert payload["source_collection_recent_failed_sources"] == []
-    assert payload["source_collection_failure_stages"] == []
-    assert "collection_check_coverage_status" in payload
-    assert "collection_check_coverage_checked_today" in payload
-    assert "collection_check_coverage_enabled_total" in payload
-    assert "collection_check_coverage_message" in payload
-    assert "draft_conversion_coverage_status" in payload
-    assert "draft_conversion_today_releases" in payload
-    assert "draft_conversion_today_pending" in payload
-    assert "draft_conversion_coverage_message" in payload
+    assert payload["details_url"] == "/healthz/details"
+    assert "gemini_queue_status" not in payload
+    assert "source_collection_status" not in payload
+    assert "collection_check_coverage_status" not in payload
+    assert "draft_conversion_coverage_status" not in payload
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
 
@@ -3262,7 +3246,7 @@ def test_healthz_reports_collection_check_coverage(monkeypatch):
 
     app = web_module.create_app()
     app.testing = True
-    payload = app.test_client().get("/healthz").get_json()
+    payload = app.test_client().get("/healthz/details").get_json()
 
     assert payload["collection_check_coverage_status"] == "warning"
     assert payload["collection_check_coverage_label"] == "미점검"
@@ -3324,7 +3308,7 @@ def test_healthz_reports_draft_conversion_coverage(monkeypatch):
 
     app = web_module.create_app()
     app.testing = True
-    payload = app.test_client().get("/healthz").get_json()
+    payload = app.test_client().get("/healthz/details").get_json()
 
     assert payload["draft_conversion_coverage_status"] == "warning"
     assert payload["draft_conversion_coverage_label"] == "미변환"
@@ -3356,7 +3340,7 @@ def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
 
     app = create_app()
     app.testing = True
-    payload = app.test_client().get("/healthz").get_json()
+    payload = app.test_client().get("/healthz/details").get_json()
 
     assert payload["ok"] is True
     assert payload["source_collection_status"] == "error"
@@ -3417,7 +3401,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
 
     app = create_app()
     app.testing = True
-    payload = app.test_client().get("/healthz").get_json()
+    payload = app.test_client().get("/healthz/details").get_json()
 
     assert payload["ok"] is True
     assert payload["gemini_queue_status"] == "warning"
@@ -3441,7 +3425,7 @@ def test_healthz_reports_gemini_cooldown_window(monkeypatch):
 
     app = create_app()
     app.testing = True
-    payload = app.test_client().get("/healthz").get_json()
+    payload = app.test_client().get("/healthz/details").get_json()
 
     assert payload["ok"] is True
     assert payload["gemini_queue_status"] == "warning"
