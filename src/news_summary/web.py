@@ -1983,6 +1983,7 @@ def _collection_coverage_check_hour() -> int:
 
 def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     today = datetime.now(LOCAL_TZ).date().isoformat()
+    now_utc = datetime.now(timezone.utc).isoformat()
     date_expr = (
         "REPLACE("
         "REPLACE("
@@ -2005,6 +2006,41 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
                 WHERE {date_expr} = ?
                 """,
                 (today,),
+            ).fetchone()
+            pending_retry = conn.execute(
+                f"""
+                SELECT
+                    SUM(
+                        CASE
+                            WHEN ad.id IS NULL
+                             AND (dgf.id IS NULL OR dgf.next_retry_at <= ?)
+                            THEN 1 ELSE 0
+                        END
+                    ) AS ready_count,
+                    SUM(
+                        CASE
+                            WHEN ad.id IS NULL
+                             AND dgf.id IS NOT NULL
+                             AND dgf.next_retry_at > ?
+                            THEN 1 ELSE 0
+                        END
+                    ) AS scheduled_count,
+                    MIN(
+                        CASE
+                            WHEN ad.id IS NULL
+                             AND dgf.id IS NOT NULL
+                             AND dgf.next_retry_at > ?
+                            THEN dgf.next_retry_at
+                        END
+                    ) AS next_retry_at
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                LEFT JOIN draft_generation_failures dgf
+                  ON dgf.press_release_id = pr.id
+                 AND dgf.resolved_at IS NULL
+                WHERE {date_expr} = ?
+                """,
+                (now_utc, now_utc, now_utc, today),
             ).fetchone()
             by_source = conn.execute(
                 f"""
@@ -2053,6 +2089,9 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
             "today_releases": 0,
             "today_drafted": 0,
             "today_pending": 0,
+            "retry_ready_pending": 0,
+            "retry_scheduled_pending": 0,
+            "next_retry_at": None,
             "drafted_percent": 0,
             "pending_sources": [],
             "latest_pending_at": None,
@@ -2063,6 +2102,9 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     today_releases = int(summary["total_count"] or 0) if summary else 0
     today_drafted = int(summary["drafted_count"] or 0) if summary else 0
     today_pending = int(summary["pending_count"] or 0) if summary else 0
+    retry_ready_pending = int(pending_retry["ready_count"] or 0) if pending_retry else 0
+    retry_scheduled_pending = int(pending_retry["scheduled_count"] or 0) if pending_retry else 0
+    next_retry_at = str(pending_retry["next_retry_at"] or "") if pending_retry else ""
     drafted_percent = round((today_drafted / today_releases) * 100) if today_releases else 0
     pending_sources = [
         {"source_name": str(row["source_name"]), "count": int(row["count"])}
@@ -2077,10 +2119,20 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         status_level = "warning"
         status_label = "미변환"
         message = f"오늘 수집 원문 중 초안 미변환 {today_pending}건이 남아 있습니다."
+        if retry_ready_pending and retry_scheduled_pending:
+            message = (
+                f"{message} 즉시 재시도 가능 {retry_ready_pending}건, "
+                f"예약 대기 {retry_scheduled_pending}건입니다."
+            )
+        elif retry_ready_pending:
+            message = f"{message} 즉시 재시도 가능 {retry_ready_pending}건입니다."
+        elif retry_scheduled_pending:
+            next_retry_label = format_datetime_label(next_retry_at) if next_retry_at else "시각 확인 중"
+            message = f"{message} 예약 대기 {retry_scheduled_pending}건이며 다음 재시도는 {next_retry_label}입니다."
         cooldown_until = gemini_cooldown_until(store)
         if cooldown_until:
             cooldown_label = format_datetime_label(cooldown_until.astimezone(LOCAL_TZ).isoformat())
-            message = f"{message} Gemini 재개 예정은 {cooldown_label}입니다."
+            message = f"{message} 초안 생성 재개 예정은 {cooldown_label}입니다."
     else:
         status_level = "ok"
         status_label = "정상"
@@ -2098,6 +2150,9 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         "today_releases": today_releases,
         "today_drafted": today_drafted,
         "today_pending": today_pending,
+        "retry_ready_pending": retry_ready_pending,
+        "retry_scheduled_pending": retry_scheduled_pending,
+        "next_retry_at": next_retry_at or None,
         "drafted_percent": drafted_percent,
         "pending_sources": pending_sources,
         "latest_pending_at": pending_time(latest_pending),
@@ -2116,6 +2171,9 @@ def _draft_conversion_coverage_health_payload(store: Store) -> dict[str, object]
         "draft_conversion_today_releases": int(report.get("today_releases") or 0),
         "draft_conversion_today_drafted": int(report.get("today_drafted") or 0),
         "draft_conversion_today_pending": int(report.get("today_pending") or 0),
+        "draft_conversion_retry_ready_pending": int(report.get("retry_ready_pending") or 0),
+        "draft_conversion_retry_scheduled_pending": int(report.get("retry_scheduled_pending") or 0),
+        "draft_conversion_next_retry_at": report.get("next_retry_at"),
         "draft_conversion_drafted_percent": int(report.get("drafted_percent") or 0),
         "draft_conversion_latest_pending_at": report.get("latest_pending_at"),
         "draft_conversion_oldest_pending_at": report.get("oldest_pending_at"),
