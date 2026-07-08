@@ -1450,8 +1450,47 @@ h3 {
   line-height: 1.35;
 }
 
-.compact-asset-panel {
+.asset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.asset-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid #cfe3de;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.asset-actions a:hover {
+  background: #eef8f5;
+}
+
+.compact-asset-panel,
+.attachment-panel {
   margin-top: 16px;
+}
+
+.press-release-original {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 16px;
+}
+
+.press-release-original p {
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .source-health p:first-of-type,

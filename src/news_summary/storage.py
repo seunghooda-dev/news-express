@@ -830,6 +830,18 @@ class Store:
                 (press_release_id,),
             ).fetchall()
 
+    def get_press_release_asset(self, asset_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pra.*, pr.source_id, pr.title AS press_title, pr.url AS press_url
+                FROM press_release_assets pra
+                JOIN press_releases pr ON pr.id = pra.press_release_id
+                WHERE pra.id = ?
+                """,
+                (asset_id,),
+            ).fetchone()
+
     def press_release_assets_by_ids(self, press_release_ids: list[int]) -> dict[int, list[Any]]:
         if not press_release_ids:
             return {}
@@ -853,9 +865,11 @@ class Store:
         with self.connect() as conn:
             return conn.execute(
                 """
-                SELECT pra.*, pr.title AS press_title, pr.published_at, pr.url AS press_url
+                SELECT pra.*, pr.title AS press_title, pr.published_at, pr.url AS press_url,
+                       ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
                 FROM press_release_assets pra
                 JOIN press_releases pr ON pr.id = pra.press_release_id
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE pr.source_id = ?
                 ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
                          pr.published_at DESC,
@@ -867,6 +881,18 @@ class Store:
                 """,
                 (source_id, limit),
             ).fetchall()
+
+    def get_press_release(self, release_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE pr.id = ?
+                """,
+                (release_id,),
+            ).fetchone()
 
     def pending_press_releases(self, limit: int) -> list[sqlite3.Row]:
         with self.connect() as conn:

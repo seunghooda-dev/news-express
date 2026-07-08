@@ -295,6 +295,8 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "첨부 사진/파일" in html
     assert "https://example.com/body-count-photo.jpg" in html
     assert "현장 사진" in html
+    assert f'href="/press-releases/assets/' in html
+    assert "다운로드" in html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
@@ -733,7 +735,7 @@ def test_source_status_records_collection_failures(monkeypatch):
         failure_stage="사이트 접속",
         failure_reason="응답 지연 또는 타임아웃",
     )
-    store.add_press_release(
+    release_id = store.add_press_release(
         PressRelease(
             source_id="gwangju-city",
             source_name="광주광역시청 보도자료",
@@ -754,6 +756,7 @@ def test_source_status_records_collection_failures(monkeypatch):
             ],
         )
     )
+    assert release_id is not None
 
     from news_summary.web import create_app
 
@@ -772,6 +775,45 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "최근 첨부 사진/파일" in detail_html
     assert "https://example.com/gwangju-photo.png" in detail_html
     assert "광주 현장 사진" in detail_html
+    assert f'href="/press-releases/{release_id}"' in detail_html
+    assert 'href="https://example.com/gwangju-photo.png"' not in detail_html
+    assert 'href="/press-releases/assets/' in detail_html
+
+    release_html = client.get(f"/press-releases/{release_id}").data.decode("utf-8")
+    assert "첨부 표시 테스트 원문" in release_html
+    assert "광주시는 첨부 표시 기능을 점검한다고 밝혔다." in release_html
+    assert "첨부 사진/파일" in release_html
+    assert "광주 현장 사진" in release_html
+    assert 'href="/press-releases/assets/' in release_html
+
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeAssetResponse:
+        content = b"fake image"
+        headers = {"content-type": "image/png"}
+
+        def raise_for_status(self):
+            return None
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            assert url == "https://example.com/gwangju-photo.png"
+            return FakeAssetResponse()
+
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    download = client.get(f"/press-releases/assets/{asset_id}/download")
+    assert download.status_code == 200
+    assert download.data == b"fake image"
+    assert download.headers["Content-Disposition"].startswith("attachment;")
 
 
 def test_admin_login_is_required_when_password_is_configured(monkeypatch):

@@ -573,6 +573,48 @@ def create_app() -> Flask:
             more_url=_load_more_url("press_releases", display_limit + LIST_PAGE_SIZE) if has_more else "",
         )
 
+    @app.get("/press-releases/<int:release_id>")
+    def press_release_detail(release_id: int):
+        release = store.get_press_release(release_id)
+        if not release:
+            flash("수집 원문을 찾을 수 없습니다.")
+            return redirect(url_for("press_releases"))
+        return render_template(
+            "press_release_detail.html",
+            release=release,
+            press_assets=store.press_release_assets(release_id),
+        )
+
+    @app.get("/press-releases/assets/<int:asset_id>/download")
+    def download_press_release_asset(asset_id: int):
+        asset = store.get_press_release_asset(asset_id)
+        if not asset:
+            flash("첨부파일을 찾을 수 없습니다.")
+            return redirect(url_for("press_releases"))
+        asset_url = str(asset["url"] or "")
+        if not asset_url.startswith(("http://", "https://")):
+            flash("다운로드할 수 없는 첨부파일 주소입니다.")
+            return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
+        try:
+            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+                response = client.get(asset_url)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("asset download failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
+            flash("첨부파일 다운로드에 실패했습니다. 원문 사이트 상태를 확인해 주세요.")
+            return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
+
+        filename = _asset_download_filename(asset, response.headers.get("content-type", ""))
+        content_type = str(asset["content_type"] or response.headers.get("content-type") or "application/octet-stream")
+        return Response(
+            response.content,
+            headers={
+                "Content-Type": content_type,
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+                "Content-Length": str(len(response.content)),
+            },
+        )
+
     @app.get("/sources/<source_id>")
     def source_detail(source_id: str):
         source = _source_by_id(config_path, source_id)
@@ -923,6 +965,28 @@ def _short_commit(value: str | None) -> str | None:
     if not value:
         return None
     return value[:7]
+
+
+def _asset_download_filename(asset, content_type: str = "") -> str:
+    filename = str(asset["filename"] or asset["title"] or "attachment").strip()
+    filename = re.sub(r'[\\/:*?"<>|\r\n]+', "_", filename)
+    filename = re.sub(r"\s+", " ", filename).strip(" ._")[:160] or "attachment"
+    if "." not in filename:
+        content_type = str(asset["content_type"] or content_type or "").lower()
+        extension = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+            "image/tiff": ".tif",
+            "application/pdf": ".pdf",
+            "application/x-hwp": ".hwp",
+            "application/hwp+zip": ".hwpx",
+            "application/zip": ".zip",
+        }.get(content_type.split(";", 1)[0].strip(), "")
+        filename += extension
+    return filename
 
 
 def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:

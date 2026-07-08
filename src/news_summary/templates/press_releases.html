@@ -9,7 +9,7 @@
 
 <section class="list">
   {% for item in press_releases %}
-    <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ item.url }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
+    <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ url_for('press_release_detail', release_id=item.id) }}{% endif %}">
       <strong>{{ item.title }}</strong>
       <span class="row-meta">
         <span>{{ source_display_label(item.source_name) }}</span>

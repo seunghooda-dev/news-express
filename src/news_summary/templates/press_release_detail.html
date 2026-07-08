@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <h1>수집 원문 #{{ release.id }}</h1>
+  <div class="section-actions">
+    {% if release.draft_id %}
+      <a class="source-link" href="{{ url_for('draft_detail', draft_id=release.draft_id) }}">초안 보기</a>
+    {% endif %}
+    <a class="source-link" href="{{ url_for('source_detail', source_id=release.source_id) }}">기관 상세</a>
+    <a class="source-link" href="{{ release.url }}" target="_blank" rel="noopener noreferrer">원문 사이트</a>
+  </div>
+</section>
+
+<section class="detail-status">
+  <span>{{ source_display_label(release.source_name) }}</span>
+  <span>게시 {{ release.published_at|date_label }}</span>
+  {% if release.draft_id %}
+    <span class="badge {{ status_badge_class(release.draft_status) }}">{{ status_label(release.draft_status) }}</span>
+    <span class="badge {{ model_badge_class(release.draft_model) }}">{{ model_label(release.draft_model) }}</span>
+  {% else %}
+    <span class="badge badge-neutral">초안 없음</span>
+  {% endif %}
+</section>
+
+<section class="original press-release-original">
+  <p class="meta">{{ region_display_label(release.region) }} · 수집 {{ release.collected_at|date_label }}</p>
+  <p class="meta">원문 검증: {{ release.validation_status }} · {{ release.validation_note }}</p>
+  <h2>{{ release.title }}</h2>
+  <p>{{ release.content }}</p>
+</section>
+
+{% if press_assets %}
+  <section class="asset-panel attachment-panel">
+    <div class="section-head compact">
+      <h1>첨부 사진/파일</h1>
+      <a class="source-link" href="{{ release.url }}" target="_blank" rel="noopener noreferrer">원문 사이트</a>
+    </div>
+    <div class="asset-list">
+      {% for asset in press_assets %}
+        <article class="asset-item">
+          {% if asset.is_image %}
+            <img src="{{ asset.url }}" alt="{{ asset.title or asset.filename or '첨부 사진' }}" loading="lazy">
+          {% else %}
+            <span class="asset-file-badge">파일</span>
+          {% endif %}
+          <span>
+            <strong>{{ asset.title or asset.filename or ('첨부 사진' if asset.is_image else '첨부파일') }}</strong>
+            <small>{{ asset.filename or asset.content_type or asset.asset_type }}</small>
+            <span class="asset-actions">
+              <a href="{{ url_for('download_press_release_asset', asset_id=asset.id) }}">다운로드</a>
+              <a href="{{ asset.url }}" target="_blank" rel="noopener noreferrer">원본 열기</a>
+            </span>
+          </span>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+{% endblock %}
