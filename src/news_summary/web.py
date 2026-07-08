@@ -1851,12 +1851,9 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
         with store.connect() as conn:
             status_rows = conn.execute(
                 """
-                SELECT source_id,
-                       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok_count,
-                       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+                SELECT source_id, status, checked_at
                 FROM source_collection_runs
                 WHERE checked_at >= ?
-                GROUP BY source_id
                 """,
                 (local_start,),
             ).fetchall()
@@ -1886,16 +1883,22 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
 
     source_labels = {source.id: source_display_label(source.name) for source in sources}
     source_ids = set(source_labels)
-    checked_ids = {str(row["source_id"]) for row in status_rows if str(row["source_id"]) in source_ids}
+    latest_status_by_source: dict[str, tuple[str, datetime]] = {}
+    for row in status_rows:
+        source_id = str(row["source_id"])
+        if source_id not in source_ids:
+            continue
+        checked_at = _parse_datetime(row["checked_at"]) or datetime.min.replace(tzinfo=LOCAL_TZ)
+        current = latest_status_by_source.get(source_id)
+        if current is None or checked_at >= current[1]:
+            latest_status_by_source[source_id] = (str(row["status"] or ""), checked_at)
+
+    checked_ids = set(latest_status_by_source)
     success_ids = {
-        str(row["source_id"])
-        for row in status_rows
-        if str(row["source_id"]) in source_ids and int(row["ok_count"] or 0) > 0
+        source_id for source_id, (status, _) in latest_status_by_source.items() if status == "ok"
     }
     failed_ids = {
-        str(row["source_id"])
-        for row in status_rows
-        if str(row["source_id"]) in source_ids and int(row["failed_count"] or 0) > 0
+        source_id for source_id, (status, _) in latest_status_by_source.items() if status == "failed"
     }
     release_ids = {str(row["source_id"]) for row in release_rows if str(row["source_id"]) in source_ids}
     unchecked_ids = [source.id for source in sources if source.id not in checked_ids]

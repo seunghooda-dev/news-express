@@ -3258,6 +3258,62 @@ def test_healthz_reports_collection_check_coverage(monkeypatch):
     assert payload["collection_check_coverage_unchecked_sources"] == ["미점검 기관"]
 
 
+def test_healthz_collection_check_coverage_uses_latest_source_status(monkeypatch):
+    db_path = Path(f"data/.test_healthz_collection_latest_status_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_COLLECTION_COVERAGE_CHECK_HOUR", "9")
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id="flaky", name="불안정 기관", region="전남", type="html_board")]
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 10, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    monkeypatch.setattr(web_module, "load_sources", lambda config_path: sources)
+    with store.connect() as conn:
+        for status, checked_at in (
+            ("ok", "2026-07-06T00:10:00+00:00"),
+            ("failed", "2026-07-06T00:30:00+00:00"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "flaky",
+                    "불안정 기관",
+                    status,
+                    "점검 기록",
+                    "",
+                    "",
+                    0,
+                    0,
+                    0,
+                    checked_at,
+                ),
+            )
+
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["collection_check_coverage_status"] == "warning"
+    assert payload["collection_check_coverage_label"] == "실패 포함"
+    assert payload["collection_check_coverage_checked_today"] == 1
+    assert payload["collection_check_coverage_success_today"] == 0
+    assert payload["collection_check_coverage_failed_today"] == 1
+    assert payload["collection_check_coverage_failed_sources"] == ["불안정 기관"]
+
+
 def test_healthz_reports_draft_conversion_coverage(monkeypatch):
     db_path = Path(f"data/.test_healthz_draft_conversion_coverage_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
