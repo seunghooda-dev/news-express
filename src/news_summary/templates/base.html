@@ -8,7 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand{% if request.endpoint == 'dashboard' %} active{% endif %}" href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>Home</a>
+    <a class="brand{% if request.endpoint == 'dashboard' %} active{% endif %}" href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>
+      <span class="brand-mark">NE</span>
+      <span>News Express</span>
+    </a>
     <nav class="topnav" aria-label="주요 메뉴">
       <div class="desktop-nav-links">
         <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
