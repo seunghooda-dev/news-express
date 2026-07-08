@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 import httpx
 from bs4 import BeautifulSoup, Tag
 
+from .asset_filters import image_asset_looks_decorative
 from .models import PressRelease, PressReleaseAsset, Source
 from .ops_logging import get_logger
 
@@ -73,39 +74,6 @@ ASSET_SKIP_TOKENS = (
     "captcha",
     "layout",
     "favicon",
-)
-DECORATIVE_IMAGE_TOKENS = (
-    "banner",
-    "main_visual",
-    "visual_wrap",
-    "visual-wrap",
-    "visual_area",
-    "visual-area",
-    "visualbanner",
-    "visual-banner",
-    "popup",
-    "quick",
-    "gnb",
-    "lnb",
-    "snb",
-    "nav",
-    "menu",
-    "breadcrumb",
-    "header",
-    "footer",
-    "search",
-    "share",
-    "print",
-    "satisfaction",
-    "logo",
-    "symbol",
-    "emblem",
-    "mascot",
-    "sns",
-    "facebook",
-    "instagram",
-    "youtube",
-    "blog",
 )
 logger = get_logger("collectors")
 
@@ -817,8 +785,7 @@ def _is_decorative_image(img: Tag) -> bool:
         )
         if ancestor.name in {"article", "main"}:
             break
-    text = " ".join(parts).lower()
-    return any(token in text for token in DECORATIVE_IMAGE_TOKENS)
+    return image_asset_looks_decorative(*parts)
 
 
 def _normal_asset_url(raw_url: str, base_url: str) -> str:

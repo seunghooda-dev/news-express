@@ -246,6 +246,10 @@ class _PostgresCursor:
     def fetchall(self) -> list[Any]:
         return self._cursor.fetchall()
 
+    @property
+    def rowcount(self) -> int:
+        return int(getattr(self._cursor, "rowcount", 0) or 0)
+
 
 class _PostgresConnection:
     def __init__(self, conn: Any) -> None:
@@ -881,6 +885,30 @@ class Store:
                 """,
                 (source_id, limit),
             ).fetchall()
+
+    def press_release_image_assets(self, limit: int = 2000) -> list[Any]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM press_release_assets
+                WHERE is_image = 1
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def delete_press_release_assets(self, asset_ids: list[int]) -> int:
+        if not asset_ids:
+            return 0
+        placeholders = ",".join("?" for _ in asset_ids)
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM press_release_assets WHERE id IN ({placeholders})",
+                tuple(asset_ids),
+            )
+            return int(getattr(cursor, "rowcount", 0) or 0)
 
     def get_press_release(self, release_id: int) -> sqlite3.Row | None:
         with self.connect() as conn:

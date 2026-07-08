@@ -22,6 +22,7 @@ from news_summary.service import (
     draft_pending_releases_for_date,
     gemini_cooldown_message,
     gemini_cooldown_until,
+    prune_decorative_press_release_assets,
     repair_missing_published_dates,
 )
 from news_summary.storage import Store
@@ -195,6 +196,56 @@ def test_store_saves_and_replaces_press_release_assets():
     assert len(rows) == 1
     assert rows[0]["url"] == "https://example.com/report.hwp"
     assert rows[0]["is_image"] == 0
+
+
+def test_prune_decorative_press_release_assets_removes_stored_homepage_images():
+    db_path = Path(f"data/.test_prune_decorative_assets_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="첨부 정리 테스트 원문",
+            url="https://example.com/cleanup-assets-release",
+            content="테스트 군은 보도자료 첨부 이미지 정리 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/images/main-banner.jpg",
+                    title="홈페이지 상단 홍보 이미지",
+                    filename="main-banner.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                ),
+                PressReleaseAsset(
+                    url="https://example.com/upload/editor/press-photo.jpg",
+                    title="현장 사진",
+                    filename="press-photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                ),
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=1&fileName=press.hwp",
+                    title="보도자료 원문",
+                    filename="press.hwp",
+                    content_type="application/x-hwp",
+                    asset_type="file",
+                    is_image=False,
+                ),
+            ],
+        )
+    )
+    assert release_id is not None
+
+    result = prune_decorative_press_release_assets(store)
+    rows = store.press_release_assets(release_id)
+
+    assert result == {"checked": 2, "deleted": 1}
+    assert [row["filename"] for row in rows] == ["press-photo.jpg", "press.hwp"]
 
 
 def test_collect_enabled_sources_reports_source_progress(monkeypatch):

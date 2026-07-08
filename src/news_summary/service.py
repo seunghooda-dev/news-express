@@ -12,6 +12,7 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
+from .asset_filters import is_cleanup_noise_image_asset
 from .collectors import DEFAULT_HEADERS, CollectionError, _clean_text, _normalize_published_at, collect_source
 from .models import PressRelease, Source
 from .ops_logging import get_logger
@@ -69,6 +70,7 @@ BUILT_IN_KOREA_PUBLIC_HOLIDAYS = {
 
 
 DEFAULT_COLLECT_LIMIT = 30
+DECORATIVE_ASSET_CLEANUP_LIMIT = 2000
 
 
 def collect_enabled_sources(
@@ -266,6 +268,18 @@ def retry_transient_collection_failures(
         remaining_sources = next_remaining
 
     return inserted_total, messages
+
+
+def prune_decorative_press_release_assets(
+    store: Store,
+    limit: int = DECORATIVE_ASSET_CLEANUP_LIMIT,
+) -> dict[str, int]:
+    assets = store.press_release_image_assets(limit=limit)
+    asset_ids = [int(asset["id"]) for asset in assets if is_cleanup_noise_image_asset(asset)]
+    deleted = store.delete_press_release_assets(asset_ids)
+    if deleted:
+        logger.info("decorative press release assets pruned checked=%s deleted=%s", len(assets), deleted)
+    return {"checked": len(assets), "deleted": deleted}
 
 
 def _retry_transient_source_once(

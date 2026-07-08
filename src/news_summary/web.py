@@ -16,6 +16,7 @@ import httpx
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
+from .asset_filters import is_display_noise_image_asset
 from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, verify_admin_password
 from .backup import create_backup, restore_backup, verify_backup
 from .exporter import export_approved
@@ -71,42 +72,6 @@ DASHBOARD_PENDING_LIMIT = 20
 DASHBOARD_RELEASE_LIMIT = 10
 FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
-ASSET_DISPLAY_SKIP_TOKENS = (
-    "logo",
-    "icon",
-    "ico_",
-    "banner",
-    "main_visual",
-    "visual_wrap",
-    "visual-wrap",
-    "visual_area",
-    "visual-area",
-    "popup",
-    "quick",
-    "gnb",
-    "lnb",
-    "snb",
-    "nav",
-    "menu",
-    "breadcrumb",
-    "header",
-    "footer",
-    "search",
-    "share",
-    "print",
-    "satisfaction",
-    "symbol",
-    "emblem",
-    "mascot",
-    "sns",
-    "facebook",
-    "instagram",
-    "youtube",
-    "blog",
-    "favicon",
-    "spacer",
-)
-
 
 def _slow_request_threshold_seconds() -> float:
     raw_value = os.getenv("NEWS_SUMMARY_SLOW_REQUEST_SECONDS", "2.5")
@@ -2176,17 +2141,7 @@ def _draft_thumbnail_map(store: Store, drafts) -> dict[int, object]:
 
 
 def _display_press_assets(assets) -> list[object]:
-    return [asset for asset in assets if not _is_display_noise_asset(asset)]
-
-
-def _is_display_noise_asset(asset) -> bool:
-    if not _row_value(asset, "is_image"):
-        return False
-    text = " ".join(
-        str(_row_value(asset, key) or "")
-        for key in ("url", "title", "filename", "content_type", "asset_type")
-    ).lower()
-    return any(token in text for token in ASSET_DISPLAY_SKIP_TOKENS)
+    return [asset for asset in assets if not is_display_noise_image_asset(asset)]
 
 
 def _press_release_rows_for_listing(

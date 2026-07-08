@@ -24,6 +24,7 @@ from .service import (
     filter_releases_by_retention,
     is_transient_site_failure,
     is_collection_business_day,
+    prune_decorative_press_release_assets,
     repair_missing_published_dates,
     retention_holidays,
 )
@@ -423,6 +424,9 @@ class AutoCollector:
         dedupe_message = self._deduplicate_press_releases_once()
         if dedupe_message:
             messages.append(dedupe_message)
+        asset_cleanup = prune_decorative_press_release_assets(self.store)
+        if asset_cleanup["deleted"]:
+            messages.append(f"보도자료 장식 이미지 {asset_cleanup['deleted']}건 정리")
         source_messages = self._recover_failed_sources_once()
         if source_messages:
             messages.extend(source_messages)
