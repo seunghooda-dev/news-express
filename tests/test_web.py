@@ -3148,8 +3148,54 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["database"] == "ok"
     assert payload["ok"] is True
     assert payload["auto_collector"] in {"enabled", "running", "disabled", "stopped", "unavailable"}
+    assert payload["gemini_queue_status"] == "ok"
+    assert payload["gemini_pending_total"] == 0
+    assert payload["gemini_failure_total"] == 0
+    assert payload["gemini_retry_due"] == 0
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
+
+
+def test_healthz_reports_gemini_queue_warning(monkeypatch):
+    db_path = Path(f"data/.test_healthz_gemini_queue_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_RETRY_DUE_WARNING_COUNT", "2")
+    store = Store(db_path)
+    store.init_db()
+    due_at = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    for index in range(2):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 기관",
+                region="전남",
+                title=f"헬스 체크 재시도 원문 {index + 1}",
+                url=f"https://example.com/healthz-retry-{index}",
+                content="Gemini 헬스 체크 대기열 테스트 원문입니다.",
+                published_at="2026-06-26 09:00",
+            )
+        )
+        assert release_id is not None
+        store.record_draft_generation_failure(
+            release_id,
+            "quota",
+            "Gemini 요청 한도 감지",
+            "gemini-3.5-flash",
+            due_at,
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz").get_json()
+
+    assert payload["ok"] is True
+    assert payload["gemini_queue_status"] == "warning"
+    assert payload["gemini_pending_total"] == 2
+    assert payload["gemini_failure_total"] == 2
+    assert payload["gemini_retry_due"] == 2
+    assert payload["gemini_queue_message"] == "Gemini 재시도 가능 실패 큐 2건"
 
 
 def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):

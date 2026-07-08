@@ -325,6 +325,7 @@ def create_app() -> Flask:
         except Exception as exc:  # noqa: BLE001 - health endpoint should return a clear degraded state.
             logger.warning("health check failed error=%s", exc)
             return jsonify({"ok": False, "database": "error"}), 503
+        gemini_queue_health = _gemini_queue_health_payload(store)
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
             _ensure_auto_collector_running(auto_collector)
@@ -346,9 +347,18 @@ def create_app() -> Flask:
                     "last_auto_finished_at": auto_status["last_auto_finished_at"],
                     "next_run_at": auto_status["next_run_at"],
                     "commit": _running_commit_short(),
+                    **gemini_queue_health,
                 }
             )
-        return jsonify({"ok": True, "database": "ok", "auto_collector": "unavailable", "commit": _running_commit_short()})
+        return jsonify(
+            {
+                "ok": True,
+                "database": "ok",
+                "auto_collector": "unavailable",
+                "commit": _running_commit_short(),
+                **gemini_queue_health,
+            }
+        )
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -2532,6 +2542,44 @@ def _operations_health_report(
         "last_auto_finished_at": last_auto_finished_at,
         "top_failure_stages": top_failure_stages,
         "issues": issues[:5],
+    }
+
+
+def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
+    try:
+        pending_queue = store.pending_press_release_summary(limit=1)
+        draft_failure_summary = store.draft_generation_failure_summary(limit=1)
+    except Exception as exc:  # noqa: BLE001 - health check should remain readable if queue diagnostics fail.
+        logger.warning("gemini queue health check failed error=%s", exc)
+        return {
+            "gemini_queue_status": "error",
+            "gemini_pending_total": None,
+            "gemini_failure_total": None,
+            "gemini_retry_due": None,
+            "gemini_queue_message": f"Gemini 대기열 확인 실패: {type(exc).__name__}",
+        }
+
+    pending_total = int(pending_queue.get("total") or 0)
+    failure_total = int(draft_failure_summary.get("total") or 0)
+    retry_due = int(draft_failure_summary.get("due") or 0)
+    if retry_due >= _gemini_retry_due_warning_count():
+        status = "warning"
+        message = f"Gemini 재시도 가능 실패 큐 {retry_due}건"
+    elif failure_total >= 100:
+        status = "warning"
+        message = f"Gemini 실패 큐 {failure_total}건"
+    elif pending_total >= 100:
+        status = "warning"
+        message = f"Gemini 미변환 큐 {pending_total}건"
+    else:
+        status = "ok"
+        message = "Gemini 대기열 정상 범위"
+    return {
+        "gemini_queue_status": status,
+        "gemini_pending_total": pending_total,
+        "gemini_failure_total": failure_total,
+        "gemini_retry_due": retry_due,
+        "gemini_queue_message": message,
     }
 
 
