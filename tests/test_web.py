@@ -13,6 +13,7 @@ from news_summary.web import (
     _filter_drafts_by_date,
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
+    _max_asset_preview_bytes,
     _sort_drafts_latest_first,
     LOCAL_TZ,
     approval_checks,
@@ -1300,6 +1301,12 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
         "https://example.com/download?fileId=1",
         "https://example.com/download?fileId=1",
     ]
+
+
+def test_default_asset_preview_limit_allows_large_press_photos(monkeypatch):
+    monkeypatch.delenv("NEWS_SUMMARY_MAX_ASSET_PREVIEW_MB", raising=False)
+
+    assert _max_asset_preview_bytes() == 12 * 1024 * 1024
 
 
 def test_asset_preview_retries_ssl_certificate_failure_without_verification(monkeypatch):

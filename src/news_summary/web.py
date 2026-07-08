@@ -1122,7 +1122,8 @@ def _max_asset_download_bytes() -> int:
 
 
 def _max_asset_preview_bytes() -> int:
-    raw_value = os.getenv("NEWS_SUMMARY_MAX_ASSET_PREVIEW_MB", "8")
+    default_megabytes = DEFAULT_MAX_ASSET_PREVIEW_BYTES / 1024 / 1024
+    raw_value = os.getenv("NEWS_SUMMARY_MAX_ASSET_PREVIEW_MB", str(default_megabytes))
     try:
         megabytes = float(raw_value)
     except ValueError:

@@ -6,6 +6,7 @@ def test_image_asset_filter_detects_common_decorative_assets():
     assert image_asset_looks_decorative("https://example.com/images/menu-icon.png")
     assert image_asset_looks_decorative("https://example.com/images/blank.gif")
     assert image_asset_looks_decorative("https://example.com/images/main/img_visual_deco1.png")
+    assert image_asset_looks_decorative("https://example.com/images/main/top_slogan.png")
     assert image_asset_looks_decorative("quick sns logo")
 
 
