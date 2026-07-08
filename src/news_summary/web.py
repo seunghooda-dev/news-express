@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import hashlib
 import json
 import re
 import os
@@ -1167,15 +1168,40 @@ def _asset_preview_cache_size(cache: AssetPreviewCache) -> int:
 
 
 def _asset_preview_response(content_type: str, content: bytes, cache_status: str) -> Response:
+    etag = _asset_preview_etag(content)
+    cache_control = f"public, max-age={_asset_preview_cache_seconds()}"
+    if _request_etag_matches(etag):
+        return Response(
+            status=304,
+            headers={
+                "Cache-Control": cache_control,
+                "ETag": etag,
+                "X-News-Express-Preview-Cache": cache_status,
+            },
+        )
     return Response(
         content,
         headers={
             "Content-Type": str(content_type or "application/octet-stream"),
             "Content-Length": str(len(content)),
-            "Cache-Control": f"public, max-age={_asset_preview_cache_seconds()}",
+            "Cache-Control": cache_control,
+            "ETag": etag,
             "X-News-Express-Preview-Cache": cache_status,
         },
     )
+
+
+def _asset_preview_etag(content: bytes) -> str:
+    digest = hashlib.sha256(content).hexdigest()[:24]
+    return f'"asset-preview-{len(content)}-{digest}"'
+
+
+def _request_etag_matches(etag: str) -> bool:
+    header = request.headers.get("If-None-Match", "")
+    if not header:
+        return False
+    tags = [value.strip() for value in header.split(",")]
+    return "*" in tags or etag in tags
 
 
 def _response_content_length(headers) -> int | None:

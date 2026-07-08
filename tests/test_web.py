@@ -1276,13 +1276,24 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
     assert preview.data == FakeOctetImageResponse.content
     assert preview.headers["Content-Type"].startswith("image/png")
     assert preview.headers["Cache-Control"] == "public, max-age=3600"
+    assert preview.headers["ETag"].startswith('"asset-preview-')
     assert preview.headers["X-News-Express-Preview-Cache"] == "MISS"
     assert "Content-Disposition" not in preview.headers
 
     cached_preview = client.get(f"/press-releases/assets/{asset_id}/preview")
     assert cached_preview.status_code == 200
     assert cached_preview.data == FakeOctetImageResponse.content
+    assert cached_preview.headers["ETag"] == preview.headers["ETag"]
     assert cached_preview.headers["X-News-Express-Preview-Cache"] == "HIT"
+
+    not_modified = client.get(
+        f"/press-releases/assets/{asset_id}/preview",
+        headers={"If-None-Match": preview.headers["ETag"]},
+    )
+    assert not_modified.status_code == 304
+    assert not_modified.data == b""
+    assert not_modified.headers["ETag"] == preview.headers["ETag"]
+    assert not_modified.headers["X-News-Express-Preview-Cache"] == "HIT"
     assert streamed_urls == [
         "https://example.com/download?fileId=1",
         "https://example.com/download?fileId=1",
