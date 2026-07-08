@@ -150,6 +150,11 @@ DEFAULT_CONTENT_SELECTORS = [
     ".contents",
     ".content",
 ]
+ASSET_CONTENT_REFINEMENT_SELECTORS = [
+    selector
+    for selector in DEFAULT_CONTENT_SELECTORS
+    if selector not in {"main", "#contents", "#content", ".contents", ".content"}
+]
 NOISE_SELECTORS = [
     "script",
     "style",
@@ -731,8 +736,34 @@ def _best_asset_content_nodes(soup: BeautifulSoup, selectors: dict) -> list[Tag]
     if configured_selectors:
         nodes = _best_content_nodes_for_selectors(soup, configured_selectors)
         if nodes:
-            return nodes
-    return _best_content_nodes_for_selectors(soup, DEFAULT_CONTENT_SELECTORS)
+            return _refine_asset_content_nodes(nodes)
+    return _refine_asset_content_nodes(_best_content_nodes_for_selectors(soup, DEFAULT_CONTENT_SELECTORS))
+
+
+def _refine_asset_content_nodes(nodes: list[Tag]) -> list[Tag]:
+    refined: list[Tag] = []
+    for node in nodes:
+        refined.extend(_best_nested_asset_content_nodes(node) or [node])
+    return _dedupe_tags(refined)
+
+
+def _best_nested_asset_content_nodes(node: Tag) -> list[Tag]:
+    candidates: list[tuple[int, int, Tag]] = []
+    for order, selector in enumerate(ASSET_CONTENT_REFINEMENT_SELECTORS):
+        for child in node.select(selector):
+            if not isinstance(child, Tag) or child is node:
+                continue
+            text = _node_text(child)
+            if len(text) < 40 or len(text) > 20000:
+                continue
+            score = _content_score(text)
+            if score <= 0:
+                continue
+            candidates.append((score, -order, child))
+    if not candidates:
+        return []
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [candidates[0][2]]
 
 
 def _best_content_nodes_for_selectors(soup: BeautifulSoup, selectors: list[str]) -> list[Tag]:
