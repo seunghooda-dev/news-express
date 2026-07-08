@@ -2853,6 +2853,47 @@ def test_recrawl_status_uses_persisted_auto_collector_snapshot(monkeypatch):
     assert status["progress_source_name"] == "시청 보도자료"
 
 
+def test_operations_uses_persisted_next_auto_run_time(monkeypatch):
+    db_path = Path(f"data/.test_operations_next_run_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.scheduler import AUTO_COLLECT_STATUS_KEY
+    from news_summary.web import create_app
+
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata(
+        AUTO_COLLECT_STATUS_KEY,
+        (
+            '{"enabled": true, "running": false, "active_label": "", '
+            '"progress_current": 0, "progress_total": 29, '
+            '"progress_message": "다음 정각 자동 수집 대기 중", "progress_source_name": "", '
+            '"progress_phase": "idle", "last_error": null, '
+            '"last_started_at": null, "last_finished_at": null, '
+            '"last_auto_finished_at": "2026-07-06T04:15:43+00:00", '
+            '"next_run_at": "2026-07-06T05:00:00+00:00", '
+            '"run_count": 0, "status_updated_at": "2026-07-06T04:39:54+00:00"}'
+        ),
+    )
+
+    class IdleCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(enabled=True, progress_total=29, progress_message="대기 중")
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = IdleCollector()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/operations").data.decode("utf-8")
+    health = client.get("/healthz").get_json()
+
+    assert "다음 실행 2026.07.06 14:00" in html
+    assert "다음 실행 일시 미상" not in html
+    assert "마지막 자동 수집 2026.07.06 13:15" in html
+    assert health["next_run_at"] == "2026-07-06T05:00:00+00:00"
+
+
 def test_draft_actions_can_advance_to_next_review_item(monkeypatch):
     db_path = Path(f"data/.test_next_review_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

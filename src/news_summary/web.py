@@ -232,7 +232,9 @@ def create_app() -> Flask:
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
         attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
-        auto_status = auto_collector.snapshot() if auto_collector else None
+        auto_status = (
+            _auto_collector_status_payload(store, auto_collector.snapshot()) if auto_collector else None
+        )
         dashboard_pending_drafts = pending_drafts[: DASHBOARD_PENDING_LIMIT + 1]
         return render_template(
             "dashboard.html",
@@ -264,14 +266,15 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "database": "error"}), 503
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
-            auto_status = auto_collector.snapshot()
-            auto_label = "running" if auto_status.running else ("enabled" if auto_status.enabled else "disabled")
+            auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
+            auto_label = "running" if auto_status["running"] else ("enabled" if auto_status["enabled"] else "disabled")
             return jsonify(
                 {
                     "ok": True,
                     "database": "ok",
                     "auto_collector": auto_label,
-                    "last_auto_finished_at": auto_status.last_auto_finished_at,
+                    "last_auto_finished_at": auto_status["last_auto_finished_at"],
+                    "next_run_at": auto_status["next_run_at"],
                     "commit": _running_commit_short(),
                 }
             )
@@ -345,7 +348,9 @@ def create_app() -> Flask:
     @app.get("/operations")
     def operations():
         auto_collector = app.config.get("AUTO_COLLECTOR")
-        auto_status = auto_collector.snapshot() if auto_collector else None
+        auto_status = (
+            _auto_collector_status_payload(store, auto_collector.snapshot()) if auto_collector else None
+        )
         admin_password_source = _configured_admin_password_source(store)
         admin_password_configured = bool(admin_password_source)
         pending_queue = store.pending_press_release_summary()
