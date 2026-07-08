@@ -52,16 +52,26 @@
 
 <section class="list">
   {% for draft in drafts %}
-    <a class="row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
-      <strong>{{ draft.title }}</strong>
-      <span class="row-meta">
-        <span>{{ source_display_label(draft.source_name) }}</span>
-        <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
-        <span>{{ (draft.published_at or draft.created_at)|date_label }}</span>
-        <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
-        {% for flag in review_flags(draft, duplicate_titles)[:4] %}
-          <span class="badge badge-warning">{{ flag }}</span>
-        {% endfor %}
+    {% set thumbnail = draft_thumbnails.get(draft.press_release_id) %}
+    <a class="row draft-row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
+      <span class="draft-thumbnail{% if not thumbnail %} draft-thumbnail-empty{% endif %}">
+        {% if thumbnail %}
+          <img src="{{ thumbnail.url }}" alt="{{ thumbnail.title or draft.title }}" loading="lazy">
+        {% else %}
+          <span>이미지 없음</span>
+        {% endif %}
+      </span>
+      <span class="draft-row-content">
+        <strong>{{ draft.title }}</strong>
+        <span class="row-meta">
+          <span>{{ source_display_label(draft.source_name) }}</span>
+          <span class="badge {{ status_badge_class(draft.status) }}">{{ status_label(draft.status) }}</span>
+          <span>{{ (draft.published_at or draft.created_at)|date_label }}</span>
+          <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+          {% for flag in review_flags(draft, duplicate_titles)[:4] %}
+            <span class="badge badge-warning">{{ flag }}</span>
+          {% endfor %}
+        </span>
       </span>
     </a>
   {% else %}

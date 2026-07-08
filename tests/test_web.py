@@ -358,6 +358,82 @@ def test_article_details_show_no_image_marker_when_only_file_assets(monkeypatch)
         assert "다운로드" in html
 
 
+def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
+    db_path = Path(f"data/.test_draft_list_thumbnails_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    image_release_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangyang",
+            source_name="광양시청 보도자료",
+            region="전남 광양",
+            title="이미지 포함 원문",
+            url="https://example.com/image-release",
+            content="광양시는 교육생을 모집한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/gwangyang-thumb.jpg",
+                    title="교육 현장 사진",
+                    filename="gwangyang-thumb.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    no_image_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="이미지 없는 원문",
+            url="https://example.com/no-image-release",
+            content="테스트 군은 보도자료를 배포했다고 밝혔다.",
+            published_at="2026-05-19",
+        )
+    )
+    assert image_release_id is not None
+    assert no_image_release_id is not None
+    image_draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=image_release_id,
+            title="광양시, 농산물 온라인 홍보 돕는 교육생 모집",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=no_image_release_id,
+            title="이미지 없는 초안",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/drafts?status=needs_review").data.decode("utf-8")
+
+    assert 'class="row draft-row"' in html
+    assert f'href="/drafts/{image_draft_id}"' in html
+    assert 'src="https://example.com/gwangyang-thumb.jpg"' in html
+    assert 'alt="교육 현장 사진"' in html
+    assert html.index('src="https://example.com/gwangyang-thumb.jpg"') < html.index(
+        "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
+    )
+    assert "이미지 없음" in html
+
+
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     db_path = Path(f"data/.test_dashboard_metric_links_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

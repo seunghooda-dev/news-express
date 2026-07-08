@@ -515,6 +515,7 @@ def create_app() -> Flask:
             draft_rows = _filter_drafts_by_review(draft_rows, review_filter, duplicate_titles)
         has_more = display_limit < MAX_LIST_LIMIT and len(draft_rows) > display_limit
         draft_rows = draft_rows[:display_limit]
+        draft_thumbnails = _draft_thumbnail_map(store, draft_rows)
         region_filter_hidden = _clean_query_args(
             status=status,
             date=target_date.isoformat() if target_date else "",
@@ -531,6 +532,7 @@ def create_app() -> Flask:
             review_filter=review_filter,
             source_filter=source_filter,
             duplicate_titles=duplicate_titles,
+            draft_thumbnails=draft_thumbnails,
             source_options=load_sources(config_path),
             region_options=_region_options(config_path),
             selected_regions=selected_regions,
@@ -2115,6 +2117,25 @@ def _draft_rows_for_listing(
             """,
             tuple(params),
         ).fetchall()
+
+
+def _draft_thumbnail_map(store: Store, drafts) -> dict[int, object]:
+    release_ids: list[int] = []
+    for draft in drafts:
+        release_id = _row_value(draft, "press_release_id")
+        if release_id is None:
+            continue
+        release_ids.append(int(release_id))
+    if not release_ids:
+        return {}
+
+    thumbnails: dict[int, object] = {}
+    for release_id, assets in store.press_release_assets_by_ids(list(dict.fromkeys(release_ids))).items():
+        for asset in assets:
+            if asset["is_image"]:
+                thumbnails[release_id] = asset
+                break
+    return thumbnails
 
 
 def _press_release_rows_for_listing(
