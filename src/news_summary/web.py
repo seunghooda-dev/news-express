@@ -73,6 +73,7 @@ DASHBOARD_RELEASE_LIMIT = 10
 FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
 DEFAULT_MAX_ASSET_DOWNLOAD_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_ASSET_PREVIEW_BYTES = 8 * 1024 * 1024
 
 
 class AssetDownloadError(RuntimeError):
@@ -615,13 +616,42 @@ def create_app() -> Flask:
             return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
 
         filename = _asset_download_filename(asset, response_content_type)
-        content_type = str(asset["content_type"] or response_content_type or "application/octet-stream")
+        content_type = str(response_content_type or asset["content_type"] or "application/octet-stream")
         return Response(
             response_content,
             headers={
                 "Content-Type": content_type,
                 "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
                 "Content-Length": str(len(response_content)),
+            },
+        )
+
+    @app.get("/press-releases/assets/<int:asset_id>/preview")
+    def preview_press_release_asset(asset_id: int):
+        asset = store.get_press_release_asset(asset_id)
+        if not asset or not asset["is_image"]:
+            return Response("이미지 미리보기를 찾을 수 없습니다.", status=404, content_type="text/plain; charset=utf-8")
+        asset_url = str(asset["url"] or "")
+        if not asset_url.startswith(("http://", "https://")):
+            return Response("이미지 미리보기를 표시할 수 없습니다.", status=404, content_type="text/plain; charset=utf-8")
+        try:
+            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+                response_content_type, response_content = _download_asset_content(
+                    client,
+                    asset_url,
+                    asset,
+                    max_bytes=_max_asset_preview_bytes(),
+                )
+        except (httpx.HTTPError, AssetDownloadError) as exc:
+            logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
+            return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
+
+        return Response(
+            response_content,
+            headers={
+                "Content-Type": str(response_content_type or "application/octet-stream"),
+                "Content-Length": str(len(response_content)),
+                "Cache-Control": "public, max-age=3600",
             },
         )
 
@@ -999,8 +1029,14 @@ def _asset_download_filename(asset, content_type: str = "") -> str:
     return filename
 
 
-def _download_asset_content(client: httpx.Client, asset_url: str, asset) -> tuple[str, bytes]:
-    max_bytes = _max_asset_download_bytes()
+def _download_asset_content(
+    client: httpx.Client,
+    asset_url: str,
+    asset,
+    *,
+    max_bytes: int | None = None,
+) -> tuple[str, bytes]:
+    max_bytes = max_bytes or _max_asset_download_bytes()
     chunks: list[bytes] = []
     total = 0
     with client.stream("GET", asset_url) as response:
@@ -1031,6 +1067,16 @@ def _max_asset_download_bytes() -> int:
     except ValueError:
         megabytes = DEFAULT_MAX_ASSET_DOWNLOAD_BYTES / 1024 / 1024
     megabytes = max(1.0, min(megabytes, 100.0))
+    return int(megabytes * 1024 * 1024)
+
+
+def _max_asset_preview_bytes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_MAX_ASSET_PREVIEW_MB", "8")
+    try:
+        megabytes = float(raw_value)
+    except ValueError:
+        megabytes = DEFAULT_MAX_ASSET_PREVIEW_BYTES / 1024 / 1024
+    megabytes = max(1.0, min(megabytes, 25.0))
     return int(megabytes * 1024 * 1024)
 
 

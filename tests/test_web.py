@@ -297,6 +297,8 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "첨부 사진/파일" in html
     assert "https://example.com/body-count-photo.jpg" in html
     assert "data-image-fallback" in html
+    assert 'src="/press-releases/assets/' in html
+    assert "/preview" in html
     assert "이미지 불러오기 실패" in html
     assert 'image.addEventListener("error", showFallback' in html
     assert "현장 사진" in html
@@ -418,6 +420,8 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
             model="gemini-3.5-flash:gemini",
         )
     )
+    thumbnail_asset_id = store.press_release_assets(image_release_id)[0]["id"]
+    thumbnail_src = f'src="/press-releases/assets/{thumbnail_asset_id}/preview"'
 
     from news_summary.web import create_app
 
@@ -430,19 +434,21 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
 
     assert 'class="row draft-row"' in html
     assert f'href="/drafts/{image_draft_id}"' in html
-    assert 'src="https://example.com/gwangyang-thumb.jpg"' in html
+    assert thumbnail_src in html
+    assert 'src="https://example.com/gwangyang-thumb.jpg"' not in html
     assert 'data-image-fallback' in html
     assert 'alt="교육 현장 사진"' in html
     assert "이미지 불러오기 실패" in html
-    assert html.index('src="https://example.com/gwangyang-thumb.jpg"') < html.index(
+    assert html.index(thumbnail_src) < html.index(
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
     assert "이미지 없음" in html
     assert 'class="row draft-row"' in dashboard_html
     assert f'href="/drafts/{image_draft_id}"' in dashboard_html
-    assert 'src="https://example.com/gwangyang-thumb.jpg"' in dashboard_html
+    assert thumbnail_src in dashboard_html
+    assert 'src="https://example.com/gwangyang-thumb.jpg"' not in dashboard_html
     assert 'data-image-fallback' in dashboard_html
-    assert dashboard_html.index('src="https://example.com/gwangyang-thumb.jpg"') < dashboard_html.index(
+    assert dashboard_html.index(thumbnail_src) < dashboard_html.index(
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
 
@@ -490,6 +496,9 @@ def test_article_views_hide_previously_saved_decorative_images(monkeypatch):
         )
     )
     assert release_id is not None
+    press_photo_asset_id = next(
+        asset["id"] for asset in store.press_release_assets(release_id) if asset["filename"] == "press-photo.jpg"
+    )
     draft_id = store.add_article_draft(
         ArticleDraft(
             press_release_id=release_id,
@@ -513,7 +522,8 @@ def test_article_views_hide_previously_saved_decorative_images(monkeypatch):
     assert "main-banner.jpg" not in drafts_html
     assert "press-photo.jpg" in detail_html
     assert "press.hwp" in detail_html
-    assert 'src="https://example.com/upload/editor/press-photo.jpg"' in drafts_html
+    assert f'src="/press-releases/assets/{press_photo_asset_id}/preview"' in drafts_html
+    assert 'src="https://example.com/upload/editor/press-photo.jpg"' not in drafts_html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
@@ -974,6 +984,8 @@ def test_source_status_records_collection_failures(monkeypatch):
         )
     )
     assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+    preview_src = f'src="/press-releases/assets/{asset_id}/preview"'
 
     from news_summary.web import create_app
 
@@ -990,7 +1002,8 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "외부 사이트 응답 지연" in detail_html
     assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
     assert "최근 첨부 사진/파일" in detail_html
-    assert "https://example.com/gwangju-photo.png" in detail_html
+    assert preview_src in detail_html
+    assert "https://example.com/gwangju-photo.png" not in detail_html
     assert "data-image-fallback" in detail_html
     assert "이미지 불러오기 실패" in detail_html
     assert "광주 현장 사진" in detail_html
@@ -1004,9 +1017,9 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "첨부 사진/파일" in release_html
     assert "광주 현장 사진" in release_html
     assert "data-image-fallback" in release_html
+    assert preview_src in release_html
+    assert 'href="https://example.com/gwangju-photo.png"' in release_html
     assert 'href="/press-releases/assets/' in release_html
-
-    asset_id = store.press_release_assets(release_id)[0]["id"]
 
     class FakeAssetResponse:
         content = b"fake image"
@@ -1247,12 +1260,20 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
     app = create_app()
     app.testing = True
     monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
-    response = app.test_client().get(f"/press-releases/assets/{asset_id}/download")
+    client = app.test_client()
+    response = client.get(f"/press-releases/assets/{asset_id}/download")
 
     assert response.status_code == 200
     assert response.data == FakeOctetImageResponse.content
     assert response.headers["Content-Type"].startswith("image/png")
     assert ".png" in response.headers["Content-Disposition"]
+
+    preview = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert preview.status_code == 200
+    assert preview.data == FakeOctetImageResponse.content
+    assert preview.headers["Content-Type"].startswith("image/png")
+    assert preview.headers["Cache-Control"] == "public, max-age=3600"
+    assert "Content-Disposition" not in preview.headers
 
 
 def test_asset_download_rejects_octet_stream_when_image_magic_is_missing(monkeypatch):
