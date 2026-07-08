@@ -12,6 +12,7 @@ from news_summary.web import (
     _asset_request_headers,
     _collection_check_coverage_report,
     _date_warning,
+    _draft_conversion_coverage_report,
     _filter_drafts_by_review,
     _filter_drafts_by_date,
     _filter_drafts_by_query,
@@ -3392,6 +3393,158 @@ def test_operations_page_shows_collection_check_coverage_card(monkeypatch):
     assert "1/2" in html
     assert "오늘 아직 점검되지 않은 기관이 1곳 있습니다." in html
     assert "미점검 미점검 기관" in html
+
+
+def test_draft_conversion_coverage_report_flags_today_pending_releases(monkeypatch):
+    db_path = Path(f"data/.test_draft_conversion_coverage_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 14, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    drafted_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangyang",
+            source_name="광양시청 보도자료",
+            region="전남",
+            title="초안 생성 완료 원문",
+            url="https://example.com/drafted",
+            content="오늘 초안 변환 커버리지 점검용 원문입니다.",
+            published_at="2026.07.06 09:30",
+        )
+    )
+    pending_id = store.add_press_release(
+        PressRelease(
+            source_id="suncheon",
+            source_name="순천시청 보도자료",
+            region="전남",
+            title="초안 미변환 원문",
+            url="https://example.com/pending",
+            content="오늘 초안 변환 미처리 점검용 원문입니다.",
+            published_at="2026-07-06 11:00",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="old",
+            source_name="이전 기관 보도자료",
+            region="전남",
+            title="이전 날짜 원문",
+            url="https://example.com/old",
+            content="이전 날짜 원문입니다.",
+            published_at="2026-07-05 11:00",
+        )
+    )
+    assert drafted_id is not None
+    assert pending_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_id,
+            title="초안 제목",
+            body="초안 본문입니다.",
+            review_note="검수 필요",
+            model="gemini-3.5-flash",
+        )
+    )
+
+    report = _draft_conversion_coverage_report(store)
+
+    assert report["status_level"] == "warning"
+    assert report["status_label"] == "미변환"
+    assert report["today_releases"] == 2
+    assert report["today_drafted"] == 1
+    assert report["today_pending"] == 1
+    assert report["drafted_percent"] == 50
+    assert report["pending_sources"] == [{"source_name": "순천시청 보도자료", "count": 1}]
+    assert "미변환 1건" in report["message"]
+
+
+def test_draft_conversion_coverage_report_marks_complete_when_all_today_releases_have_drafts(monkeypatch):
+    db_path = Path(f"data/.test_draft_conversion_coverage_complete_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 14, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="mokpo",
+            source_name="목포시청 보도자료",
+            region="전남",
+            title="오늘 원문",
+            url="https://example.com/complete",
+            content="오늘 초안 변환 완료 점검용 원문입니다.",
+            published_at="2026-07-06 10:00",
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="초안 제목",
+            body="초안 본문입니다.",
+            review_note="검수 필요",
+            model="gemini-3.5-flash",
+        )
+    )
+
+    report = _draft_conversion_coverage_report(store)
+
+    assert report["status_level"] == "ok"
+    assert report["status_label"] == "정상"
+    assert report["today_releases"] == 1
+    assert report["today_drafted"] == 1
+    assert report["today_pending"] == 0
+    assert report["drafted_percent"] == 100
+    assert report["pending_sources"] == []
+
+
+def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
+    db_path = Path(f"data/.test_operations_draft_conversion_coverage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_draft_conversion_coverage_report",
+        lambda store: {
+            "status_level": "warning",
+            "status_label": "미변환",
+            "date": "2026-07-06",
+            "today_releases": 4,
+            "today_drafted": 3,
+            "today_pending": 1,
+            "drafted_percent": 75,
+            "pending_sources": [{"source_name": "순천시청 보도자료", "count": 1}],
+            "latest_pending_at": "2026-07-06 11:00",
+            "oldest_pending_at": "2026-07-06 11:00",
+            "message": "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다.",
+        },
+    )
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "오늘 초안 변환 커버리지" in html
+    assert "3/4" in html
+    assert "변환율 75%" in html
+    assert "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다." in html
+    assert "순천시청 보도자료 1건" in html
 
 
 def test_recovery_candidate_report_lists_sources_due_for_recheck(monkeypatch):

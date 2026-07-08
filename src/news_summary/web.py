@@ -1654,6 +1654,7 @@ def _operations_cached_report_bundle(
         "daily_report": _daily_operations_report(store),
         "operations_summary": _operations_summary_report(store),
         "collection_check_coverage_report": _collection_check_coverage_report(store, config_path),
+        "draft_conversion_coverage_report": _draft_conversion_coverage_report(store),
         "source_coverage_report": _source_coverage_report(config_path),
         "server_health_report": _server_health_report(store),
         "anomaly_report": _collection_anomaly_report(store),
@@ -1897,6 +1898,131 @@ def _collection_coverage_check_hour() -> int:
     except ValueError:
         return DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR
     return max(0, min(hour, 23))
+
+
+def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
+    today = datetime.now(LOCAL_TZ).date().isoformat()
+    date_expr = (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(pr.published_at, ''), pr.collected_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
+    try:
+        with store.connect() as conn:
+            summary = conn.execute(
+                f"""
+                SELECT
+                    COUNT(pr.id) AS total_count,
+                    SUM(CASE WHEN ad.id IS NULL THEN 0 ELSE 1 END) AS drafted_count,
+                    SUM(CASE WHEN ad.id IS NULL THEN 1 ELSE 0 END) AS pending_count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE {date_expr} = ?
+                """,
+                (today,),
+            ).fetchone()
+            by_source = conn.execute(
+                f"""
+                SELECT pr.source_name, COUNT(*) AS count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE {date_expr} = ?
+                  AND ad.id IS NULL
+                GROUP BY pr.source_name
+                ORDER BY count DESC, pr.source_name ASC
+                LIMIT 5
+                """,
+                (today,),
+            ).fetchall()
+            latest_pending = conn.execute(
+                f"""
+                SELECT pr.published_at, pr.collected_at
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE {date_expr} = ?
+                  AND ad.id IS NULL
+                ORDER BY COALESCE(NULLIF(pr.published_at, ''), pr.collected_at, '') DESC,
+                         pr.id DESC
+                LIMIT 1
+                """,
+                (today,),
+            ).fetchone()
+            oldest_pending = conn.execute(
+                f"""
+                SELECT pr.published_at, pr.collected_at
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE {date_expr} = ?
+                  AND ad.id IS NULL
+                ORDER BY COALESCE(NULLIF(pr.published_at, ''), pr.collected_at, '') ASC,
+                         pr.id ASC
+                LIMIT 1
+                """,
+                (today,),
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001 - diagnostics should not break operations page.
+        return {
+            "status_level": "warning",
+            "status_label": "확인 필요",
+            "date": today,
+            "today_releases": 0,
+            "today_drafted": 0,
+            "today_pending": 0,
+            "drafted_percent": 0,
+            "pending_sources": [],
+            "latest_pending_at": None,
+            "oldest_pending_at": None,
+            "message": f"오늘 초안 변환 현황을 읽지 못했습니다: {type(exc).__name__}",
+        }
+
+    today_releases = int(summary["total_count"] or 0) if summary else 0
+    today_drafted = int(summary["drafted_count"] or 0) if summary else 0
+    today_pending = int(summary["pending_count"] or 0) if summary else 0
+    drafted_percent = round((today_drafted / today_releases) * 100) if today_releases else 0
+    pending_sources = [
+        {"source_name": str(row["source_name"]), "count": int(row["count"])}
+        for row in by_source
+    ]
+
+    if today_releases <= 0:
+        status_level = "ok"
+        status_label = "대기"
+        message = "오늘 수집 원문이 아직 없습니다."
+    elif today_pending > 0:
+        status_level = "warning"
+        status_label = "미변환"
+        message = f"오늘 수집 원문 중 초안 미변환 {today_pending}건이 남아 있습니다."
+        cooldown_until = gemini_cooldown_until(store)
+        if cooldown_until:
+            cooldown_label = format_datetime_label(cooldown_until.astimezone(LOCAL_TZ).isoformat())
+            message = f"{message} Gemini 재개 예정은 {cooldown_label}입니다."
+    else:
+        status_level = "ok"
+        status_label = "정상"
+        message = "오늘 수집 원문이 모두 초안으로 변환됐습니다."
+
+    def pending_time(row) -> str | None:
+        if not row:
+            return None
+        return str(row["published_at"] or row["collected_at"] or "") or None
+
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "date": today,
+        "today_releases": today_releases,
+        "today_drafted": today_drafted,
+        "today_pending": today_pending,
+        "drafted_percent": drafted_percent,
+        "pending_sources": pending_sources,
+        "latest_pending_at": pending_time(latest_pending),
+        "oldest_pending_at": pending_time(oldest_pending),
+        "message": message,
+    }
 
 
 def _recovery_candidate_report(store: Store, config_path: Path) -> dict[str, object]:

@@ -223,6 +223,31 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>오늘 초안 변환 커버리지</h2>
+      <span class="badge {% if draft_conversion_coverage_report.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">
+        {{ draft_conversion_coverage_report.today_drafted }}/{{ draft_conversion_coverage_report.today_releases }}
+      </span>
+    </div>
+    <p class="meta">{{ draft_conversion_coverage_report.message }}</p>
+    <p class="meta">
+      변환율 {{ draft_conversion_coverage_report.drafted_percent }}% · 미변환 {{ draft_conversion_coverage_report.today_pending }}건
+    </p>
+    {% if draft_conversion_coverage_report.latest_pending_at or draft_conversion_coverage_report.oldest_pending_at %}
+      <p class="meta">
+        최신 미변환 {{ draft_conversion_coverage_report.latest_pending_at|date_label }} · 오래된 미변환 {{ draft_conversion_coverage_report.oldest_pending_at|date_label }}
+      </p>
+    {% endif %}
+    {% if draft_conversion_coverage_report.pending_sources %}
+      <p class="gemini-models">
+        {% for item in draft_conversion_coverage_report.pending_sources %}
+          <span>{{ source_display_label(item.source_name) }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>서버 상태 점검</h2>
       <span class="badge {% if server_health_report.status_level == 'ok' %}badge-gemini{% elif server_health_report.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
         {{ server_health_report.status_label }}
