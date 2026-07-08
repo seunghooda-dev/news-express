@@ -36,6 +36,29 @@
   <p class="meta">{{ summary.last_message or "아직 수집 점검 기록이 없습니다." }}</p>
 </section>
 
+{% if recent_assets %}
+  <section class="asset-panel source-asset-panel">
+    <div class="section-head compact">
+      <h1>최근 첨부 사진/파일</h1>
+    </div>
+    <div class="asset-list">
+      {% for asset in recent_assets %}
+        <a class="asset-item" href="{{ asset.url }}" target="_blank" rel="noopener noreferrer">
+          {% if asset.is_image %}
+            <img src="{{ asset.url }}" alt="{{ asset.title or asset.filename or '첨부 사진' }}" loading="lazy">
+          {% else %}
+            <span class="asset-file-badge">파일</span>
+          {% endif %}
+          <span>
+            <strong>{{ asset.title or asset.filename or ('첨부 사진' if asset.is_image else '첨부파일') }}</strong>
+            <small>{{ asset.press_title }} · {{ asset.published_at|date_label }}</small>
+          </span>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+
 <section class="split">
   <div>
     <div class="section-head compact">

@@ -9,6 +9,7 @@ from .storage import Store
 
 TABLES = (
     "press_releases",
+    "press_release_assets",
     "article_drafts",
     "app_metadata",
     "draft_history",
@@ -33,7 +34,7 @@ def migrate_sqlite_to_postgres(sqlite_db: Path, database_url: str, *, replace: b
             if replace:
                 conn.execute(
                     """
-                    TRUNCATE visitor_access_logs, source_collection_runs, draft_generation_failures, draft_history, article_drafts, app_metadata, press_releases
+                    TRUNCATE visitor_access_logs, source_collection_runs, draft_generation_failures, draft_history, article_drafts, app_metadata, press_release_assets, press_releases
                     RESTART IDENTITY CASCADE
                     """
                 )
@@ -75,6 +76,7 @@ def _copy_table(source: sqlite3.Connection, target: Any, table: str) -> int:
 def _reset_sequences(conn: Any) -> None:
     for table in (
         "press_releases",
+        "press_release_assets",
         "article_drafts",
         "draft_history",
         "draft_generation_failures",

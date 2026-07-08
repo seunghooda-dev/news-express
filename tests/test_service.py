@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 
 from news_summary.collectors import CollectionError
-from news_summary.models import ArticleDraft, PressRelease, Source
+from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, Source
 from news_summary.scheduler import (
     DEFAULT_AUTO_COLLECT_LIMIT,
     AutoCollector,
@@ -137,6 +137,64 @@ def test_gemini_cooldown_message_uses_korean_time_label():
     assert "UTC" not in message
     assert "한국 시간 2026.07.02 06:39" in message
     assert "초안 생성을 보류합니다." in message
+
+
+def test_store_saves_and_replaces_press_release_assets():
+    db_path = Path(f"data/.test_press_release_assets_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release = PressRelease(
+        source_id="sample",
+        source_name="테스트 군청",
+        region="전남",
+        title="첨부 저장 테스트 원문",
+        url="https://example.com/assets-release",
+        content="테스트 군은 첨부 저장 기능을 점검한다고 밝혔다.",
+        published_at="2026-05-20",
+        assets=[
+            PressReleaseAsset(
+                url="https://example.com/photo.jpg",
+                title="현장 사진",
+                filename="photo.jpg",
+                content_type="image/jpeg",
+                asset_type="image",
+                is_image=True,
+            )
+        ],
+    )
+
+    release_id = store.add_press_release(release)
+    assert release_id is not None
+
+    rows = store.press_release_assets(release_id)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "현장 사진"
+    assert rows[0]["is_image"] == 1
+
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="첨부 저장 테스트 원문 수정",
+            url="https://example.com/assets-release",
+            content="테스트 군은 첨부 저장 기능을 다시 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/report.hwp",
+                    title="보도자료 원문",
+                    filename="report.hwp",
+                    content_type="application/x-hwp",
+                )
+            ],
+        )
+    )
+
+    rows = store.press_release_assets(release_id)
+    assert len(rows) == 1
+    assert rows[0]["url"] == "https://example.com/report.hwp"
+    assert rows[0]["is_image"] == 0
 
 
 def test_collect_enabled_sources_reports_source_progress(monkeypatch):

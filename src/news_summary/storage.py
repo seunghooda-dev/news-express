@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .collectors import _canonical_url, _normalize_published_at
-from .models import ArticleDraft, PressRelease, Source
+from .models import ArticleDraft, PressRelease, PressReleaseAsset, Source
 
 
 try:
@@ -34,6 +34,21 @@ CREATE TABLE IF NOT EXISTS press_releases (
     collected_at TEXT NOT NULL,
     validation_status TEXT NOT NULL DEFAULT '검증 완료',
     validation_note TEXT NOT NULL DEFAULT '기존 수집 원문입니다.'
+);
+
+CREATE TABLE IF NOT EXISTS press_release_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    press_release_id INTEGER NOT NULL,
+    asset_type TEXT NOT NULL DEFAULT 'file',
+    url TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    filename TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL DEFAULT '',
+    is_image INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE(press_release_id, url),
+    FOREIGN KEY (press_release_id) REFERENCES press_releases(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS article_drafts (
@@ -129,6 +144,20 @@ CREATE TABLE IF NOT EXISTS press_releases (
     collected_at TEXT NOT NULL,
     validation_status TEXT NOT NULL DEFAULT '검증 완료',
     validation_note TEXT NOT NULL DEFAULT '기존 수집 원문입니다.'
+);
+
+CREATE TABLE IF NOT EXISTS press_release_assets (
+    id BIGSERIAL PRIMARY KEY,
+    press_release_id BIGINT NOT NULL REFERENCES press_releases(id) ON DELETE CASCADE,
+    asset_type TEXT NOT NULL DEFAULT 'file',
+    url TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    filename TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL DEFAULT '',
+    is_image INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE(press_release_id, url)
 );
 
 CREATE TABLE IF NOT EXISTS article_drafts (
@@ -446,6 +475,7 @@ class Store:
             "CREATE INDEX IF NOT EXISTS idx_press_releases_title ON press_releases(title)",
             "CREATE INDEX IF NOT EXISTS idx_press_releases_source_published ON press_releases(source_id, published_at, collected_at, id)",
             "CREATE INDEX IF NOT EXISTS idx_press_releases_region_published ON press_releases(region, published_at, collected_at, id)",
+            "CREATE INDEX IF NOT EXISTS idx_press_release_assets_release ON press_release_assets(press_release_id, sort_order, id)",
             "CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id)",
             "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_press_release ON draft_generation_failures(press_release_id, resolved_at, next_retry_at)",
             "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_retry ON draft_generation_failures(resolved_at, next_retry_at, id)",
@@ -695,6 +725,7 @@ class Store:
         with self.connect() as conn:
             existing = conn.execute("SELECT id FROM press_releases WHERE url = ?", (item_url,)).fetchone()
             if existing:
+                release_id = int(existing["id"])
                 conn.execute(
                     """
                     UPDATE press_releases
@@ -716,6 +747,7 @@ class Store:
                         item_url,
                     ),
                 )
+                self._replace_press_release_assets(conn, release_id, item.assets)
                 return None
 
             insert_sql = """
@@ -743,8 +775,98 @@ class Store:
             )
             if self.is_postgres:
                 row = cur.fetchone()
-                return int(row["id"]) if row else None
-            return int(cur.lastrowid) if cur.lastrowid else None
+                release_id = int(row["id"]) if row else None
+            else:
+                release_id = int(cur.lastrowid) if cur.lastrowid else None
+            if release_id:
+                self._replace_press_release_assets(conn, release_id, item.assets)
+            return release_id
+
+    def _replace_press_release_assets(
+        self,
+        conn: Any,
+        press_release_id: int,
+        assets: list[PressReleaseAsset],
+    ) -> None:
+        conn.execute("DELETE FROM press_release_assets WHERE press_release_id = ?", (press_release_id,))
+        if not assets:
+            return
+        rows = [
+            (
+                press_release_id,
+                asset.asset_type,
+                _canonical_url(asset.url),
+                asset.title,
+                asset.filename,
+                asset.content_type,
+                1 if asset.is_image else 0,
+                index,
+                _now(),
+            )
+            for index, asset in enumerate(assets)
+            if asset.url
+        ]
+        if not rows:
+            return
+        conn.executemany(
+            """
+            INSERT INTO press_release_assets
+            (press_release_id, asset_type, url, title, filename, content_type, is_image, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (press_release_id, url) DO NOTHING
+            """,
+            rows,
+        )
+
+    def press_release_assets(self, press_release_id: int) -> list[Any]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM press_release_assets
+                WHERE press_release_id = ?
+                ORDER BY sort_order ASC, id ASC
+                """,
+                (press_release_id,),
+            ).fetchall()
+
+    def press_release_assets_by_ids(self, press_release_ids: list[int]) -> dict[int, list[Any]]:
+        if not press_release_ids:
+            return {}
+        placeholders = ",".join("?" for _ in press_release_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM press_release_assets
+                WHERE press_release_id IN ({placeholders})
+                ORDER BY press_release_id ASC, sort_order ASC, id ASC
+                """,
+                tuple(press_release_ids),
+            ).fetchall()
+        grouped: dict[int, list[Any]] = {}
+        for row in rows:
+            grouped.setdefault(int(row["press_release_id"]), []).append(row)
+        return grouped
+
+    def press_release_assets_by_source(self, source_id: str, limit: int = 30) -> list[Any]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pra.*, pr.title AS press_title, pr.published_at, pr.url AS press_url
+                FROM press_release_assets pra
+                JOIN press_releases pr ON pr.id = pra.press_release_id
+                WHERE pr.source_id = ?
+                ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                         pr.published_at DESC,
+                         pr.collected_at DESC,
+                         pr.id DESC,
+                         pra.sort_order ASC,
+                         pra.id ASC
+                LIMIT ?
+                """,
+                (source_id, limit),
+            ).fetchall()
 
     def pending_press_releases(self, limit: int) -> list[sqlite3.Row]:
         with self.connect() as conn:

@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from news_summary.models import ArticleDraft, PressRelease
+from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset
 from news_summary.scheduler import AutoCollectorStatus
 from news_summary.storage import Store
 from news_summary.web import (
@@ -253,6 +253,16 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
             url="https://example.com/body-count",
             content="테스트 원문 내용입니다.",
             published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/body-count-photo.jpg",
+                    title="현장 사진",
+                    filename="body-count-photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
         )
     )
     assert release_id is not None
@@ -282,6 +292,9 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert 'class="mobile-review-bar" aria-label="빠른 검수 작업"' in html
     assert '<button type="submit" name="action" value="approved_next">승인 후 다음</button>' in html
     assert 'class="mobile-review-spacer" aria-hidden="true"' in html
+    assert "첨부 사진/파일" in html
+    assert "https://example.com/body-count-photo.jpg" in html
+    assert "현장 사진" in html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
@@ -720,6 +733,27 @@ def test_source_status_records_collection_failures(monkeypatch):
         failure_stage="사이트 접속",
         failure_reason="응답 지연 또는 타임아웃",
     )
+    store.add_press_release(
+        PressRelease(
+            source_id="gwangju-city",
+            source_name="광주광역시청 보도자료",
+            region="광주",
+            title="첨부 표시 테스트 원문",
+            url="https://example.com/gwangju-asset-release",
+            content="광주시는 첨부 표시 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/gwangju-photo.png",
+                    title="광주 현장 사진",
+                    filename="gwangju-photo.png",
+                    content_type="image/png",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
 
     from news_summary.web import create_app
 
@@ -735,6 +769,9 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "최근 수집 점검" in detail_html
     assert "외부 사이트 응답 지연" in detail_html
     assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
+    assert "최근 첨부 사진/파일" in detail_html
+    assert "https://example.com/gwangju-photo.png" in detail_html
+    assert "광주 현장 사진" in detail_html
 
 
 def test_admin_login_is_required_when_password_is_configured(monkeypatch):

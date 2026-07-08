@@ -115,6 +115,73 @@ def test_extract_detail_content_skips_leading_public_notice():
     assert "공공저작권" not in text
 
 
+def test_collect_html_board_extracts_images_and_attachments(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if url.endswith("/list"):
+                return FakeResponse(
+                    """
+                    <ul>
+                      <li><a href="/view/1">테스트군 현장 사업 추진</a></li>
+                    </ul>
+                    """
+                )
+            return FakeResponse(
+                """
+                <main>
+                  <div class="content">
+                    <p>테스트군 현장 사업 추진</p>
+                    <p>테스트군은 주민 편의를 높이기 위해 현장 사업을 추진한다고 밝혔다.</p>
+                    <p>군은 관계 기관 협의를 거쳐 다음 달부터 사업을 본격화하고 현장 점검을 이어갈 계획이다.</p>
+                    <img src="/uploads/field-photo.webp" alt="현장 사진">
+                  </div>
+                  <div class="file_list">
+                    <a href="/download?fileId=3&fileName=%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C.hwp">보도자료 원문 다운로드</a>
+                  </div>
+                </main>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="asset-test",
+        name="첨부 테스트 군청",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+        base_url="https://example.com",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": [".content"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert [asset.asset_type for asset in items[0].assets] == ["image", "file"]
+    assert items[0].assets[0].url == "https://example.com/uploads/field-photo.webp"
+    assert items[0].assets[0].content_type == "image/webp"
+    assert items[0].assets[1].filename == "보도자료.hwp"
+    assert items[0].assets[1].content_type == "application/x-hwp"
+
+
 def test_collect_json_board_maps_nested_items(monkeypatch):
     class FakeResponse:
         def raise_for_status(self):

@@ -585,6 +585,7 @@ def create_app() -> Flask:
             source=source,
             summary=summary,
             recent_releases=store.press_releases_by_source(source_id, limit=20),
+            recent_assets=store.press_release_assets_by_source(source_id, limit=30),
             recent_drafts=store.drafts_by_source(source_id, limit=20),
             pending_drafts=store.drafts_by_source(source_id, status="needs_review", limit=20),
             duplicate_titles=_duplicate_titles(store),
@@ -600,6 +601,7 @@ def create_app() -> Flask:
         return render_template(
             "draft_detail.html",
             draft=draft,
+            press_assets=store.press_release_assets(int(draft["press_release_id"])),
             statuses=STATUS_ORDER,
             duplicate_titles=duplicate_titles,
             checks=approval_checks(draft, duplicate_titles),

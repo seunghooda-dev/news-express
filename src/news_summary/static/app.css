@@ -1120,6 +1120,7 @@ h3 {
 .ops-log-view,
 .auth-panel,
 .source-health,
+.asset-panel,
 .draft-history {
   display: grid;
   gap: 10px;
@@ -1370,6 +1371,87 @@ h3 {
 .source-health p,
 .draft-history p {
   margin: 0;
+}
+
+.asset-panel h2,
+.asset-panel h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.asset-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.asset-item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 72px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  color: inherit;
+  text-decoration: none;
+}
+
+.asset-item:hover {
+  border-color: #92c9bf;
+  background: #f4fbf9;
+}
+
+.asset-item img,
+.asset-file-badge {
+  width: 72px;
+  height: 54px;
+  border-radius: 6px;
+}
+
+.asset-item img {
+  display: block;
+  border: 1px solid var(--line);
+  background: #eef2ef;
+  object-fit: cover;
+}
+
+.asset-file-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cfe3de;
+  background: #eef8f5;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.asset-item strong,
+.asset-item small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-item strong {
+  margin-bottom: 3px;
+  font-size: 14px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.asset-item small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.compact-asset-panel {
+  margin-top: 16px;
 }
 
 .source-health p:first-of-type,
@@ -1888,8 +1970,25 @@ h3 {
   .ops-log-view,
   .auth-panel,
   .source-health,
+  .asset-panel,
   .draft-history {
     padding: 14px;
+  }
+
+  .asset-list {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-item {
+    grid-template-columns: 64px minmax(0, 1fr);
+    min-height: 64px;
+    padding: 7px;
+  }
+
+  .asset-item img,
+  .asset-file-badge {
+    width: 64px;
+    height: 48px;
   }
 
   .original {

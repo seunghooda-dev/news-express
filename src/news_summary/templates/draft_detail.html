@@ -32,6 +32,26 @@
     <p class="meta">원문 검증: {{ draft.validation_status }} · {{ draft.validation_note }}</p>
     <h3>{{ draft.original_title }}</h3>
     <p>{{ draft.original_content }}</p>
+    {% if press_assets %}
+      <section class="asset-panel compact-asset-panel">
+        <h2>첨부 사진/파일</h2>
+        <div class="asset-list">
+          {% for asset in press_assets %}
+            <a class="asset-item" href="{{ asset.url }}" target="_blank" rel="noopener noreferrer">
+              {% if asset.is_image %}
+                <img src="{{ asset.url }}" alt="{{ asset.title or asset.filename or '첨부 사진' }}" loading="lazy">
+              {% else %}
+                <span class="asset-file-badge">파일</span>
+              {% endif %}
+              <span>
+                <strong>{{ asset.title or asset.filename or ('첨부 사진' if asset.is_image else '첨부파일') }}</strong>
+                <small>{{ asset.filename or asset.content_type or asset.asset_type }}</small>
+              </span>
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
   </details>
 
   <form id="draft-editor" class="editor" method="post" action="{{ url_for('update_draft', draft_id=draft.id) }}" data-refine-url="{{ url_for('refine_draft', draft_id=draft.id) }}" data-initial-url="{{ url_for('restore_initial_draft', draft_id=draft.id) }}" data-gemini-cooldown-until="{{ gemini_cooldown_until.isoformat() if gemini_cooldown_until else '' }}">

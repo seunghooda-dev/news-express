@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import re
 import time
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from .models import PressRelease, Source
+from .models import PressRelease, PressReleaseAsset, Source
 from .ops_logging import get_logger
 
 
@@ -36,6 +36,44 @@ VOLATILE_DETAIL_QUERY_PARAMS = {
     "vlist_no_npage",
 }
 SUNCHEON_NEWS_HOST_ALIASES = {"www.suncheon.go.kr", "m.suncheon.go.kr", "sc.go.kr"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+ATTACHMENT_EXTENSIONS = IMAGE_EXTENSIONS | {
+    ".pdf",
+    ".hwp",
+    ".hwpx",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".tif",
+    ".tiff",
+    ".zip",
+}
+ASSET_SKIP_TOKENS = (
+    "logo",
+    "icon",
+    "ico_",
+    "sns",
+    "facebook",
+    "twitter",
+    "instagram",
+    "youtube",
+    "opencode",
+    "gonggong",
+    "kogl",
+    "copyright",
+    "filepreview",
+    "preview",
+    "미리보기",
+    "print",
+    "blank",
+    "spacer",
+    "captcha",
+    "layout",
+    "favicon",
+)
 logger = get_logger("collectors")
 
 
@@ -321,6 +359,7 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
                 url=detail_url,
                 content=content,
                 published_at=published_at,
+                assets=_extract_detail_assets(detail_soup, selectors, detail_url),
             )
             if release:
                 releases.append(release)
@@ -499,6 +538,7 @@ def _validated_release(
     url: str,
     content: str,
     published_at: str | None,
+    assets: list[PressReleaseAsset] | None = None,
 ) -> PressRelease | None:
     title = _clean_title(title)
     content = _trim_boilerplate(_clean_text(content))
@@ -515,6 +555,7 @@ def _validated_release(
         published_at=_normalize_published_at(published_at),
         validation_status="검증 완료",
         validation_note=note,
+        assets=assets or [],
     )
 
 
@@ -605,6 +646,176 @@ def _extract_detail_content(soup: BeautifulSoup, selectors: dict) -> str:
         best_text = _node_text(soup.body)
 
     return _trim_boilerplate(best_text)
+
+
+def _extract_detail_assets(
+    soup: BeautifulSoup,
+    selectors: dict,
+    detail_url: str,
+    limit: int = 24,
+) -> list[PressReleaseAsset]:
+    nodes = _asset_scope_nodes(soup, selectors)
+    assets: list[PressReleaseAsset] = []
+    seen_urls: set[str] = set()
+
+    def add_asset(raw_url: str, label: str = "", *, force_image: bool = False) -> None:
+        if len(assets) >= limit:
+            return
+        asset_url = _normal_asset_url(raw_url, detail_url)
+        if not asset_url or asset_url in seen_urls:
+            return
+        extension = _asset_extension(asset_url, label)
+        is_image = force_image or extension in IMAGE_EXTENSIONS
+        if not is_image and extension not in ATTACHMENT_EXTENSIONS and not _looks_like_attachment_url(asset_url, label):
+            return
+        if _is_noise_asset(asset_url, label):
+            return
+        seen_urls.add(asset_url)
+        filename = _asset_filename(asset_url, label)
+        assets.append(
+            PressReleaseAsset(
+                url=asset_url,
+                title=_clean_text(label) or filename or ("사진" if is_image else "첨부파일"),
+                filename=filename,
+                content_type=_asset_content_type(extension, is_image),
+                asset_type="image" if is_image else "file",
+                is_image=is_image,
+                sort_order=len(assets),
+            )
+        )
+
+    for node in nodes:
+        for img in node.select("img[src]"):
+            label = str(img.get("alt") or img.get("title") or "")
+            add_asset(str(img.get("src") or ""), label, force_image=True)
+        for link in node.select("a[href]"):
+            label = _clean_text(link.get_text(" ") or str(link.get("title") or ""))
+            add_asset(str(link.get("href") or ""), label)
+
+    return assets
+
+
+def _asset_scope_nodes(soup: BeautifulSoup, selectors: dict) -> list[Tag]:
+    nodes: list[Tag] = []
+    for selector in _as_list(selectors.get("content")):
+        nodes.extend(node for node in soup.select(selector) if isinstance(node, Tag))
+    for selector in [
+        ".attach",
+        ".attachments",
+        ".file",
+        ".files",
+        ".file_list",
+        ".file-list",
+        ".board_file",
+        ".board-file",
+        ".bbs_file",
+        ".bbs-file",
+        ".download",
+        ".view_file",
+        ".view-file",
+    ]:
+        nodes.extend(node for node in soup.select(selector) if isinstance(node, Tag))
+    if not nodes:
+        for selector in DEFAULT_CONTENT_SELECTORS:
+            nodes.extend(node for node in soup.select(selector) if isinstance(node, Tag))
+            if nodes:
+                break
+    if not nodes and soup.body:
+        nodes.append(soup.body)
+    return nodes
+
+
+def _normal_asset_url(raw_url: str, base_url: str) -> str:
+    raw_url = str(raw_url or "").strip()
+    if not raw_url or raw_url.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
+        return ""
+    return _canonical_url(urljoin(base_url, raw_url))
+
+
+def _asset_extension(url: str, label: str = "") -> str:
+    parts = urlsplit(url)
+    candidates = [unquote(parts.path), unquote(parts.query), unquote(url), label]
+    for value in candidates:
+        match = re.search(
+            r"\.(jpg|jpeg|png|gif|webp|bmp|pdf|hwp|hwpx|docx?|xlsx?|pptx?|tiff?|zip)(?:$|\s|[?#&=])",
+            value,
+            re.I,
+        )
+        if match:
+            return f".{match.group(1).lower()}"
+    return ""
+
+
+def _looks_like_attachment_url(url: str, label: str = "") -> bool:
+    text = f"{url} {label}".lower()
+    return any(token in text for token in ("download", "attach", "atch", "file", "fileno", "file_id", "첨부", "다운로드"))
+
+
+def _is_noise_asset(url: str, label: str = "") -> bool:
+    text = f"{url} {label}".lower()
+    if any(token in text for token in ASSET_SKIP_TOKENS):
+        return True
+    if (
+        "mode=view" in text
+        and _asset_extension(url, label) not in ATTACHMENT_EXTENSIONS
+        and not _looks_like_attachment_url(url, label)
+    ):
+        return True
+    return False
+
+
+def _asset_filename(url: str, label: str = "") -> str:
+    query_filename = _asset_query_filename(url)
+    if query_filename:
+        return query_filename[:160]
+    path_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1]).strip()
+    if path_name and "." in path_name:
+        return path_name[:160]
+    label = _clean_text(label)
+    if label and "." in label:
+        return label[:160]
+    return path_name[:160] if path_name else label[:160]
+
+
+def _asset_query_filename(url: str) -> str:
+    filename_keys = {
+        "filename",
+        "file_name",
+        "fileName",
+        "fileNm",
+        "filenm",
+        "orignlFileNm",
+        "orgFileNm",
+        "originFileNm",
+        "realFileNm",
+        "atchFileNm",
+        "downFileNm",
+    }
+    for key, value in parse_qsl(urlsplit(url).query, keep_blank_values=True):
+        if key in filename_keys and value:
+            return unquote(value).strip()
+    return ""
+
+
+def _asset_content_type(extension: str, is_image: bool) -> str:
+    if extension == ".jpg":
+        extension = ".jpeg"
+    if is_image and extension:
+        return f"image/{extension.lstrip('.')}"
+    return {
+        ".pdf": "application/pdf",
+        ".hwp": "application/x-hwp",
+        ".hwpx": "application/hwp+zip",
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls": "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt": "application/vnd.ms-powerpoint",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+        ".zip": "application/zip",
+    }.get(extension, "")
 
 
 def _node_text(node: Tag | None) -> str:
