@@ -77,8 +77,9 @@ DEFAULT_MAX_ASSET_DOWNLOAD_BYTES = 25 * 1024 * 1024
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 8 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
+DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
 
-AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, str, bytes]]
+AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]]
 
 
 class AssetDownloadError(RuntimeError):
@@ -1115,6 +1116,15 @@ def _asset_preview_cache_seconds() -> int:
     return max(0, min(seconds, 86400))
 
 
+def _asset_preview_stale_seconds() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_ASSET_PREVIEW_STALE_SECONDS", str(DEFAULT_ASSET_PREVIEW_STALE_SECONDS))
+    try:
+        seconds = int(raw_value)
+    except ValueError:
+        seconds = DEFAULT_ASSET_PREVIEW_STALE_SECONDS
+    return max(0, min(seconds, 7 * 86400))
+
+
 def _asset_preview_cache_get(
     cache: AssetPreviewCache,
     key: tuple[int, str],
@@ -1126,8 +1136,11 @@ def _asset_preview_cache_get(
     if not cached:
         return None
     now = time.time() if now is None else now
-    expires_at, content_type, content = cached
-    if expires_at <= now and not allow_stale:
+    fresh_expires_at, stale_expires_at, content_type, content = cached
+    if fresh_expires_at <= now and not allow_stale:
+        return None
+    if stale_expires_at <= now:
+        cache.pop(key, None)
         return None
     cache.move_to_end(key)
     return content_type, content
@@ -1143,11 +1156,12 @@ def _asset_preview_cache_put(
 ) -> None:
     max_bytes = _max_asset_preview_cache_bytes()
     ttl_seconds = _asset_preview_cache_seconds()
+    stale_seconds = _asset_preview_stale_seconds()
     if max_bytes <= 0 or ttl_seconds <= 0 or len(content) > max_bytes:
         cache.pop(key, None)
         return
     now = time.time() if now is None else now
-    cache[key] = (now + ttl_seconds, content_type, content)
+    cache[key] = (now + ttl_seconds, now + ttl_seconds + stale_seconds, content_type, content)
     cache.move_to_end(key)
     _asset_preview_cache_prune(cache, now=now, max_bytes=max_bytes)
 
@@ -1160,15 +1174,15 @@ def _asset_preview_cache_prune(
 ) -> None:
     now = time.time() if now is None else now
     max_bytes = _max_asset_preview_cache_bytes() if max_bytes is None else max_bytes
-    for key, (expires_at, _content_type, _content) in list(cache.items()):
-        if expires_at <= now:
+    for key, (_fresh_expires_at, stale_expires_at, _content_type, _content) in list(cache.items()):
+        if stale_expires_at <= now:
             cache.pop(key, None)
     while cache and _asset_preview_cache_size(cache) > max_bytes:
         cache.popitem(last=False)
 
 
 def _asset_preview_cache_size(cache: AssetPreviewCache) -> int:
-    return sum(len(content) for _expires_at, _content_type, content in cache.values())
+    return sum(len(content) for _fresh_expires_at, _stale_expires_at, _content_type, content in cache.values())
 
 
 def _asset_preview_response(content_type: str, content: bytes, cache_status: str) -> Response:
@@ -1176,7 +1190,7 @@ def _asset_preview_response(content_type: str, content: bytes, cache_status: str
     cache_seconds = _asset_preview_cache_seconds()
     if cache_status == "STALE":
         cache_seconds = min(cache_seconds, 60)
-    cache_control = f"public, max-age={cache_seconds}"
+    cache_control = f"public, max-age={cache_seconds}, stale-if-error={_asset_preview_stale_seconds()}"
     if _request_etag_matches(etag):
         return Response(
             status=304,

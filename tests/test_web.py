@@ -1277,7 +1277,7 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
     assert preview.status_code == 200
     assert preview.data == FakeOctetImageResponse.content
     assert preview.headers["Content-Type"].startswith("image/png")
-    assert preview.headers["Cache-Control"] == "public, max-age=3600"
+    assert preview.headers["Cache-Control"] == "public, max-age=3600, stale-if-error=21600"
     assert preview.headers["ETag"].startswith('"asset-preview-')
     assert preview.headers["X-News-Express-Preview-Cache"] == "MISS"
     assert "Content-Disposition" not in preview.headers
@@ -1306,6 +1306,7 @@ def test_asset_preview_serves_stale_cache_when_refresh_fails(monkeypatch):
     db_path = Path(f"data/.test_asset_preview_stale_cache_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     monkeypatch.setenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_SECONDS", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_ASSET_PREVIEW_STALE_SECONDS", "5")
     store = Store(db_path)
     store.init_db()
     release_id = store.add_press_release(
@@ -1386,8 +1387,13 @@ def test_asset_preview_serves_stale_cache_when_refresh_fails(monkeypatch):
     assert stale.status_code == 200
     assert stale.data == FakeOctetImageResponse.content
     assert stale.headers["X-News-Express-Preview-Cache"] == "STALE"
-    assert stale.headers["Cache-Control"] == "public, max-age=1"
+    assert stale.headers["Cache-Control"] == "public, max-age=1, stale-if-error=5"
     assert stream_count["value"] == 2
+
+    clock["value"] = 1007.0
+    expired = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert expired.status_code == 502
+    assert stream_count["value"] == 3
 
 
 def test_asset_download_rejects_octet_stream_when_image_magic_is_missing(monkeypatch):
