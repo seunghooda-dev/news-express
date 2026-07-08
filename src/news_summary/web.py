@@ -2636,6 +2636,8 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     pending_total = int(pending_queue.get("total") or 0)
     failure_total = int(draft_failure_summary.get("total") or 0)
     retry_due = int(draft_failure_summary.get("due") or 0)
+    next_retry_at = str(draft_failure_summary.get("next_retry_at") or "")
+    oldest_first_failed_at = str(draft_failure_summary.get("oldest_first_failed_at") or "")
     cooldown_until = gemini_cooldown_until(store)
     cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
     if cooldown_until:
@@ -2658,6 +2660,8 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_pending_total": pending_total,
         "gemini_failure_total": failure_total,
         "gemini_retry_due": retry_due,
+        "gemini_next_retry_at": next_retry_at or None,
+        "gemini_oldest_first_failed_at": oldest_first_failed_at or None,
         "gemini_cooldown_active": bool(cooldown_until),
         "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
         "gemini_cooldown_reason": cooldown_reason,

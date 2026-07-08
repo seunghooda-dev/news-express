@@ -3408,6 +3408,8 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_pending_total"] == 2
     assert payload["gemini_failure_total"] == 2
     assert payload["gemini_retry_due"] == 2
+    assert payload["gemini_next_retry_at"] == due_at
+    assert payload["gemini_oldest_first_failed_at"]
     assert payload["gemini_queue_message"] == "Gemini 재시도 가능 실패 큐 2건"
     assert payload["gemini_cooldown_active"] is False
 

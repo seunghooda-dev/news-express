@@ -1087,6 +1087,20 @@ class Store:
                 """,
                 (now,),
             ).fetchone()["count"]
+            next_retry_row = conn.execute(
+                """
+                SELECT MIN(next_retry_at) AS next_retry_at
+                FROM draft_generation_failures
+                WHERE resolved_at IS NULL
+                """
+            ).fetchone()
+            oldest_failure_row = conn.execute(
+                """
+                SELECT MIN(first_failed_at) AS first_failed_at
+                FROM draft_generation_failures
+                WHERE resolved_at IS NULL
+                """
+            ).fetchone()
             by_kind = conn.execute(
                 """
                 SELECT failure_kind, COUNT(*) AS count
@@ -1112,6 +1126,8 @@ class Store:
         return {
             "total": int(total or 0),
             "due": int(due or 0),
+            "next_retry_at": str(next_retry_row["next_retry_at"] or "") if next_retry_row else "",
+            "oldest_first_failed_at": str(oldest_failure_row["first_failed_at"] or "") if oldest_failure_row else "",
             "by_kind": [
                 {"kind": str(row["failure_kind"]), "count": int(row["count"])}
                 for row in by_kind
