@@ -423,6 +423,7 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     client = app.test_client()
 
     html = client.get("/drafts?status=needs_review").data.decode("utf-8")
+    dashboard_html = client.get("/").data.decode("utf-8")
 
     assert 'class="row draft-row"' in html
     assert f'href="/drafts/{image_draft_id}"' in html
@@ -432,6 +433,12 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
     assert "이미지 없음" in html
+    assert 'class="row draft-row"' in dashboard_html
+    assert f'href="/drafts/{image_draft_id}"' in dashboard_html
+    assert 'src="https://example.com/gwangyang-thumb.jpg"' in dashboard_html
+    assert dashboard_html.index('src="https://example.com/gwangyang-thumb.jpg"') < dashboard_html.index(
+        "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
+    )
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):

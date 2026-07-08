@@ -211,10 +211,12 @@ def create_app() -> Flask:
         duplicate_titles = _duplicate_titles(store)
         attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
         auto_status = auto_collector.snapshot() if auto_collector else None
+        dashboard_pending_drafts = pending_drafts[: DASHBOARD_PENDING_LIMIT + 1]
         return render_template(
             "dashboard.html",
             counts=_counts_for_regions(store, selected_regions) if selected_regions else store.counts(),
-            pending_drafts=pending_drafts[: DASHBOARD_PENDING_LIMIT + 1],
+            pending_drafts=dashboard_pending_drafts,
+            draft_thumbnails=_draft_thumbnail_map(store, dashboard_pending_drafts[:DASHBOARD_PENDING_LIMIT]),
             recent_releases=recent_releases,
             auto_collector_status=auto_status,
             source_summaries=source_summaries,
