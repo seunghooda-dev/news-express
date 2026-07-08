@@ -3092,6 +3092,49 @@ def test_public_operations_write_access_can_be_locked_again(monkeypatch):
     assert "운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다." in download_response.data.decode("utf-8")
 
 
+def test_operations_write_access_expires_automatically(monkeypatch):
+    db_path = Path(f"data/.test_operations_write_expiry_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_operations_write_expiry_{uuid4().hex}").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATIONS_WRITE_UNLOCK_MINUTES", "5")
+
+    from news_summary.web import OPERATIONS_WRITE_UNLOCKED_AT_KEY, create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    locked_html = client.get("/operations").data.decode("utf-8")
+    assert "5분 동안 사용할 수 있습니다." in locked_html
+
+    unlocked = client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "secret1234"},
+        follow_redirects=True,
+    )
+    assert "해제됨" in unlocked.data.decode("utf-8")
+    assert "까지 유지됩니다." in unlocked.data.decode("utf-8")
+
+    first_backup = client.post("/operations/backup", follow_redirects=True)
+    assert "백업을 생성했습니다" in first_backup.data.decode("utf-8")
+    assert len(list(backup_dir.glob("*.zip"))) == 1
+
+    with client.session_transaction() as session_data:
+        session_data[OPERATIONS_WRITE_UNLOCKED_AT_KEY] = (
+            datetime.now(timezone.utc) - timedelta(minutes=10)
+        ).isoformat()
+
+    expired_backup = client.post("/operations/backup", follow_redirects=True)
+    expired_html = expired_backup.data.decode("utf-8")
+
+    assert "운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다." in expired_html
+    assert "잠김" in expired_html
+    assert len(list(backup_dir.glob("*.zip"))) == 1
+
+
 def test_backup_verify_report_refreshes_stale_metadata(monkeypatch):
     db_path = Path(f"data/.test_backup_verify_stale_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_backup_verify_stale_{uuid4().hex}").resolve()

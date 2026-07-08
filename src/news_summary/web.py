@@ -70,6 +70,7 @@ GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
+OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
 LIST_PAGE_SIZE = 50
 MAX_LIST_LIMIT = 500
 DASHBOARD_PENDING_LIMIT = 20
@@ -86,6 +87,7 @@ DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
 DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
+DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
 
@@ -319,6 +321,7 @@ def create_app() -> Flask:
         session.pop("admin_authenticated", None)
         session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
+        session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
         flash("로그아웃했습니다.")
         return redirect(url_for("login"))
 
@@ -390,6 +393,8 @@ def create_app() -> Flask:
                         admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
                     ),
                     "operations_write_unlocked": _operations_write_access_unlocked(store),
+                    "operations_write_expires_at": _operations_write_access_expires_at(),
+                    "operations_write_unlock_minutes": _operations_write_unlock_minutes(),
                 }
                 context.update(_operations_cached_report_bundle(store, config_path, backup_dir, auto_status, pending_queue))
                 return render_template("operations.html", **context)
@@ -417,7 +422,7 @@ def create_app() -> Flask:
             return redirect(url_for("admin_setup"))
         current_password = request.form.get("current_password") or ""
         if verify_admin_password(store, current_password):
-            session[OPERATIONS_WRITE_UNLOCKED_KEY] = True
+            _unlock_operations_write_session()
             logger.info("operations write access unlocked remote_addr=%s", _masked_request_ip())
             flash("운영 변경 기능 잠금을 해제했습니다.")
         else:
@@ -428,6 +433,7 @@ def create_app() -> Flask:
     @app.post("/operations/write-access/lock")
     def lock_operations_write_access():
         session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
+        session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
         flash("운영 변경 기능을 다시 잠갔습니다.")
         return redirect(url_for("operations"))
 
@@ -444,7 +450,7 @@ def create_app() -> Flask:
         current_password = request.form.get("current_password") or ""
         if verify_admin_password(store, current_password):
             session[OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY] = True
-            session[OPERATIONS_WRITE_UNLOCKED_KEY] = True
+            _unlock_operations_write_session()
             logger.info("admin password panel unlocked remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호 변경 입력칸을 열었습니다.")
         else:
@@ -477,6 +483,7 @@ def create_app() -> Flask:
             session["admin_authenticated"] = True
             session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
             session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
+            session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
             _clear_operations_report_cache()
             logger.info("admin password changed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
@@ -2120,9 +2127,38 @@ def _configured_admin_password_source(store: Store) -> str:
 
 
 def _operations_write_access_unlocked(store: Store) -> bool:
-    if session.get("admin_authenticated"):
-        return True
-    return bool(_configured_admin_password_source(store) and session.get(OPERATIONS_WRITE_UNLOCKED_KEY))
+    if not _configured_admin_password_source(store) or not session.get(OPERATIONS_WRITE_UNLOCKED_KEY):
+        return False
+    expires_at = _operations_write_access_expires_at()
+    if not expires_at or datetime.now(LOCAL_TZ) >= expires_at:
+        session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
+        session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
+        return False
+    return True
+
+
+def _unlock_operations_write_session() -> None:
+    session[OPERATIONS_WRITE_UNLOCKED_KEY] = True
+    session[OPERATIONS_WRITE_UNLOCKED_AT_KEY] = datetime.now(timezone.utc).isoformat()
+
+
+def _operations_write_access_expires_at() -> datetime | None:
+    unlocked_at = _parse_datetime(session.get(OPERATIONS_WRITE_UNLOCKED_AT_KEY))
+    if not unlocked_at:
+        return None
+    return unlocked_at + timedelta(minutes=_operations_write_unlock_minutes())
+
+
+def _operations_write_unlock_minutes() -> int:
+    raw_value = os.getenv(
+        "NEWS_SUMMARY_OPERATIONS_WRITE_UNLOCK_MINUTES",
+        str(DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES),
+    )
+    try:
+        minutes = int(raw_value)
+    except ValueError:
+        return DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES
+    return max(5, min(minutes, 240))
 
 
 def _require_operations_write_access(store: Store):
