@@ -28,6 +28,7 @@ from news_summary.service import (
     gemini_cooldown_until,
     prune_decorative_press_release_assets,
     repair_missing_published_dates,
+    retention_holidays,
 )
 from news_summary.storage import Store
 from news_summary.writer import GeminiDraftError
@@ -294,6 +295,38 @@ def test_collection_retention_cutoff_skips_weekends_and_holidays(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "2026-06-26")
 
     assert collection_retention_cutoff_date(today=date(2026, 6, 29)) == date(2026, 6, 24)
+
+
+def test_retention_holidays_use_current_builtin_fallback_when_library_fails(monkeypatch):
+    from news_summary import service as service_module
+
+    class BrokenHolidayLibrary:
+        @staticmethod
+        def country_holidays(*args, **kwargs):
+            raise ImportError("simulated holiday package failure")
+
+    monkeypatch.setattr(service_module, "holidays_lib", BrokenHolidayLibrary)
+    monkeypatch.setattr(service_module, "_LIBRARY_KOREA_HOLIDAYS_CACHE", {})
+    monkeypatch.setattr(service_module, "_LIBRARY_KOREA_HOLIDAYS_FAILED_KEYS", set())
+    monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "")
+
+    holidays = retention_holidays({2026, 2027})
+
+    assert date(2026, 5, 1) in holidays
+    assert date(2026, 7, 17) in holidays
+    assert date(2026, 9, 24) in holidays
+    assert date(2026, 9, 25) in holidays
+    assert date(2026, 10, 6) not in holidays
+    assert date(2027, 5, 3) in holidays
+    assert date(2027, 6, 7) in holidays
+    assert date(2027, 12, 27) in holidays
+
+
+def test_collection_retention_cutoff_skips_new_labor_day_public_holiday(monkeypatch):
+    monkeypatch.setenv("NEWS_SUMMARY_RETENTION_DAYS", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "")
+
+    assert collection_retention_cutoff_date(today=date(2026, 5, 4)) == date(2026, 4, 30)
 
 
 def test_startup_catchup_runs_after_weekend_but_not_on_holiday():

@@ -22,7 +22,7 @@ from .writer import GeminiDraftError, generate_draft
 
 try:
     import holidays as holidays_lib
-except ModuleNotFoundError:  # pragma: no cover - Render installs this, local editable env may not be refreshed yet.
+except Exception:  # pragma: no cover - fallback should keep collection running even if the package import regresses.
     holidays_lib = None
 
 
@@ -46,27 +46,94 @@ DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 
 
 BUILT_IN_KOREA_PUBLIC_HOLIDAYS = {
-    # 2026년 운영 기준. 추가/수정은 NEWS_SUMMARY_RETENTION_HOLIDAYS=YYYY-MM-DD,... 로 보강할 수 있습니다.
+    # 라이브러리 오류 시에도 보관/상태 판정이 흔들리지 않도록 둔 보수적 내장 표입니다.
+    # 추가/수정은 NEWS_SUMMARY_RETENTION_HOLIDAYS=YYYY-MM-DD,... 로 보강할 수 있습니다.
+    date(2025, 1, 1),
+    date(2025, 1, 27),
+    date(2025, 1, 28),
+    date(2025, 1, 29),
+    date(2025, 1, 30),
+    date(2025, 3, 1),
+    date(2025, 3, 3),
+    date(2025, 5, 5),
+    date(2025, 5, 6),
+    date(2025, 6, 3),
+    date(2025, 6, 6),
+    date(2025, 8, 15),
+    date(2025, 10, 3),
+    date(2025, 10, 5),
+    date(2025, 10, 6),
+    date(2025, 10, 7),
+    date(2025, 10, 8),
+    date(2025, 10, 9),
+    date(2025, 12, 25),
     date(2026, 1, 1),
     date(2026, 2, 16),
     date(2026, 2, 17),
     date(2026, 2, 18),
     date(2026, 3, 1),
     date(2026, 3, 2),
+    date(2026, 5, 1),
     date(2026, 5, 5),
     date(2026, 5, 24),
     date(2026, 5, 25),
     date(2026, 6, 3),
     date(2026, 6, 6),
+    date(2026, 7, 17),
     date(2026, 8, 15),
     date(2026, 8, 17),
+    date(2026, 9, 24),
+    date(2026, 9, 25),
+    date(2026, 9, 26),
     date(2026, 10, 3),
     date(2026, 10, 5),
-    date(2026, 10, 6),
-    date(2026, 10, 7),
     date(2026, 10, 9),
     date(2026, 12, 25),
+    date(2027, 1, 1),
+    date(2027, 2, 6),
+    date(2027, 2, 7),
+    date(2027, 2, 8),
+    date(2027, 2, 9),
+    date(2027, 3, 1),
+    date(2027, 5, 1),
+    date(2027, 5, 3),
+    date(2027, 5, 5),
+    date(2027, 5, 13),
+    date(2027, 6, 6),
+    date(2027, 6, 7),
+    date(2027, 7, 17),
+    date(2027, 8, 15),
+    date(2027, 8, 16),
+    date(2027, 9, 14),
+    date(2027, 9, 15),
+    date(2027, 9, 16),
+    date(2027, 10, 3),
+    date(2027, 10, 4),
+    date(2027, 10, 9),
+    date(2027, 10, 11),
+    date(2027, 12, 25),
+    date(2027, 12, 27),
+    date(2028, 1, 1),
+    date(2028, 1, 26),
+    date(2028, 1, 27),
+    date(2028, 1, 28),
+    date(2028, 3, 1),
+    date(2028, 4, 12),
+    date(2028, 5, 1),
+    date(2028, 5, 2),
+    date(2028, 5, 5),
+    date(2028, 6, 6),
+    date(2028, 7, 17),
+    date(2028, 8, 15),
+    date(2028, 10, 2),
+    date(2028, 10, 3),
+    date(2028, 10, 4),
+    date(2028, 10, 5),
+    date(2028, 10, 9),
+    date(2028, 12, 25),
 }
+_LIBRARY_KOREA_HOLIDAYS_CACHE: dict[tuple[int, ...], set[date]] = {}
+_LIBRARY_KOREA_HOLIDAYS_FAILED_KEYS: set[tuple[int, ...]] = set()
 
 
 DEFAULT_COLLECT_LIMIT = 30
@@ -563,10 +630,19 @@ def _env_holidays() -> set[date]:
 def _library_korea_holidays(years: set[int]) -> set[date]:
     if holidays_lib is None or not years:
         return set()
+    key = tuple(sorted(years))
+    cached = _LIBRARY_KOREA_HOLIDAYS_CACHE.get(key)
+    if cached is not None:
+        return set(cached)
     try:
-        return {item for item in holidays_lib.country_holidays("KR", years=sorted(years))}
+        holidays = {item for item in holidays_lib.country_holidays("KR", years=list(key))}
+        _LIBRARY_KOREA_HOLIDAYS_CACHE[key] = holidays
+        return set(holidays)
     except Exception as exc:  # noqa: BLE001 - holiday fallback should keep collection running.
-        logger.warning("korea holiday library failed years=%s error=%s", sorted(years), exc)
+        if key not in _LIBRARY_KOREA_HOLIDAYS_FAILED_KEYS:
+            logger.warning("korea holiday library failed years=%s error=%s", list(key), exc)
+            _LIBRARY_KOREA_HOLIDAYS_FAILED_KEYS.add(key)
+        _LIBRARY_KOREA_HOLIDAYS_CACHE[key] = set()
         return set()
 
 
