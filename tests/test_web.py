@@ -1003,8 +1003,17 @@ def test_source_status_records_collection_failures(monkeypatch):
         content = b"fake image"
         headers = {"content-type": "image/png"}
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
         def raise_for_status(self):
             return None
+
+        def iter_bytes(self):
+            yield self.content
 
     class FakeAssetClient:
         def __init__(self, **kwargs):
@@ -1016,7 +1025,8 @@ def test_source_status_records_collection_failures(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def get(self, url):
+        def stream(self, method, url):
+            assert method == "GET"
             assert url == "https://example.com/gwangju-photo.png"
             return FakeAssetResponse()
 
@@ -1025,6 +1035,144 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert download.status_code == 200
     assert download.data == b"fake image"
     assert download.headers["Content-Disposition"].startswith("attachment;")
+
+
+def test_asset_download_rejects_oversized_response(monkeypatch):
+    db_path = Path(f"data/.test_asset_download_too_large_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_MAX_ASSET_DOWNLOAD_MB", "1")
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="큰 첨부 차단 테스트 원문",
+            url="https://example.com/large-asset-release",
+            content="테스트 군은 큰 첨부파일 차단 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/large-photo.jpg",
+                    title="큰 사진",
+                    filename="large-photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeLargeResponse:
+        headers = {"content-type": "image/jpeg", "content-length": str(2 * 1024 * 1024)}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"not reached"
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            return FakeLargeResponse()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/download")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/press-releases/{release_id}")
+
+
+def test_asset_download_rejects_html_error_response(monkeypatch):
+    db_path = Path(f"data/.test_asset_download_html_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="HTML 첨부 차단 테스트 원문",
+            url="https://example.com/html-asset-release",
+            content="테스트 군은 HTML 오류 응답 차단 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/photo.jpg",
+                    title="사진",
+                    filename="photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeHtmlResponse:
+        content = b"<!doctype html><html><body>error</body></html>"
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self.content
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            return FakeHtmlResponse()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/download")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/press-releases/{release_id}")
 
 
 def test_admin_login_is_required_when_password_is_configured(monkeypatch):

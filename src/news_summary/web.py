@@ -72,6 +72,11 @@ DASHBOARD_PENDING_LIMIT = 20
 DASHBOARD_RELEASE_LIMIT = 10
 FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
+DEFAULT_MAX_ASSET_DOWNLOAD_BYTES = 25 * 1024 * 1024
+
+
+class AssetDownloadError(RuntimeError):
+    pass
 
 def _slow_request_threshold_seconds() -> float:
     raw_value = os.getenv("NEWS_SUMMARY_SLOW_REQUEST_SECONDS", "2.5")
@@ -603,21 +608,20 @@ def create_app() -> Flask:
             return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
         try:
             with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                response = client.get(asset_url)
-                response.raise_for_status()
-        except httpx.HTTPError as exc:
+                response_content_type, response_content = _download_asset_content(client, asset_url, asset)
+        except (httpx.HTTPError, AssetDownloadError) as exc:
             logger.warning("asset download failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
             flash("첨부파일 다운로드에 실패했습니다. 원문 사이트 상태를 확인해 주세요.")
             return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
 
-        filename = _asset_download_filename(asset, response.headers.get("content-type", ""))
-        content_type = str(asset["content_type"] or response.headers.get("content-type") or "application/octet-stream")
+        filename = _asset_download_filename(asset, response_content_type)
+        content_type = str(asset["content_type"] or response_content_type or "application/octet-stream")
         return Response(
-            response.content,
+            response_content,
             headers={
                 "Content-Type": content_type,
                 "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
-                "Content-Length": str(len(response.content)),
+                "Content-Length": str(len(response_content)),
             },
         )
 
@@ -993,6 +997,64 @@ def _asset_download_filename(asset, content_type: str = "") -> str:
         }.get(content_type.split(";", 1)[0].strip(), "")
         filename += extension
     return filename
+
+
+def _download_asset_content(client: httpx.Client, asset_url: str, asset) -> tuple[str, bytes]:
+    max_bytes = _max_asset_download_bytes()
+    chunks: list[bytes] = []
+    total = 0
+    with client.stream("GET", asset_url) as response:
+        response.raise_for_status()
+        content_type = str(response.headers.get("content-type") or "")
+        content_length = _response_content_length(response.headers)
+        if content_length and content_length > max_bytes:
+            raise AssetDownloadError(f"첨부파일 크기 초과: {content_length} bytes")
+        for chunk in response.iter_bytes():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise AssetDownloadError(f"첨부파일 크기 초과: {total} bytes")
+            chunks.append(chunk)
+
+    content = b"".join(chunks)
+    if not _asset_download_content_allowed(asset, content_type, content):
+        raise AssetDownloadError(f"첨부파일이 아닌 응답: {content_type or 'unknown'}")
+    return content_type, content
+
+
+def _max_asset_download_bytes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_MAX_ASSET_DOWNLOAD_MB", "25")
+    try:
+        megabytes = float(raw_value)
+    except ValueError:
+        megabytes = DEFAULT_MAX_ASSET_DOWNLOAD_BYTES / 1024 / 1024
+    megabytes = max(1.0, min(megabytes, 100.0))
+    return int(megabytes * 1024 * 1024)
+
+
+def _response_content_length(headers) -> int | None:
+    value = str(headers.get("content-length") or "").strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _asset_download_content_allowed(asset, content_type: str, content: bytes) -> bool:
+    normalized_type = content_type.split(";", 1)[0].strip().lower()
+    if normalized_type == "text/html" or _looks_like_html_document(content):
+        return False
+    if asset["is_image"] and normalized_type and not normalized_type.startswith("image/"):
+        return normalized_type == "application/octet-stream"
+    return True
+
+
+def _looks_like_html_document(content: bytes) -> bool:
+    head = content[:512].lstrip().lower()
+    return head.startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
 
 
 def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
