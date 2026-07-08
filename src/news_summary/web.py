@@ -655,6 +655,10 @@ def create_app() -> Flask:
                 )
         except (httpx.HTTPError, AssetDownloadError) as exc:
             logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
+            stale_preview = _asset_preview_cache_get(asset_preview_cache, cache_key, allow_stale=True)
+            if stale_preview:
+                response_content_type, response_content = stale_preview
+                return _asset_preview_response(response_content_type, response_content, "STALE")
             return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
 
         _asset_preview_cache_put(
@@ -1116,14 +1120,14 @@ def _asset_preview_cache_get(
     key: tuple[int, str],
     *,
     now: float | None = None,
+    allow_stale: bool = False,
 ) -> tuple[str, bytes] | None:
     cached = cache.get(key)
     if not cached:
         return None
     now = time.time() if now is None else now
     expires_at, content_type, content = cached
-    if expires_at <= now:
-        cache.pop(key, None)
+    if expires_at <= now and not allow_stale:
         return None
     cache.move_to_end(key)
     return content_type, content
@@ -1169,7 +1173,10 @@ def _asset_preview_cache_size(cache: AssetPreviewCache) -> int:
 
 def _asset_preview_response(content_type: str, content: bytes, cache_status: str) -> Response:
     etag = _asset_preview_etag(content)
-    cache_control = f"public, max-age={_asset_preview_cache_seconds()}"
+    cache_seconds = _asset_preview_cache_seconds()
+    if cache_status == "STALE":
+        cache_seconds = min(cache_seconds, 60)
+    cache_control = f"public, max-age={cache_seconds}"
     if _request_etag_matches(etag):
         return Response(
             status=304,

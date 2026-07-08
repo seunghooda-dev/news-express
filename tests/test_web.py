@@ -2,6 +2,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
+
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset
 from news_summary.scheduler import AutoCollectorStatus
 from news_summary.storage import Store
@@ -1298,6 +1300,94 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
         "https://example.com/download?fileId=1",
         "https://example.com/download?fileId=1",
     ]
+
+
+def test_asset_preview_serves_stale_cache_when_refresh_fails(monkeypatch):
+    db_path = Path(f"data/.test_asset_preview_stale_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_SECONDS", "1")
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="만료 캐시 테스트 원문",
+            url="https://example.com/stale-image-release",
+            content="테스트 군은 이미지 미리보기 안정화 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=stale",
+                    title="첨부 사진",
+                    filename="",
+                    content_type="",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeOctetImageResponse:
+        content = b"\x89PNG\r\n\x1a\n" + b"\x11" * 12
+        headers = {"content-type": "application/octet-stream"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self.content
+
+    stream_count = {"value": 0}
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            stream_count["value"] += 1
+            if stream_count["value"] == 1:
+                return FakeOctetImageResponse()
+            raise httpx.ReadTimeout("temporary image host timeout")
+
+    clock = {"value": 1000.0}
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    monkeypatch.setattr("news_summary.web.time.time", lambda: clock["value"])
+    client = app.test_client()
+
+    first = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert first.status_code == 200
+    assert first.data == FakeOctetImageResponse.content
+    assert first.headers["X-News-Express-Preview-Cache"] == "MISS"
+
+    clock["value"] = 1002.0
+    stale = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert stale.status_code == 200
+    assert stale.data == FakeOctetImageResponse.content
+    assert stale.headers["X-News-Express-Preview-Cache"] == "STALE"
+    assert stale.headers["Cache-Control"] == "public, max-age=1"
+    assert stream_count["value"] == 2
 
 
 def test_asset_download_rejects_octet_stream_when_image_magic_is_missing(monkeypatch):
