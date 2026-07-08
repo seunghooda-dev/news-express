@@ -1242,6 +1242,8 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
         def iter_bytes(self):
             yield self.content
 
+    streamed_urls = []
+
     class FakeAssetClient:
         def __init__(self, **kwargs):
             pass
@@ -1253,6 +1255,7 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
             return False
 
         def stream(self, method, url):
+            streamed_urls.append(url)
             return FakeOctetImageResponse()
 
     from news_summary.web import create_app
@@ -1273,7 +1276,17 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
     assert preview.data == FakeOctetImageResponse.content
     assert preview.headers["Content-Type"].startswith("image/png")
     assert preview.headers["Cache-Control"] == "public, max-age=3600"
+    assert preview.headers["X-News-Express-Preview-Cache"] == "MISS"
     assert "Content-Disposition" not in preview.headers
+
+    cached_preview = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert cached_preview.status_code == 200
+    assert cached_preview.data == FakeOctetImageResponse.content
+    assert cached_preview.headers["X-News-Express-Preview-Cache"] == "HIT"
+    assert streamed_urls == [
+        "https://example.com/download?fileId=1",
+        "https://example.com/download?fileId=1",
+    ]
 
 
 def test_asset_download_rejects_octet_stream_when_image_magic_is_missing(monkeypatch):

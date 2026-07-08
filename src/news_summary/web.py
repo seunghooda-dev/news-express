@@ -6,7 +6,7 @@ import re
 import os
 import subprocess
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -74,6 +74,10 @@ FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
 DEFAULT_MAX_ASSET_DOWNLOAD_BYTES = 25 * 1024 * 1024
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 8 * 1024 * 1024
+DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
+DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
+
+AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, str, bytes]]
 
 
 class AssetDownloadError(RuntimeError):
@@ -115,6 +119,7 @@ def create_app() -> Flask:
     source_options = load_sources(config_path)
     store.sync_source_metadata(source_options)
     app.config["NEWS_SUMMARY_LOG_PATH"] = log_path
+    asset_preview_cache: AssetPreviewCache = OrderedDict()
 
     @app.context_processor
     def inject_auth_state():
@@ -634,6 +639,11 @@ def create_app() -> Flask:
         asset_url = str(asset["url"] or "")
         if not asset_url.startswith(("http://", "https://")):
             return Response("이미지 미리보기를 표시할 수 없습니다.", status=404, content_type="text/plain; charset=utf-8")
+        cache_key = (int(asset_id), asset_url)
+        cached_preview = _asset_preview_cache_get(asset_preview_cache, cache_key)
+        if cached_preview:
+            response_content_type, response_content = cached_preview
+            return _asset_preview_response(response_content_type, response_content, "HIT")
         try:
             with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
                 response_content_type, response_content = _download_asset_content(
@@ -646,14 +656,13 @@ def create_app() -> Flask:
             logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
             return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
 
-        return Response(
+        _asset_preview_cache_put(
+            asset_preview_cache,
+            cache_key,
+            response_content_type,
             response_content,
-            headers={
-                "Content-Type": str(response_content_type or "application/octet-stream"),
-                "Content-Length": str(len(response_content)),
-                "Cache-Control": "public, max-age=3600",
-            },
         )
+        return _asset_preview_response(response_content_type, response_content, "MISS")
 
     @app.get("/sources/<source_id>")
     def source_detail(source_id: str):
@@ -1078,6 +1087,95 @@ def _max_asset_preview_bytes() -> int:
         megabytes = DEFAULT_MAX_ASSET_PREVIEW_BYTES / 1024 / 1024
     megabytes = max(1.0, min(megabytes, 25.0))
     return int(megabytes * 1024 * 1024)
+
+
+def _max_asset_preview_cache_bytes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_MB", "64")
+    try:
+        megabytes = float(raw_value)
+    except ValueError:
+        megabytes = DEFAULT_ASSET_PREVIEW_CACHE_BYTES / 1024 / 1024
+    if megabytes <= 0:
+        return 0
+    megabytes = min(megabytes, 256.0)
+    return int(megabytes * 1024 * 1024)
+
+
+def _asset_preview_cache_seconds() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_SECONDS", str(DEFAULT_ASSET_PREVIEW_CACHE_SECONDS))
+    try:
+        seconds = int(raw_value)
+    except ValueError:
+        seconds = DEFAULT_ASSET_PREVIEW_CACHE_SECONDS
+    return max(0, min(seconds, 86400))
+
+
+def _asset_preview_cache_get(
+    cache: AssetPreviewCache,
+    key: tuple[int, str],
+    *,
+    now: float | None = None,
+) -> tuple[str, bytes] | None:
+    cached = cache.get(key)
+    if not cached:
+        return None
+    now = time.time() if now is None else now
+    expires_at, content_type, content = cached
+    if expires_at <= now:
+        cache.pop(key, None)
+        return None
+    cache.move_to_end(key)
+    return content_type, content
+
+
+def _asset_preview_cache_put(
+    cache: AssetPreviewCache,
+    key: tuple[int, str],
+    content_type: str,
+    content: bytes,
+    *,
+    now: float | None = None,
+) -> None:
+    max_bytes = _max_asset_preview_cache_bytes()
+    ttl_seconds = _asset_preview_cache_seconds()
+    if max_bytes <= 0 or ttl_seconds <= 0 or len(content) > max_bytes:
+        cache.pop(key, None)
+        return
+    now = time.time() if now is None else now
+    cache[key] = (now + ttl_seconds, content_type, content)
+    cache.move_to_end(key)
+    _asset_preview_cache_prune(cache, now=now, max_bytes=max_bytes)
+
+
+def _asset_preview_cache_prune(
+    cache: AssetPreviewCache,
+    *,
+    now: float | None = None,
+    max_bytes: int | None = None,
+) -> None:
+    now = time.time() if now is None else now
+    max_bytes = _max_asset_preview_cache_bytes() if max_bytes is None else max_bytes
+    for key, (expires_at, _content_type, _content) in list(cache.items()):
+        if expires_at <= now:
+            cache.pop(key, None)
+    while cache and _asset_preview_cache_size(cache) > max_bytes:
+        cache.popitem(last=False)
+
+
+def _asset_preview_cache_size(cache: AssetPreviewCache) -> int:
+    return sum(len(content) for _expires_at, _content_type, content in cache.values())
+
+
+def _asset_preview_response(content_type: str, content: bytes, cache_status: str) -> Response:
+    return Response(
+        content,
+        headers={
+            "Content-Type": str(content_type or "application/octet-stream"),
+            "Content-Length": str(len(content)),
+            "Cache-Control": f"public, max-age={_asset_preview_cache_seconds()}",
+            "X-News-Express-Preview-Cache": cache_status,
+        },
+    )
 
 
 def _response_content_length(headers) -> int | None:
