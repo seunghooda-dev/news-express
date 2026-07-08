@@ -146,6 +146,20 @@ NEWS_SUMMARY_ADMIN_PASSWORD=테스트 사용자에게 공유할 관리자 비밀
 
 배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 임시 테스트 중에는 비밀번호 없이 접속하도록 `NEWS_SUMMARY_AUTH_DISABLED=1`을 사용할 수 있습니다. 정식 공유 전에는 다시 로그인 보호 또는 Cloudflare Access 같은 접근 제한을 켜는 것을 권장합니다.
 
+### Render 자동 배포 보완
+
+Render의 `Auto-Deploy`가 `On Commit`인데도 GitHub 푸시가 자동 배포로 이어지지 않으면 GitHub Actions 보완 배포를 사용합니다. 저장소에는 `.github/workflows/render-deploy.yml`이 포함되어 있으며, `codex/news-express` 브랜치에 푸시될 때 Render Deploy Hook을 호출합니다.
+
+설정 순서:
+
+1. Render Dashboard의 `news-express` 서비스 `Settings` -> `Deploy Hook`에서 hook URL을 복사합니다.
+2. GitHub 저장소 `Settings` -> `Secrets and variables` -> `Actions`에서 새 Repository secret을 만듭니다.
+3. Secret 이름은 `RENDER_DEPLOY_HOOK_URL`로 지정하고, 값에는 Render Deploy Hook URL을 넣습니다.
+4. 이후 `codex/news-express` 브랜치 푸시마다 GitHub Actions가 Render 배포를 보완 실행합니다.
+
+Deploy Hook URL은 비밀번호와 같은 민감 정보입니다. README, 코드, 이슈, 채팅에 직접 저장하지 말고 GitHub Secret 또는 Render 화면 안에서만 관리합니다.
+Secret이 아직 없으면 워크플로는 실패하지 않고 보완 배포를 건너뜁니다.
+
 ## 외부 접속: Cloudflare Tunnel
 
 회사 기자들과 함께 쓰려면 아래 순서로 설정합니다.
