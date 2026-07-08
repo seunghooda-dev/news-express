@@ -71,6 +71,41 @@ DASHBOARD_PENDING_LIMIT = 20
 DASHBOARD_RELEASE_LIMIT = 10
 FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
+ASSET_DISPLAY_SKIP_TOKENS = (
+    "logo",
+    "icon",
+    "ico_",
+    "banner",
+    "main_visual",
+    "visual_wrap",
+    "visual-wrap",
+    "visual_area",
+    "visual-area",
+    "popup",
+    "quick",
+    "gnb",
+    "lnb",
+    "snb",
+    "nav",
+    "menu",
+    "breadcrumb",
+    "header",
+    "footer",
+    "search",
+    "share",
+    "print",
+    "satisfaction",
+    "symbol",
+    "emblem",
+    "mascot",
+    "sns",
+    "facebook",
+    "instagram",
+    "youtube",
+    "blog",
+    "favicon",
+    "spacer",
+)
 
 
 def _slow_request_threshold_seconds() -> float:
@@ -583,7 +618,7 @@ def create_app() -> Flask:
         if not release:
             flash("수집 원문을 찾을 수 없습니다.")
             return redirect(url_for("press_releases"))
-        press_assets = store.press_release_assets(release_id)
+        press_assets = _display_press_assets(store.press_release_assets(release_id))
         return render_template(
             "press_release_detail.html",
             release=release,
@@ -633,7 +668,7 @@ def create_app() -> Flask:
             source=source,
             summary=summary,
             recent_releases=store.press_releases_by_source(source_id, limit=20),
-            recent_assets=store.press_release_assets_by_source(source_id, limit=30),
+            recent_assets=_display_press_assets(store.press_release_assets_by_source(source_id, limit=30)),
             recent_drafts=store.drafts_by_source(source_id, limit=20),
             pending_drafts=store.drafts_by_source(source_id, status="needs_review", limit=20),
             duplicate_titles=_duplicate_titles(store),
@@ -646,7 +681,7 @@ def create_app() -> Flask:
             flash("초안을 찾을 수 없습니다.")
             return redirect(url_for("dashboard"))
         duplicate_titles = _duplicate_titles(store)
-        press_assets = store.press_release_assets(int(draft["press_release_id"]))
+        press_assets = _display_press_assets(store.press_release_assets(int(draft["press_release_id"])))
         return render_template(
             "draft_detail.html",
             draft=draft,
@@ -2133,11 +2168,25 @@ def _draft_thumbnail_map(store: Store, drafts) -> dict[int, object]:
 
     thumbnails: dict[int, object] = {}
     for release_id, assets in store.press_release_assets_by_ids(list(dict.fromkeys(release_ids))).items():
-        for asset in assets:
+        for asset in _display_press_assets(assets):
             if asset["is_image"]:
                 thumbnails[release_id] = asset
                 break
     return thumbnails
+
+
+def _display_press_assets(assets) -> list[object]:
+    return [asset for asset in assets if not _is_display_noise_asset(asset)]
+
+
+def _is_display_noise_asset(asset) -> bool:
+    if not _row_value(asset, "is_image"):
+        return False
+    text = " ".join(
+        str(_row_value(asset, key) or "")
+        for key in ("url", "title", "filename", "content_type", "asset_type")
+    ).lower()
+    return any(token in text for token in ASSET_DISPLAY_SKIP_TOKENS)
 
 
 def _press_release_rows_for_listing(

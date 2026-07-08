@@ -441,6 +441,75 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     )
 
 
+def test_article_views_hide_previously_saved_decorative_images(monkeypatch):
+    db_path = Path(f"data/.test_hide_decorative_assets_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangyang",
+            source_name="광양시청 보도자료",
+            region="전남 광양",
+            title="장식 이미지 제외 테스트 원문",
+            url="https://example.com/decorative-assets",
+            content="광양시는 농업촬영 교육생을 모집한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/images/main-banner.jpg",
+                    title="시정 홍보 이미지",
+                    filename="main-banner.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                ),
+                PressReleaseAsset(
+                    url="https://example.com/upload/editor/press-photo.jpg",
+                    title="농업촬영 교육 사진",
+                    filename="press-photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                ),
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=7&fileName=press.hwp",
+                    title="보도자료 원문",
+                    filename="press.hwp",
+                    content_type="application/x-hwp",
+                    asset_type="file",
+                    is_image=False,
+                ),
+            ],
+        )
+    )
+    assert release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="광양시, 농업촬영 교육생 모집",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    detail_html = client.get(f"/drafts/{draft_id}").data.decode("utf-8")
+    drafts_html = client.get("/drafts?status=needs_review").data.decode("utf-8")
+
+    assert "main-banner.jpg" not in detail_html
+    assert "main-banner.jpg" not in drafts_html
+    assert "press-photo.jpg" in detail_html
+    assert "press.hwp" in detail_html
+    assert 'src="https://example.com/upload/editor/press-photo.jpg"' in drafts_html
+
+
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     db_path = Path(f"data/.test_dashboard_metric_links_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

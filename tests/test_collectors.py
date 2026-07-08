@@ -182,6 +182,80 @@ def test_collect_html_board_extracts_images_and_attachments(monkeypatch):
     assert items[0].assets[1].content_type == "application/x-hwp"
 
 
+def test_collect_html_board_skips_homepage_images_outside_press_body(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if url.endswith("/list"):
+                return FakeResponse(
+                    """
+                    <ul>
+                      <li><a href="/view/1">광양시 농업촬영 심화반 교육생 모집</a></li>
+                    </ul>
+                    """
+                )
+            return FakeResponse(
+                """
+                <main>
+                  <div class="main_visual">
+                    <img src="/images/main-banner.jpg" alt="시정 홍보 배너">
+                  </div>
+                  <nav>
+                    <img src="/images/menu-icon.png" alt="메뉴">
+                  </nav>
+                  <article class="board_view">
+                    <p>광양시는 농산물 온라인 홍보를 돕기 위해 농업촬영 심화반 교육생을 모집한다고 밝혔다.</p>
+                    <p>이번 교육은 농업인 크리에이터를 대상으로 촬영 실습과 콘텐츠 제작 역량 강화를 지원한다.</p>
+                    <p>참여 희망자는 지정된 기간 안에 신청하면 되며, 시는 교육생을 선발해 운영할 계획이다.</p>
+                    <img src="/upload/editor/press-photo.jpg" alt="농업촬영 교육 사진">
+                  </article>
+                  <div class="file_list">
+                    <a href="/download?fileId=3&fileName=press.hwp">보도자료 다운로드</a>
+                  </div>
+                </main>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="asset-scope-test",
+        name="첨부 범위 테스트 시청",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+        base_url="https://example.com",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": ["main"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert [asset.url for asset in items[0].assets] == [
+        "https://example.com/upload/editor/press-photo.jpg",
+        "https://example.com/download?fileId=3&fileName=press.hwp",
+    ]
+    assert all("main-banner" not in asset.url for asset in items[0].assets)
+    assert all("menu-icon" not in asset.url for asset in items[0].assets)
+
+
 def test_collect_json_board_maps_nested_items(monkeypatch):
     class FakeResponse:
         def raise_for_status(self):

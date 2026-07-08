@@ -74,6 +74,39 @@ ASSET_SKIP_TOKENS = (
     "layout",
     "favicon",
 )
+DECORATIVE_IMAGE_TOKENS = (
+    "banner",
+    "main_visual",
+    "visual_wrap",
+    "visual-wrap",
+    "visual_area",
+    "visual-area",
+    "visualbanner",
+    "visual-banner",
+    "popup",
+    "quick",
+    "gnb",
+    "lnb",
+    "snb",
+    "nav",
+    "menu",
+    "breadcrumb",
+    "header",
+    "footer",
+    "search",
+    "share",
+    "print",
+    "satisfaction",
+    "logo",
+    "symbol",
+    "emblem",
+    "mascot",
+    "sns",
+    "facebook",
+    "instagram",
+    "youtube",
+    "blog",
+)
 logger = get_logger("collectors")
 
 
@@ -687,6 +720,8 @@ def _extract_detail_assets(
     for node in nodes:
         for img in node.select("img[src]"):
             label = str(img.get("alt") or img.get("title") or "")
+            if _is_decorative_image(img):
+                continue
             add_asset(str(img.get("src") or ""), label, force_image=True)
         for link in node.select("a[href]"):
             label = _clean_text(link.get_text(" ") or str(link.get("title") or ""))
@@ -696,9 +731,7 @@ def _extract_detail_assets(
 
 
 def _asset_scope_nodes(soup: BeautifulSoup, selectors: dict) -> list[Tag]:
-    nodes: list[Tag] = []
-    for selector in _as_list(selectors.get("content")):
-        nodes.extend(node for node in soup.select(selector) if isinstance(node, Tag))
+    nodes: list[Tag] = _best_asset_content_nodes(soup, selectors)
     for selector in [
         ".attach",
         ".attachments",
@@ -716,13 +749,76 @@ def _asset_scope_nodes(soup: BeautifulSoup, selectors: dict) -> list[Tag]:
     ]:
         nodes.extend(node for node in soup.select(selector) if isinstance(node, Tag))
     if not nodes:
-        for selector in DEFAULT_CONTENT_SELECTORS:
-            nodes.extend(node for node in soup.select(selector) if isinstance(node, Tag))
+        for node in _best_content_nodes_for_selectors(soup, DEFAULT_CONTENT_SELECTORS):
+            nodes.append(node)
             if nodes:
                 break
     if not nodes and soup.body:
         nodes.append(soup.body)
-    return nodes
+    return _dedupe_tags(nodes)
+
+
+def _best_asset_content_nodes(soup: BeautifulSoup, selectors: dict) -> list[Tag]:
+    configured_selectors = _as_list(selectors.get("content"))
+    if configured_selectors:
+        nodes = _best_content_nodes_for_selectors(soup, configured_selectors)
+        if nodes:
+            return nodes
+    return _best_content_nodes_for_selectors(soup, DEFAULT_CONTENT_SELECTORS)
+
+
+def _best_content_nodes_for_selectors(soup: BeautifulSoup, selectors: list[str]) -> list[Tag]:
+    candidates: list[tuple[int, int, Tag]] = []
+    for order, selector in enumerate(selectors):
+        for node in soup.select(selector):
+            if not isinstance(node, Tag):
+                continue
+            text = _node_text(node)
+            if len(text) < 40 or len(text) > 20000:
+                continue
+            score = _content_score(text)
+            if score <= 0:
+                continue
+            candidates.append((score, -order, node))
+    if not candidates:
+        return []
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best_node = candidates[0][2]
+    return [best_node]
+
+
+def _dedupe_tags(nodes: list[Tag]) -> list[Tag]:
+    deduped: list[Tag] = []
+    seen: set[int] = set()
+    for node in nodes:
+        identity = id(node)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(node)
+    return deduped
+
+
+def _is_decorative_image(img: Tag) -> bool:
+    parts = [
+        str(img.get("src") or ""),
+        " ".join(str(item) for item in img.get("class", [])),
+        str(img.get("id") or ""),
+    ]
+    for ancestor in img.parents:
+        if not isinstance(ancestor, Tag) or ancestor.name in {"html", "body"}:
+            break
+        parts.extend(
+            [
+                str(ancestor.get("id") or ""),
+                " ".join(str(item) for item in ancestor.get("class", [])),
+                str(ancestor.get("role") or ""),
+            ]
+        )
+        if ancestor.name in {"article", "main"}:
+            break
+    text = " ".join(parts).lower()
+    return any(token in text for token in DECORATIVE_IMAGE_TOKENS)
 
 
 def _normal_asset_url(raw_url: str, base_url: str) -> str:
