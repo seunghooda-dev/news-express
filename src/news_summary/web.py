@@ -86,6 +86,10 @@ AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]
 class AssetDownloadError(RuntimeError):
     pass
 
+
+logger = get_logger("web")
+
+
 def _slow_request_threshold_seconds() -> float:
     raw_value = os.getenv("NEWS_SUMMARY_SLOW_REQUEST_SECONDS", "2.5")
     try:
@@ -617,8 +621,7 @@ def create_app() -> Flask:
             flash("다운로드할 수 없는 첨부파일 주소입니다.")
             return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
         try:
-            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                response_content_type, response_content = _download_asset_content(client, asset_url, asset)
+            response_content_type, response_content = _download_asset_content_from_url(asset_url, asset)
         except (httpx.HTTPError, AssetDownloadError) as exc:
             logger.warning("asset download failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
             flash("첨부파일 다운로드에 실패했습니다. 원문 사이트 상태를 확인해 주세요.")
@@ -650,13 +653,11 @@ def create_app() -> Flask:
             response_content_type, response_content = cached_preview
             return _asset_preview_response(response_content_type, response_content, "HIT")
         try:
-            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                response_content_type, response_content = _download_asset_content(
-                    client,
-                    asset_url,
-                    asset,
-                    max_bytes=_max_asset_preview_bytes(),
-                )
+            response_content_type, response_content = _download_asset_content_from_url(
+                asset_url,
+                asset,
+                max_bytes=_max_asset_preview_bytes(),
+            )
         except (httpx.HTTPError, AssetDownloadError) as exc:
             logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
             with asset_preview_cache_lock:
@@ -1047,6 +1048,36 @@ def _asset_download_filename(asset, content_type: str = "") -> str:
         }.get(content_type.split(";", 1)[0].strip(), "")
         filename += extension
     return filename
+
+
+def _download_asset_content_from_url(
+    asset_url: str,
+    asset,
+    *,
+    max_bytes: int | None = None,
+) -> tuple[str, bytes]:
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    try:
+        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+            return _download_asset_content(client, asset_url, asset, max_bytes=max_bytes)
+    except httpx.ConnectError as exc:
+        if not _should_retry_asset_download_without_tls_verify(asset_url, exc):
+            raise
+        logger.warning("asset download ssl verification failed; retrying without verification url=%s", asset_url)
+        with httpx.Client(follow_redirects=True, timeout=timeout, verify=False) as client:
+            return _download_asset_content(client, asset_url, asset, max_bytes=max_bytes)
+
+
+def _should_retry_asset_download_without_tls_verify(asset_url: str, exc: BaseException) -> bool:
+    if not str(asset_url or "").startswith("https://"):
+        return False
+    current: BaseException | None = exc
+    while current is not None:
+        text = str(current).lower()
+        if "certificate_verify_failed" in text or ("certificate" in text and "verify failed" in text):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _download_asset_content(

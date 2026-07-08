@@ -1302,6 +1302,83 @@ def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatc
     ]
 
 
+def test_asset_preview_retries_ssl_certificate_failure_without_verification(monkeypatch):
+    db_path = Path(f"data/.test_asset_preview_ssl_retry_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="인증서 재시도 테스트 원문",
+            url="https://example.com/ssl-retry-release",
+            content="테스트 군은 이미지 인증서 재시도 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://bad-chain.example.com/press-photo.jpg",
+                    title="첨부 사진",
+                    filename="press-photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeImageResponse:
+        content = b"\xff\xd8\xff" + b"\x00" * 12
+        headers = {"content-type": "image/jpeg"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self.content
+
+    client_verify_values = []
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            self.verify = kwargs.get("verify", True)
+            client_verify_values.append(self.verify)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            if self.verify is not False:
+                raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+            return FakeImageResponse()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/preview")
+
+    assert response.status_code == 200
+    assert response.data == FakeImageResponse.content
+    assert response.headers["Content-Type"].startswith("image/jpeg")
+    assert response.headers["X-News-Express-Preview-Cache"] == "MISS"
+    assert client_verify_values == [True, False]
+
+
 def test_asset_preview_serves_stale_cache_when_refresh_fails(monkeypatch):
     db_path = Path(f"data/.test_asset_preview_stale_cache_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
