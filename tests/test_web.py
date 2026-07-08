@@ -298,6 +298,7 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert f'href="/press-releases/assets/' in html
     assert "다운로드" in html
     assert "이미지 없음" not in html
+    assert html.index("본문 총 글자수:") < html.index("첨부 사진/파일") < html.index("검수 메모")
 
 
 def test_article_details_show_no_image_marker_when_only_file_assets(monkeypatch):
