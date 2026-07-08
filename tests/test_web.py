@@ -2200,6 +2200,53 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "https://sample.trycloudflare.com" in html
 
 
+def test_operations_page_prefetches_metadata_once(monkeypatch):
+    from contextlib import contextmanager
+
+    db_path = Path(f"data/.test_operations_metadata_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    calls = []
+    original_scope = Store.app_metadata_cache_scope
+
+    @contextmanager
+    def spy_metadata_cache_scope(self):
+        calls.append(self.display_location)
+        with original_scope(self):
+            yield
+
+    monkeypatch.setattr(Store, "app_metadata_cache_scope", spy_metadata_cache_scope)
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflare_quick_tunnel_status",
+        lambda: {"running": False, "public_url": "", "log_path": "", "updated_at": None, "label": "터널 미감지"},
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_deployment_version_report",
+        lambda: {
+            "status_label": "최신 배포",
+            "status_level": "ok",
+            "running_commit": "abc1234",
+            "latest_commit": "abc1234",
+            "repo": "seunghooda-dev/news-express",
+            "branch": "codex/news-express",
+            "auto_deploy_label": "On Commit",
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_level": "ok",
+        },
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    response = app.test_client().get("/operations")
+
+    assert response.status_code == 200
+    assert calls == [str(db_path)]
+
+
 def test_source_summary_treats_weekend_gap_as_holiday_wait(monkeypatch):
     db_path = Path(f"data/.test_source_holiday_wait_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
@@ -2660,6 +2707,48 @@ def test_cloudflare_tunnel_status_detects_reconnecting_log(tmp_path, monkeypatch
 
     assert status["public_url"] == "https://stale-sample.trycloudflare.com"
     assert status["label"] == "터널 재연결 중"
+
+
+def test_cloudflare_tunnel_status_skips_process_check_on_render(monkeypatch):
+    from news_summary import web as web_module
+
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_PUBLIC_URL", "https://news-express.example.com")
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflared_running",
+        lambda: (_ for _ in ()).throw(AssertionError("cloudflared process check should be skipped on Render")),
+    )
+
+    status = web_module._cloudflare_quick_tunnel_status()
+
+    assert status["label"] == "Render 공개 URL 사용"
+    assert status["public_url"] == "https://news-express.example.com"
+    assert status["running"] is False
+
+
+def test_latest_github_commit_uses_short_process_cache(monkeypatch):
+    from news_summary import web as web_module
+
+    web_module._latest_github_commit_cache.clear()
+    calls = []
+
+    class FakeGithubResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"sha": "abcdef1234567890"}
+
+    def fake_get(url, timeout, headers):
+        calls.append((url, timeout, headers))
+        return FakeGithubResponse()
+
+    monkeypatch.setattr(web_module.httpx, "get", fake_get)
+
+    assert web_module._latest_github_commit("owner/repo", "main") == "abcdef1234567890"
+    assert web_module._latest_github_commit("owner/repo", "main") == "abcdef1234567890"
+    assert len(calls) == 1
 
 
 def test_healthz_reports_database_status(monkeypatch):

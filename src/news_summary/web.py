@@ -80,8 +80,10 @@ DEFAULT_MAX_ASSET_PREVIEW_BYTES = 12 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
+LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 
 AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]]
+_latest_github_commit_cache: dict[tuple[str, str], tuple[float, str | None]] = {}
 
 
 class AssetDownloadError(RuntimeError):
@@ -347,45 +349,47 @@ def create_app() -> Flask:
 
     @app.get("/operations")
     def operations():
-        auto_collector = app.config.get("AUTO_COLLECTOR")
-        auto_status = (
-            _auto_collector_status_payload(store, auto_collector.snapshot()) if auto_collector else None
-        )
-        admin_password_source = _configured_admin_password_source(store)
-        admin_password_configured = bool(admin_password_source)
-        pending_queue = store.pending_press_release_summary()
-        draft_failure_summary = store.draft_generation_failure_summary()
-        return render_template(
-            "operations.html",
-            auto_collector_status=auto_status,
-            retention_policy=_retention_policy_summary(),
-            pending_queue=pending_queue,
-            draft_failure_summary=draft_failure_summary,
-            operations_health=_operations_health_report(store, auto_status, pending_queue),
-            deployment_version=_deployment_version_report(),
-            db_health=_db_health_report(store, backup_dir),
-            date_issue_report=_date_issue_report(store),
-            daily_report=_daily_operations_report(store),
-            operations_summary=_operations_summary_report(store),
-            server_health_report=_server_health_report(store),
-            anomaly_report=_collection_anomaly_report(store),
-            deduplicate_report=_deduplicate_report(store),
-            fallback_report=_fallback_url_report(config_path),
-            url_discovery_report=_url_discovery_report(store),
-            backup_verify_report=_backup_verify_report(store, backup_dir),
-            automation_settings=_automation_settings_report(),
-            visitor_access=_visitor_access_overview(store),
-            cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
-            backup_dir=backup_dir,
-            backup_files=_backup_files(backup_dir),
-            db_path=store.display_location,
-            log_path=Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
-            admin_password_source=admin_password_source,
-            admin_password_configured=admin_password_configured,
-            admin_password_unlocked=bool(
-                admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
-            ),
-        )
+        with store.reusable_connection_scope():
+            with store.app_metadata_cache_scope():
+                auto_collector = app.config.get("AUTO_COLLECTOR")
+                auto_status = (
+                    _auto_collector_status_payload(store, auto_collector.snapshot()) if auto_collector else None
+                )
+                admin_password_source = _configured_admin_password_source(store)
+                admin_password_configured = bool(admin_password_source)
+                pending_queue = store.pending_press_release_summary()
+                draft_failure_summary = store.draft_generation_failure_summary()
+                return render_template(
+                    "operations.html",
+                    auto_collector_status=auto_status,
+                    retention_policy=_retention_policy_summary(),
+                    pending_queue=pending_queue,
+                    draft_failure_summary=draft_failure_summary,
+                    operations_health=_operations_health_report(store, auto_status, pending_queue),
+                    deployment_version=_deployment_version_report(),
+                    db_health=_db_health_report(store, backup_dir),
+                    date_issue_report=_date_issue_report(store),
+                    daily_report=_daily_operations_report(store),
+                    operations_summary=_operations_summary_report(store),
+                    server_health_report=_server_health_report(store),
+                    anomaly_report=_collection_anomaly_report(store),
+                    deduplicate_report=_deduplicate_report(store),
+                    fallback_report=_fallback_url_report(config_path),
+                    url_discovery_report=_url_discovery_report(store),
+                    backup_verify_report=_backup_verify_report(store, backup_dir),
+                    automation_settings=_automation_settings_report(),
+                    visitor_access=_visitor_access_overview(store),
+                    cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
+                    backup_dir=backup_dir,
+                    backup_files=_backup_files(backup_dir),
+                    db_path=store.display_location,
+                    log_path=Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
+                    admin_password_source=admin_password_source,
+                    admin_password_configured=admin_password_configured,
+                    admin_password_unlocked=bool(
+                        admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
+                    ),
+                )
 
     @app.post("/operations/auto-collect")
     def update_auto_collect():
@@ -1062,15 +1066,23 @@ def _running_commit() -> str | None:
 
 
 def _latest_github_commit(repo: str, branch: str) -> str | None:
+    cache_key = (repo, branch)
+    now = time.monotonic()
+    cached = _latest_github_commit_cache.get(cache_key)
+    if cached and now - cached[0] <= LATEST_GITHUB_COMMIT_CACHE_SECONDS:
+        return cached[1]
     url = f"https://api.github.com/repos/{repo}/commits/{quote(branch, safe='')}"
     try:
         response = httpx.get(url, timeout=2.5, headers={"Accept": "application/vnd.github+json"})
         response.raise_for_status()
         payload = response.json()
     except Exception:
+        _latest_github_commit_cache[cache_key] = (now, None)
         return None
     sha = payload.get("sha") if isinstance(payload, dict) else None
-    return str(sha).strip() if sha else None
+    result = str(sha).strip() if sha else None
+    _latest_github_commit_cache[cache_key] = (now, result)
+    return result
 
 
 def _short_commit(value: str | None) -> str | None:
@@ -1796,6 +1808,15 @@ def _auto_status_value(auto_status: object | None, name: str) -> object | None:
 
 def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, object]:
     log_path = log_path or PROJECT_ROOT / "data" / "tmp" / "cloudflare_quick_tunnel.err.log"
+    if os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"):
+        public_url = os.getenv("NEWS_SUMMARY_PUBLIC_URL", "").strip()
+        return {
+            "running": False,
+            "public_url": public_url,
+            "log_path": str(log_path),
+            "updated_at": None,
+            "label": "Render 공개 URL 사용",
+        }
     public_url = ""
     updated_at = None
     connected = False

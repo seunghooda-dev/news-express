@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS visitor_access_logs (
 """
 
 POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
+POSTGRES_SCHEMA_INIT_LOCK_ID = 907_260_718_101
 
 
 POSTGRES_SCHEMA = """
@@ -396,6 +397,23 @@ class Store:
             if hasattr(self._local, "connection"):
                 del self._local.connection
 
+    @contextmanager
+    def app_metadata_cache_scope(self) -> Any:
+        existing = getattr(self._local, "app_metadata_cache", None)
+        if existing is not None:
+            yield existing
+            return
+
+        with self.connect() as conn:
+            rows = conn.execute("SELECT key, value FROM app_metadata").fetchall()
+        cache = {str(row["key"]): str(row["value"]) for row in rows}
+        self._local.app_metadata_cache = cache
+        try:
+            yield cache
+        finally:
+            if hasattr(self._local, "app_metadata_cache"):
+                del self._local.app_metadata_cache
+
     def _persistent_postgres_connection(self) -> Any:
         conn = getattr(self._local, "persistent_connection", None)
         if conn is not None and not conn.closed:
@@ -451,6 +469,7 @@ class Store:
 
     def init_db(self) -> None:
         with self.connect() as conn:
+            self._acquire_schema_init_lock(conn)
             conn.executescript(POSTGRES_SCHEMA if self.is_postgres else SCHEMA)
             self._ensure_column(conn, "article_drafts", "initial_title", "TEXT")
             self._ensure_column(conn, "article_drafts", "initial_body", "TEXT")
@@ -469,6 +488,10 @@ class Store:
             self._normalize_press_release_urls(conn)
             self._ensure_single_draft_index(conn)
             self._ensure_indexes(conn)
+
+    def _acquire_schema_init_lock(self, conn: Any) -> None:
+        if self.is_postgres:
+            conn.execute("SELECT pg_advisory_xact_lock(?)", (POSTGRES_SCHEMA_INIT_LOCK_ID,))
 
     def _ensure_indexes(self, conn: Any) -> None:
         index_statements = [
@@ -691,6 +714,9 @@ class Store:
         )
 
     def get_app_metadata(self, key: str) -> str | None:
+        cache = getattr(self._local, "app_metadata_cache", None)
+        if cache is not None:
+            return cache.get(key)
         with self.connect() as conn:
             row = conn.execute("SELECT value FROM app_metadata WHERE key = ?", (key,)).fetchone()
             return str(row["value"]) if row else None
@@ -708,6 +734,9 @@ class Store:
                 """,
                 (key, value, now),
             )
+        cache = getattr(self._local, "app_metadata_cache", None)
+        if cache is not None:
+            cache[key] = value
 
     def sync_source_metadata(self, sources: list[Source]) -> None:
         if not sources:
