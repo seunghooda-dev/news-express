@@ -17,6 +17,8 @@ IMAGE_DECORATIVE_TOKENS = (
     "visual-area",
     "visualbanner",
     "visual-banner",
+    "visual_deco",
+    "visual-deco",
     "popup",
     "quick",
     "gnb",
