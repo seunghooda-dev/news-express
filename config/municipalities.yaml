@@ -132,17 +132,17 @@ sources:
     enabled: true
     type: html_board
     verify_ssl: false
-    list_url: "https://governor.jeonnam.go.kr/M7116/boardList.do?displayHeader=&infoReturn=&menuId=jeonnam0202000000"
-    base_url: "https://governor.jeonnam.go.kr"
+    list_url: "https://www.jeonnam-gwangju.go.kr/boardList.do?pageId=jngj22&boardId=JG_0000000003&recordCnt=30"
+    base_url: "https://www.jeonnam-gwangju.go.kr"
     include_url_contains:
       - "boardView.do"
-      - "M7116"
+      - "JG_0000000003"
     exclude_title_contains:
       - "처음 목록"
       - "다음 목록"
       - "마지막 목록"
     selectors:
-      link: "a[href*='boardView.do']"
+      link: "a[href*='boardView.do'][href*='JG_0000000003']"
       content: *common_content
 
   - id: mokpo-city

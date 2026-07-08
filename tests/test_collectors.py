@@ -9,6 +9,7 @@ from news_summary.collectors import (
     _validated_release,
     collect_html_board,
     collect_json_board,
+    public_press_release_url,
 )
 from news_summary.models import Source
 
@@ -445,6 +446,105 @@ def test_collect_html_board_uses_one_srcset_press_image_candidate(monkeypatch):
     assert [asset.url for asset in items[0].assets] == [
         "https://example.com/upload/press/event-large.jpg",
     ]
+
+
+def test_collect_html_board_extracts_only_jeonnam_gwangju_attached_files(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if "boardList.do" in url:
+                return FakeResponse(
+                    """
+                    <a href="/boardView.do?pageId=jngj22&amp;boardId=JG_0000000003&amp;seq=78">
+                      무등산권 세계지질공원, 스페인 그라나다와 국제협력 다진다
+                    </a>
+                    """
+                )
+            return FakeResponse(
+                """
+                <main>
+                  <img src="/home/jngj/images/main/top_slogan.png" alt="압도적 성장 함께 사는 특별시">
+                  <section class="card-news">
+                    <a href="/imageView/cardnews1">
+                      <img src="/imageView/cardnews1" alt="장마철 안전수칙">
+                    </a>
+                    <img src="/upload/co/1783492266550.jpg" alt="공지 이미지">
+                  </section>
+                  <article class="board_view">
+                    <p>전남광주통합특별시는 스페인 그라나다 세계지질공원 방문단이 무등산권 세계지질공원을 방문한다고 밝혔다.</p>
+                    <p>방문단은 무등산권 세계지질공원 운영 현황을 살피고 국제협력 방안을 논의할 예정이다.</p>
+                    <p>시는 이번 교류를 계기로 지질공원 보전과 관광 활성화 협력을 이어갈 계획이다.</p>
+                    <img src="/imageView/article-preview" alt="본문 미리보기 사진">
+                  </article>
+                  <div class="file_list">
+                    <a href="/fileDownload.do?fileSe=BB&amp;fileKey=JG_0000000003%7C78&amp;fileSn=1&amp;boardId=JG_0000000003&amp;seq=78">무등산권 세계지질공원.hwpx</a>
+                    <a href="/filePreView.do?action=H&amp;fileSn=1">미리보기</a>
+                    <a href="/fileDownload.do?fileSe=BB&amp;fileKey=JG_0000000003%7C78&amp;fileSn=2&amp;boardId=JG_0000000003&amp;seq=78">스페인 그라나다 세계지질공원 방문단 (1).jpeg</a>
+                    <a href="/filePreView.do?action=I&amp;fileSn=2">미리보기</a>
+                    <a href="/fileDownload.do?fileSe=BB&amp;fileKey=JG_0000000003%7C78&amp;fileSn=3&amp;boardId=JG_0000000003&amp;seq=78">스페인 그라나다 세계지질공원 방문단 (2).jpeg</a>
+                  </div>
+                </main>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="jeonnam-gwangju-asset-test",
+        name="전남광주통합특별시청 보도자료",
+        region="전남광주통합특별시",
+        type="html_board",
+        list_url="https://www.jeonnam-gwangju.go.kr/boardList.do?pageId=jngj22&boardId=JG_0000000003",
+        base_url="https://www.jeonnam-gwangju.go.kr",
+        include_url_contains=["boardView.do", "JG_0000000003"],
+        selectors={
+            "link": "a[href*='boardView.do'][href*='JG_0000000003']",
+            "content": ["main"],
+        },
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert items[0].url == "https://www.jeonnam-gwangju.go.kr/boardView.do?pageId=jngj22&boardId=JG_0000000003&seq=78"
+    assert [asset.filename for asset in items[0].assets] == [
+        "무등산권 세계지질공원.hwpx",
+        "스페인 그라나다 세계지질공원 방문단 (1).jpeg",
+        "스페인 그라나다 세계지질공원 방문단 (2).jpeg",
+    ]
+    assert [asset.asset_type for asset in items[0].assets] == ["file", "image", "image"]
+    assert all("imageView" not in asset.url for asset in items[0].assets)
+    assert all("/home/jngj/images/main/" not in asset.url for asset in items[0].assets)
+    assert all("/upload/co/" not in asset.url for asset in items[0].assets)
+
+
+def test_public_press_release_url_rewrites_jeonnam_governor_detail_url():
+    old_url = "https://governor.jeonnam.go.kr/boardView.do?pageId=jngj22&boardId=JG_0000000003&seq=78"
+
+    assert public_press_release_url(old_url) == (
+        "https://www.jeonnam-gwangju.go.kr/boardView.do?"
+        "pageId=jngj22&boardId=JG_0000000003&seq=78"
+    )
+    assert _canonical_url(old_url) == (
+        "https://www.jeonnam-gwangju.go.kr/boardView.do?"
+        "pageId=jngj22&boardId=JG_0000000003&seq=78"
+    )
 
 
 def test_collect_json_board_maps_nested_items(monkeypatch):

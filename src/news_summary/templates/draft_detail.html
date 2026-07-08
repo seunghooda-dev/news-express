@@ -7,7 +7,7 @@
       <a class="source-link" href="{{ url_for('draft_detail', draft_id=next_review_draft_id) }}">다음 검수할 기사</a>
     {% endif %}
     <a class="source-link" href="{{ url_for('source_detail', source_id=draft.source_id) }}">기관 상세</a>
-    <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 열기</a>
+    <a class="source-link" href="{{ public_press_release_url(draft.url) }}" target="_blank" rel="noopener noreferrer">원문 열기</a>
   </div>
 </section>
 
@@ -47,7 +47,7 @@
     <section class="attachment-inline">
       <div class="section-head compact">
         <h1>첨부 사진/파일</h1>
-        <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 사이트</a>
+        <a class="source-link" href="{{ public_press_release_url(draft.url) }}" target="_blank" rel="noopener noreferrer">원문 사이트</a>
       </div>
       {% if not has_press_image %}
         <p class="asset-empty">이미지 없음</p>
@@ -67,7 +67,7 @@
                 <small>{{ asset.filename or asset.content_type or asset.asset_type }}</small>
                 <span class="asset-actions">
                   <a href="{{ url_for('download_press_release_asset', asset_id=asset.id) }}">다운로드</a>
-                  <a href="{{ asset.url }}" target="_blank" rel="noopener noreferrer">원본 열기</a>
+                  <a href="{{ public_press_release_url(asset.url) }}" target="_blank" rel="noopener noreferrer">원본 열기</a>
                 </span>
               </span>
             </article>

@@ -529,6 +529,72 @@ def test_article_views_hide_previously_saved_decorative_images(monkeypatch):
     assert 'src="https://example.com/upload/editor/press-photo.jpg"' not in drafts_html
 
 
+def test_article_detail_rewrites_jeonnam_governor_source_links(monkeypatch):
+    db_path = Path(f"data/.test_jeonnam_public_source_link_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    old_url = "https://governor.jeonnam.go.kr/boardView.do?pageId=jngj22&boardId=JG_0000000003&seq=78"
+    public_url = (
+        "https://www.jeonnam-gwangju.go.kr/boardView.do?"
+        "pageId=jngj22&amp;boardId=JG_0000000003&amp;seq=78"
+    )
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="jeonnam-province",
+            source_name="전남광주통합특별시청 보도자료",
+            region="전남광주통합특별시",
+            title="무등산권 세계지질공원 국제협력",
+            url=old_url,
+            content="전남광주통합특별시는 세계지질공원 국제협력을 추진한다고 밝혔다.",
+            published_at="2026-07-08",
+            assets=[
+                PressReleaseAsset(
+                    url="https://governor.jeonnam.go.kr/imageView/cardnews",
+                    title="장마철 안전수칙",
+                    filename="cardnews",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                ),
+                PressReleaseAsset(
+                    url="https://www.jeonnam-gwangju.go.kr/fileDownload.do?fileSe=BB&fileSn=2&boardId=JG_0000000003&seq=78",
+                    title="스페인 그라나다 세계지질공원 방문단 (1).jpeg",
+                    filename="스페인 그라나다 세계지질공원 방문단 (1).jpeg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                ),
+            ],
+        )
+    )
+    assert release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="전남광주통합특별시, 세계지질공원 국제협력 논의",
+            body="본문입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    draft_html = client.get(f"/drafts/{draft_id}").data.decode("utf-8")
+    release_html = client.get(f"/press-releases/{release_id}").data.decode("utf-8")
+
+    for html in (draft_html, release_html):
+        assert public_url in html
+        assert old_url not in html
+        assert "장마철 안전수칙" not in html
+        assert "스페인 그라나다 세계지질공원 방문단 (1).jpeg" in html
+
+
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):
     db_path = Path(f"data/.test_dashboard_metric_links_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

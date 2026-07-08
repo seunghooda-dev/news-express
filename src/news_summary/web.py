@@ -21,6 +21,7 @@ from werkzeug.exceptions import HTTPException
 from .asset_filters import is_display_noise_image_asset
 from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, verify_admin_password
 from .backup import create_backup, restore_backup, verify_backup
+from .collectors import public_press_release_url
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
 from .scheduler import AUTO_COLLECT_STATUS_KEY
@@ -116,6 +117,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["file_size_label"] = file_size_label
     app.jinja_env.globals["region_display_label"] = region_display_label
     app.jinja_env.globals["source_display_label"] = source_display_label
+    app.jinja_env.globals["public_press_release_url"] = public_press_release_url
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_database())

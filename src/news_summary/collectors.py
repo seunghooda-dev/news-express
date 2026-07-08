@@ -37,6 +37,9 @@ VOLATILE_DETAIL_QUERY_PARAMS = {
     "vlist_no_npage",
 }
 SUNCHEON_NEWS_HOST_ALIASES = {"www.suncheon.go.kr", "m.suncheon.go.kr", "sc.go.kr"}
+JEONNAM_GWANGJU_PUBLIC_HOST = "www.jeonnam-gwangju.go.kr"
+JEONNAM_GWANGJU_LEGACY_HOSTS = {"governor.jeonnam.go.kr"}
+JEONNAM_GWANGJU_BOARD_QUERY_KEYS = ("pageId", "boardId", "seq")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 ATTACHMENT_EXTENSIONS = IMAGE_EXTENSIONS | {
     ".pdf",
@@ -522,6 +525,7 @@ def _is_allowed_link(source: Source, url: str, title: str) -> bool:
 
 
 def _canonical_url(url: str) -> str:
+    url = public_press_release_url(url)
     parts = urlsplit(url)
     netloc = parts.netloc
     if netloc.lower() in SUNCHEON_NEWS_HOST_ALIASES and parts.path.startswith("/kr/news/0006/0001"):
@@ -536,6 +540,44 @@ def _canonical_url(url: str) -> str:
         doseq=True,
     )
     return urlunsplit((parts.scheme, netloc, path, query, parts.fragment))
+
+
+def public_press_release_url(url: str) -> str:
+    """Return a browser-openable public URL for migrated official press boards."""
+    raw_url = str(url or "").strip()
+    parts = urlsplit(raw_url)
+    host = parts.netloc.lower()
+    path = parts.path.lower()
+    query_pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if host in JEONNAM_GWANGJU_LEGACY_HOSTS and path.endswith("boardview.do"):
+        return _jeonnam_gwangju_public_board_url(parts, query_pairs)
+    if host == JEONNAM_GWANGJU_PUBLIC_HOST and path.startswith("/mayor/") and _has_jeonnam_gwangju_board_query(query_pairs):
+        return _jeonnam_gwangju_public_board_url(parts, query_pairs)
+    return raw_url
+
+
+def _has_jeonnam_gwangju_board_query(query_pairs: list[tuple[str, str]]) -> bool:
+    keys = {key for key, value in query_pairs if value}
+    return {"boardId", "seq"}.issubset(keys)
+
+
+def _jeonnam_gwangju_public_board_url(parts, query_pairs: list[tuple[str, str]]) -> str:
+    if not _has_jeonnam_gwangju_board_query(query_pairs):
+        return parts.geturl()
+    selected_pairs = [
+        (key, value)
+        for key, value in query_pairs
+        if key in JEONNAM_GWANGJU_BOARD_QUERY_KEYS and value
+    ]
+    return urlunsplit(
+        (
+            "https",
+            JEONNAM_GWANGJU_PUBLIC_HOST,
+            "/boardView.do",
+            urlencode(selected_pairs, doseq=True),
+            "",
+        )
+    )
 
 
 def _validated_release(
@@ -888,6 +930,8 @@ def _looks_like_attachment_url(url: str, label: str = "") -> bool:
 
 def _is_noise_asset(url: str, label: str = "") -> bool:
     text = f"{url} {label}".lower()
+    if _is_jeonnam_gwangju_image_view_url(url):
+        return True
     if any(token in text for token in ASSET_SKIP_TOKENS):
         return True
     if (
@@ -899,17 +943,32 @@ def _is_noise_asset(url: str, label: str = "") -> bool:
     return False
 
 
+def _is_jeonnam_gwangju_image_view_url(url: str) -> bool:
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    return (
+        host in {JEONNAM_GWANGJU_PUBLIC_HOST, *JEONNAM_GWANGJU_LEGACY_HOSTS}
+        and parts.path.lower().startswith("/imageview/")
+    )
+
+
 def _asset_filename(url: str, label: str = "") -> str:
     query_filename = _asset_query_filename(url)
     if query_filename:
         return query_filename[:160]
-    path_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1]).strip()
-    if path_name and "." in path_name:
-        return path_name[:160]
     label = _clean_text(label)
+    if label and _asset_extension("", label) in ATTACHMENT_EXTENSIONS:
+        return label[:160]
+    path_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1]).strip()
+    if path_name and "." in path_name and not _looks_like_download_handler_path(path_name):
+        return path_name[:160]
     if label and "." in label:
         return label[:160]
     return path_name[:160] if path_name else label[:160]
+
+
+def _looks_like_download_handler_path(path_name: str) -> bool:
+    return path_name.lower().endswith((".do", ".php", ".asp", ".aspx", ".jsp"))
 
 
 def _asset_query_filename(url: str) -> str:
