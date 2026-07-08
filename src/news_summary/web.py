@@ -81,9 +81,12 @@ DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
 LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
+DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 
 AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]]
 _latest_github_commit_cache: dict[tuple[str, str], tuple[float, str | None]] = {}
+_operations_report_cache: dict[tuple[str, ...], tuple[float, dict[str, object]]] = {}
+_operations_report_cache_lock = RLock()
 
 
 class AssetDownloadError(RuntimeError):
@@ -359,37 +362,23 @@ def create_app() -> Flask:
                 admin_password_configured = bool(admin_password_source)
                 pending_queue = store.pending_press_release_summary()
                 draft_failure_summary = store.draft_generation_failure_summary()
-                return render_template(
-                    "operations.html",
-                    auto_collector_status=auto_status,
-                    retention_policy=_retention_policy_summary(),
-                    pending_queue=pending_queue,
-                    draft_failure_summary=draft_failure_summary,
-                    operations_health=_operations_health_report(store, auto_status, pending_queue),
-                    deployment_version=_deployment_version_report(),
-                    db_health=_db_health_report(store, backup_dir),
-                    date_issue_report=_date_issue_report(store),
-                    daily_report=_daily_operations_report(store),
-                    operations_summary=_operations_summary_report(store),
-                    server_health_report=_server_health_report(store),
-                    anomaly_report=_collection_anomaly_report(store),
-                    deduplicate_report=_deduplicate_report(store),
-                    fallback_report=_fallback_url_report(config_path),
-                    url_discovery_report=_url_discovery_report(store),
-                    backup_verify_report=_backup_verify_report(store, backup_dir),
-                    automation_settings=_automation_settings_report(),
-                    visitor_access=_visitor_access_overview(store),
-                    cloudflare_tunnel=_cloudflare_quick_tunnel_status(),
-                    backup_dir=backup_dir,
-                    backup_files=_backup_files(backup_dir),
-                    db_path=store.display_location,
-                    log_path=Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
-                    admin_password_source=admin_password_source,
-                    admin_password_configured=admin_password_configured,
-                    admin_password_unlocked=bool(
+                context = {
+                    "auto_collector_status": auto_status,
+                    "pending_queue": pending_queue,
+                    "draft_failure_summary": draft_failure_summary,
+                    "visitor_access": _visitor_access_overview(store),
+                    "backup_dir": backup_dir,
+                    "backup_files": _backup_files(backup_dir),
+                    "db_path": store.display_location,
+                    "log_path": Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
+                    "admin_password_source": admin_password_source,
+                    "admin_password_configured": admin_password_configured,
+                    "admin_password_unlocked": bool(
                         admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
                     ),
-                )
+                }
+                context.update(_operations_cached_report_bundle(store, config_path, backup_dir, auto_status, pending_queue))
+                return render_template("operations.html", **context)
 
     @app.post("/operations/auto-collect")
     def update_auto_collect():
@@ -399,6 +388,7 @@ def create_app() -> Flask:
             return redirect(url_for("operations"))
         enabled = request.form.get("enabled") == "true"
         auto_collector.set_enabled(enabled)
+        _clear_operations_report_cache()
         logger.info("auto collector setting changed enabled=%s", enabled)
         flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
         return redirect(url_for("operations"))
@@ -447,6 +437,7 @@ def create_app() -> Flask:
             set_admin_password(store, new_password)
             session["admin_authenticated"] = True
             session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
+            _clear_operations_report_cache()
             logger.info("admin password changed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
         return redirect(url_for("operations"))
@@ -457,6 +448,7 @@ def create_app() -> Flask:
             flash("PostgreSQL 모드에서는 SQLite zip 백업 대신 클라우드 DB 백업/스냅샷을 사용하세요.")
             return redirect(url_for("operations"))
         backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
+        _clear_operations_report_cache()
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")
         return redirect(url_for("operations"))
@@ -496,6 +488,7 @@ def create_app() -> Flask:
         safety_backup = create_backup(PROJECT_ROOT, store.path, backup_dir)
         restored = restore_backup(PROJECT_ROOT, backup_path, dry_run=False)
         store.init_db()
+        _clear_operations_report_cache()
         logger.warning(
             "backup restored backup=%s restored=%s safety_backup=%s",
             backup_path,
@@ -1425,6 +1418,82 @@ def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
         "backup_count": len(backups),
         "note": note,
     }
+
+
+def _operations_cached_report_bundle(
+    store: Store,
+    config_path: Path,
+    backup_dir: Path,
+    auto_status: object | None,
+    pending_queue: dict[str, object],
+) -> dict[str, object]:
+    ttl_seconds = _operations_report_cache_seconds()
+    cache_key = _operations_report_cache_key(store, config_path, backup_dir, auto_status, pending_queue)
+    now = time.monotonic()
+    if ttl_seconds > 0:
+        with _operations_report_cache_lock:
+            cached = _operations_report_cache.get(cache_key)
+            if cached and now - cached[0] <= ttl_seconds:
+                return dict(cached[1])
+
+    reports = {
+        "retention_policy": _retention_policy_summary(),
+        "operations_health": _operations_health_report(store, auto_status, pending_queue),
+        "deployment_version": _deployment_version_report(),
+        "db_health": _db_health_report(store, backup_dir),
+        "date_issue_report": _date_issue_report(store),
+        "daily_report": _daily_operations_report(store),
+        "operations_summary": _operations_summary_report(store),
+        "server_health_report": _server_health_report(store),
+        "anomaly_report": _collection_anomaly_report(store),
+        "deduplicate_report": _deduplicate_report(store),
+        "fallback_report": _fallback_url_report(config_path),
+        "url_discovery_report": _url_discovery_report(store),
+        "backup_verify_report": _backup_verify_report(store, backup_dir),
+        "automation_settings": _automation_settings_report(),
+        "cloudflare_tunnel": _cloudflare_quick_tunnel_status(),
+    }
+    if ttl_seconds > 0:
+        with _operations_report_cache_lock:
+            if len(_operations_report_cache) >= 32:
+                _operations_report_cache.clear()
+            _operations_report_cache[cache_key] = (now, reports)
+    return dict(reports)
+
+
+def _operations_report_cache_key(
+    store: Store,
+    config_path: Path,
+    backup_dir: Path,
+    auto_status: object | None,
+    pending_queue: dict[str, object],
+) -> tuple[str, ...]:
+    return (
+        store.display_location,
+        str(config_path),
+        str(backup_dir),
+        str(_auto_status_value(auto_status, "enabled")),
+        str(_auto_status_value(auto_status, "running")),
+        str(_auto_status_value(auto_status, "last_auto_finished_at")),
+        str(pending_queue.get("total") or 0),
+    )
+
+
+def _operations_report_cache_seconds() -> int:
+    raw_value = os.getenv(
+        "NEWS_SUMMARY_OPERATIONS_REPORT_CACHE_SECONDS",
+        str(DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS),
+    )
+    try:
+        seconds = int(raw_value)
+    except ValueError:
+        seconds = DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS
+    return max(0, min(seconds, 120))
+
+
+def _clear_operations_report_cache() -> None:
+    with _operations_report_cache_lock:
+        _operations_report_cache.clear()
 
 
 def _date_issue_report(store: Store) -> dict[str, object]:

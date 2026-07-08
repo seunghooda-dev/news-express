@@ -2100,6 +2100,49 @@ def test_operations_page_toggles_auto_collection(monkeypatch):
     assert collector.calls == [True, False]
 
 
+def test_operations_page_reuses_short_diagnostics_cache(monkeypatch):
+    db_path = Path(f"data/.test_operations_report_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATIONS_REPORT_CACHE_SECONDS", "60")
+
+    from news_summary import web as web_module
+
+    web_module._clear_operations_report_cache()
+    deployment_calls = []
+
+    def fake_deployment_version_report():
+        deployment_calls.append("called")
+        return {
+            "status_label": "최신 배포",
+            "status_level": "ok",
+            "running_commit": "abc1234",
+            "latest_commit": "abc1234",
+            "repo": "seunghooda-dev/news-express",
+            "branch": "codex/news-express",
+            "auto_deploy_label": "On Commit",
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_level": "ok",
+        }
+
+    monkeypatch.setattr(web_module, "_deployment_version_report", fake_deployment_version_report)
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflare_quick_tunnel_status",
+        lambda: {"running": False, "public_url": "", "log_path": "", "updated_at": None, "label": "터널 미감지"},
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    first = client.get("/operations")
+    second = client.get("/operations")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert deployment_calls == ["called"]
+
+
 def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     db_path = Path(f"data/.test_operations_status_cards_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
