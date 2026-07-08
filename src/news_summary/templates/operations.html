@@ -329,6 +329,20 @@
           <span>{{ item.kind }} {{ item.count }}건</span>
         {% endfor %}
       </p>
+      {% if draft_failure_summary.latest %}
+        <p class="meta">최근 보류 원문</p>
+        <ul class="ops-mini-list">
+          {% for item in draft_failure_summary.latest %}
+            <li>
+              <a href="{{ url_for('press_release_detail', release_id=item.press_release_id) }}">
+                {{ source_display_label(item.source_name) }} · {{ item.title }}
+              </a>
+              <br>
+              시도 {{ item.attempts }}회 · 다음 재시도 {{ item.next_retry_at|date_label }}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
     {% else %}
       <p class="meta">Gemini 변환 실패로 따로 보류된 원문이 없습니다.</p>
     {% endif %}

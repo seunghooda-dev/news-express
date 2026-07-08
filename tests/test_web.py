@@ -2442,7 +2442,9 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "Gemini 미변환 큐" in html
     assert "Gemini 실패 큐" in html
     assert "generation_error 1건" in html
-    assert "Gemini 대기 원문" not in html
+    assert "최근 보류 원문" in html
+    assert "Gemini 대기 원문" in html
+    assert "다음 재시도" in html
     assert "테스트 기관 1건" in html
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
@@ -2513,6 +2515,9 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
     assert "주의" in html
     assert "Gemini 재시도 가능 실패 큐 2건" in html
     assert "재시도 가능 2건" in html
+    assert "재시도 대기 원문 1" in html
+    assert "재시도 대기 원문 2" in html
+    assert "/press-releases/1" in html
 
 
 def test_operations_page_prefetches_metadata_once(monkeypatch):
