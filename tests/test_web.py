@@ -3209,6 +3209,10 @@ def test_healthz_reports_database_status(monkeypatch):
     assert "collection_check_coverage_checked_today" in payload
     assert "collection_check_coverage_enabled_total" in payload
     assert "collection_check_coverage_message" in payload
+    assert "draft_conversion_coverage_status" in payload
+    assert "draft_conversion_today_releases" in payload
+    assert "draft_conversion_today_pending" in payload
+    assert "draft_conversion_coverage_message" in payload
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
 
@@ -3268,6 +3272,69 @@ def test_healthz_reports_collection_check_coverage(monkeypatch):
     assert payload["collection_check_coverage_failed_today"] == 0
     assert payload["collection_check_coverage_unchecked_count"] == 1
     assert payload["collection_check_coverage_unchecked_sources"] == ["미점검 기관"]
+
+
+def test_healthz_reports_draft_conversion_coverage(monkeypatch):
+    db_path = Path(f"data/.test_healthz_draft_conversion_coverage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 14, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    drafted_id = store.add_press_release(
+        PressRelease(
+            source_id="gwangyang",
+            source_name="광양시청 보도자료",
+            region="전남",
+            title="초안 생성 완료 원문",
+            url="https://example.com/healthz-drafted",
+            content="오늘 초안 변환 커버리지 점검용 원문입니다.",
+            published_at="2026.07.06 09:30",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="suncheon",
+            source_name="순천시청 보도자료",
+            region="전남",
+            title="초안 미변환 원문",
+            url="https://example.com/healthz-pending",
+            content="오늘 초안 변환 미처리 점검용 원문입니다.",
+            published_at="2026-07-06 11:00",
+        )
+    )
+    assert drafted_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_id,
+            title="초안 제목",
+            body="초안 본문입니다.",
+            review_note="검수 필요",
+            model="gemini-3.5-flash",
+        )
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz").get_json()
+
+    assert payload["draft_conversion_coverage_status"] == "warning"
+    assert payload["draft_conversion_coverage_label"] == "미변환"
+    assert payload["draft_conversion_today_releases"] == 2
+    assert payload["draft_conversion_today_drafted"] == 1
+    assert payload["draft_conversion_today_pending"] == 1
+    assert payload["draft_conversion_drafted_percent"] == 50
+    assert payload["draft_conversion_pending_sources"] == [
+        {"source_name": "순천시청 보도자료", "count": 1}
+    ]
 
 
 def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):

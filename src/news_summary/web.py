@@ -328,6 +328,7 @@ def create_app() -> Flask:
         gemini_queue_health = _gemini_queue_health_payload(store)
         source_collection_health = _source_collection_health_payload(store)
         collection_coverage_health = _collection_check_coverage_health_payload(store, config_path)
+        draft_conversion_health = _draft_conversion_coverage_health_payload(store)
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
             _ensure_auto_collector_running(auto_collector)
@@ -352,6 +353,7 @@ def create_app() -> Flask:
                     **gemini_queue_health,
                     **source_collection_health,
                     **collection_coverage_health,
+                    **draft_conversion_health,
                 }
             )
         return jsonify(
@@ -363,6 +365,7 @@ def create_app() -> Flask:
                 **gemini_queue_health,
                 **source_collection_health,
                 **collection_coverage_health,
+                **draft_conversion_health,
             }
         )
 
@@ -2094,6 +2097,24 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         "latest_pending_at": pending_time(latest_pending),
         "oldest_pending_at": pending_time(oldest_pending),
         "message": message,
+    }
+
+
+def _draft_conversion_coverage_health_payload(store: Store) -> dict[str, object]:
+    report = _draft_conversion_coverage_report(store)
+    pending_sources = list(report.get("pending_sources") or [])
+    return {
+        "draft_conversion_coverage_status": report.get("status_level"),
+        "draft_conversion_coverage_label": report.get("status_label"),
+        "draft_conversion_coverage_date": report.get("date"),
+        "draft_conversion_today_releases": int(report.get("today_releases") or 0),
+        "draft_conversion_today_drafted": int(report.get("today_drafted") or 0),
+        "draft_conversion_today_pending": int(report.get("today_pending") or 0),
+        "draft_conversion_drafted_percent": int(report.get("drafted_percent") or 0),
+        "draft_conversion_latest_pending_at": report.get("latest_pending_at"),
+        "draft_conversion_oldest_pending_at": report.get("oldest_pending_at"),
+        "draft_conversion_pending_sources": pending_sources[:5],
+        "draft_conversion_coverage_message": report.get("message"),
     }
 
 
