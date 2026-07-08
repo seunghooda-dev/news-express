@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -7,7 +8,10 @@ import httpx
 from news_summary.collectors import CollectionError
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, Source
 from news_summary.scheduler import (
+    AUTO_COLLECTION_ANOMALY_STATUS_KEY,
     DEFAULT_AUTO_COLLECT_LIMIT,
+    AUTO_DAILY_REPORT_KEY,
+    AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
     AutoCollector,
     build_auto_collector_from_env,
     _collection_anomaly_snapshot,
@@ -1359,6 +1363,82 @@ def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
     assert last_auto_finished_at is not None
     restored = AutoCollector(store, Path("unused.yaml"))
     assert restored.snapshot().last_auto_finished_at == last_auto_finished_at
+
+
+def test_auto_collector_refreshes_operations_snapshots_after_collection(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_report_refresh_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="gangjin-county", name="강진군청 보도자료", region="전남 강진", type="html_board")
+
+    store.add_press_release(
+        PressRelease(
+            source_id=source.id,
+            source_name=source.name,
+            region=source.region,
+            title="이전 강진 원문",
+            url="https://example.com/gangjin-old",
+            content="이전 업무일 원문입니다.",
+            published_at="2026-07-07",
+        )
+    )
+    store.record_source_collection_status(
+        source.id,
+        source.name,
+        "failed",
+        "강진군청 보도자료 수집 실패",
+        failure_stage="외부 사이트 응답 지연",
+        failure_reason="TLS 연결 시간 초과",
+    )
+    store.set_app_metadata(
+        AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+        json.dumps({"issue_count": 1, "status_level": "warning", "issues": [{"source_id": source.id}]}),
+    )
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 8, 12, 0, tzinfo=timezone(timedelta(hours=9)))
+            return value if tz is None else value.astimezone(tz)
+
+    def fake_collect_and_draft_cycle(*args, **kwargs):
+        store.add_press_release(
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title="오늘 강진 원문",
+                url="https://example.com/gangjin-today",
+                content="오늘 수집된 원문입니다.",
+                published_at="2026-07-08",
+            )
+        )
+        store.record_source_collection_status(
+            source.id,
+            source.name,
+            "ok",
+            "원문 검증 통과 1건, 새로 저장 1건",
+            releases_found=1,
+            inserted_count=1,
+        )
+        return ["수집 완료"]
+
+    monkeypatch.setattr("news_summary.scheduler.datetime", FixedDatetime)
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
+    monkeypatch.setattr("news_summary.scheduler.collect_and_draft_cycle", fake_collect_and_draft_cycle)
+
+    collector = AutoCollector(store, Path("unused.yaml"))
+    collector.run_once(label="자동 수집")
+
+    anomaly = json.loads(store.get_app_metadata(AUTO_COLLECTION_ANOMALY_STATUS_KEY) or "{}")
+    daily_report = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
+    operations_summary = json.loads(store.get_app_metadata(AUTO_OPERATIONS_SUMMARY_STATUS_KEY) or "{}")
+
+    assert anomaly["issue_count"] == 0
+    assert daily_report["today_releases"] == 1
+    assert daily_report["failed_sources"] == 0
+    assert operations_summary["anomaly_count"] == 0
+    assert operations_summary["today_active_sources"] == 1
 
 
 def test_auto_collector_waits_until_the_next_hourly_boundary():

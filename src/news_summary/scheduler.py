@@ -282,9 +282,26 @@ class AutoCollector:
                 if error:
                     self._status.last_error = error
             self._persist_status_snapshot()
+            report_messages = list(messages[-12:])
+            if error:
+                report_messages.append(f"{label} 실패: {error}")
+            self._refresh_collection_report_snapshots(report_messages, finished)
         logger.info("collector run finished label=%s error=%s messages=%s", label, bool(error), len(messages))
 
         return messages
+
+    def _refresh_collection_report_snapshots(self, messages: list[str], finished_at: str) -> None:
+        """Keep operations reports aligned with the latest collection result."""
+        refreshed_at = _parse_datetime(finished_at) or datetime.now(timezone.utc)
+        if refreshed_at.tzinfo is None:
+            refreshed_at = refreshed_at.replace(tzinfo=timezone.utc)
+        try:
+            self._persist_server_health_snapshot(refreshed_at)
+            self._persist_collection_anomaly_snapshot(refreshed_at)
+            self._persist_daily_report_snapshot(messages, refreshed_at)
+            self._persist_operations_summary_snapshot(messages, refreshed_at)
+        except Exception:  # noqa: BLE001 - report refresh must not break collection.
+            logger.exception("collection report snapshot refresh failed")
 
     def snapshot(self) -> AutoCollectorStatus:
         with self._state_lock:
