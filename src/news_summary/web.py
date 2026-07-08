@@ -650,10 +650,8 @@ def create_app() -> Flask:
             has_press_image=any(asset["is_image"] for asset in press_assets),
             statuses=STATUS_ORDER,
             duplicate_titles=duplicate_titles,
-            checks=approval_checks(draft, duplicate_titles),
             next_review_draft_id=_next_review_draft_id(store, current_id=draft_id),
             gemini_cooldown_until=gemini_cooldown_until(store),
-            draft_history=store.draft_history(draft_id),
         )
 
     @app.get("/writing-settings")

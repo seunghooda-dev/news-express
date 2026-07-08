@@ -289,9 +289,11 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert 'body?.addEventListener("input", updateBodyCount);' in html
     assert '<details class="original original-details" open>' in html
     assert "originalDetails.open = false;" in html
-    assert 'class="mobile-review-bar" aria-label="빠른 검수 작업"' in html
-    assert '<button type="submit" name="action" value="approved_next">승인 후 다음</button>' in html
-    assert 'class="mobile-review-spacer" aria-hidden="true"' in html
+    assert 'class="mobile-review-bar" aria-label="빠른 검수 작업"' not in html
+    assert '<button type="submit" name="action" value="approved_next">승인 후 다음</button>' not in html
+    assert 'class="mobile-review-spacer" aria-hidden="true"' not in html
+    assert "승인 전 체크" not in html
+    assert "수정 이력" not in html
     assert "첨부 사진/파일" in html
     assert "https://example.com/body-count-photo.jpg" in html
     assert "현장 사진" in html
@@ -2137,7 +2139,7 @@ def test_draft_actions_can_advance_to_next_review_item(monkeypatch):
 
     detail_html = client.get(f"/drafts/{draft_ids[-1]}").data.decode("utf-8")
     assert "다음 검수할 기사" in detail_html
-    assert "승인 후 다음" in detail_html
+    assert "승인 후 다음" not in detail_html
 
     response = client.post(
         f"/drafts/{draft_ids[-1]}",
@@ -2199,8 +2201,7 @@ def test_draft_history_records_and_restores_previous_version(monkeypatch):
         follow_redirects=True,
     )
     html = update.data.decode("utf-8")
-    assert "수정 이력" in html
-    assert "처음 제목" in html
+    assert "수정 이력" not in html
     history = Store(db_path).draft_history(draft_id)
     assert len(history) == 1
 
