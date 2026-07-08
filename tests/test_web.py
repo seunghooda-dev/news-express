@@ -302,13 +302,29 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "data-image-fallback" in html
     assert 'src="/press-releases/assets/' in html
     assert "/preview" in html
-    assert "이미지 불러오기 실패" in html
+    assert "미리보기 없음" in html
     assert 'image.addEventListener("error", showFallback' in html
     assert "현장 사진" in html
     assert f'href="/press-releases/assets/' in html
     assert "다운로드" in html
     assert "이미지 없음" not in html
     assert html.index("본문 총 글자수:") < html.index("첨부 사진/파일") < html.index("검수 메모")
+
+
+def test_base_template_versions_static_stylesheet(monkeypatch):
+    db_path = Path(f"data/.test_static_asset_version_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_GIT_COMMIT", "abcdef1234567890")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/").data.decode("utf-8")
+
+    assert 'href="/static/app.css?v=abcdef1"' in html
 
 
 def test_article_details_show_no_image_marker_when_only_file_assets(monkeypatch):
@@ -441,7 +457,7 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     assert 'src="https://example.com/gwangyang-thumb.jpg"' not in html
     assert 'data-image-fallback' in html
     assert 'alt="교육 현장 사진"' in html
-    assert "이미지 불러오기 실패" in html
+    assert "미리보기 없음" in html
     assert html.index(thumbnail_src) < html.index(
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
@@ -1074,7 +1090,7 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert preview_src in detail_html
     assert "https://example.com/gwangju-photo.png" not in detail_html
     assert "data-image-fallback" in detail_html
-    assert "이미지 불러오기 실패" in detail_html
+    assert "미리보기 없음" in detail_html
     assert "광주 현장 사진" in detail_html
     assert f'href="/press-releases/{release_id}"' in detail_html
     assert 'href="https://example.com/gwangju-photo.png"' not in detail_html

@@ -118,6 +118,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["region_display_label"] = region_display_label
     app.jinja_env.globals["source_display_label"] = source_display_label
     app.jinja_env.globals["public_press_release_url"] = public_press_release_url
+    app.jinja_env.globals["asset_version"] = _static_asset_version()
     app.jinja_env.filters["date_label"] = format_datetime_label
 
     store = Store(env_database())
@@ -991,6 +992,16 @@ def _deployment_version_report() -> dict[str, object]:
 
 def _running_commit_short() -> str | None:
     return _short_commit(_running_commit())
+
+
+def _static_asset_version() -> str:
+    commit = _running_commit_short()
+    if commit:
+        return commit
+    try:
+        return str(int((PROJECT_ROOT / "src" / "news_summary" / "static" / "app.css").stat().st_mtime))
+    except OSError:
+        return str(int(time.time()))
 
 
 def _running_commit() -> str | None:
