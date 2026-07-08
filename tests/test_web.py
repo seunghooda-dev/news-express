@@ -3210,6 +3210,45 @@ def test_healthz_and_operations_report_missed_next_auto_run(monkeypatch):
     assert "다음 실행 예정 시각" in operations_html
 
 
+def test_healthz_and_operations_warn_long_running_auto_collection(monkeypatch):
+    db_path = Path(f"data/.test_healthz_long_running_auto_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RUNNING_WARN_MINUTES", "60")
+
+    from news_summary.web import create_app
+
+    old_started_at = (datetime.now(LOCAL_TZ) - timedelta(hours=2)).isoformat()
+
+    class RunningCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=True,
+                thread_alive=True,
+                interval_seconds=3600,
+                last_started_at=old_started_at,
+                progress_current=4,
+                progress_total=29,
+                progress_message="4/29 광주 남구청 보도자료 연결 확인 중",
+                progress_source_name="광주 남구청 보도자료",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = RunningCollector()
+    app.testing = True
+    client = app.test_client()
+
+    health = client.get("/healthz").get_json()
+    operations_html = client.get("/operations").data.decode("utf-8")
+
+    assert health["auto_collector"] == "running"
+    assert health["auto_collector_timing"] == "warning"
+    assert health["auto_collector_overdue"] is True
+    assert health["auto_collector_run_minutes"] >= 119
+    assert "분째 실행 중" in health["auto_collector_health_message"]
+    assert "분째 실행 중" in operations_html
+
+
 def test_source_coverage_report_covers_required_municipal_sources():
     report = _source_coverage_report(Path("config/municipalities.yaml"))
 

@@ -88,6 +88,7 @@ DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
 DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
+DEFAULT_AUTO_RUNNING_WARN_MINUTES = 180
 DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
 DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
 DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
@@ -338,6 +339,7 @@ def create_app() -> Flask:
                     "auto_collector_timing": timing_health["status"],
                     "auto_collector_overdue": timing_health["overdue"],
                     "auto_collector_lag_minutes": timing_health["lag_minutes"],
+                    "auto_collector_run_minutes": timing_health["run_minutes"],
                     "auto_collector_schedule_delay_minutes": timing_health["schedule_delay_minutes"],
                     "auto_collector_health_message": timing_health["message"],
                     "last_auto_finished_at": auto_status["last_auto_finished_at"],
@@ -2539,14 +2541,27 @@ def _auto_collector_timing_health(auto_status: object | None) -> dict[str, objec
             "status": "disabled",
             "overdue": False,
             "lag_minutes": None,
+            "run_minutes": None,
             "schedule_delay_minutes": None,
             "message": "자동 수집이 꺼져 있습니다.",
         }
     if bool(_auto_status_value(auto_status, "running")):
+        run_minutes = _minutes_since(_auto_status_value(auto_status, "last_started_at"))
+        running_warn_minutes = _auto_running_warning_minutes()
+        if run_minutes is not None and run_minutes >= running_warn_minutes:
+            return {
+                "status": "warning",
+                "overdue": True,
+                "lag_minutes": _minutes_since(_auto_status_value(auto_status, "last_auto_finished_at")),
+                "run_minutes": run_minutes,
+                "schedule_delay_minutes": None,
+                "message": f"자동 수집이 {run_minutes}분째 실행 중입니다.",
+            }
         return {
             "status": "running",
             "overdue": False,
             "lag_minutes": _minutes_since(_auto_status_value(auto_status, "last_auto_finished_at")),
+            "run_minutes": run_minutes,
             "schedule_delay_minutes": None,
             "message": "자동 수집이 실행 중입니다.",
         }
@@ -2565,6 +2580,7 @@ def _auto_collector_timing_health(auto_status: object | None) -> dict[str, objec
             "status": "warning",
             "overdue": True,
             "lag_minutes": lag_minutes,
+            "run_minutes": None,
             "schedule_delay_minutes": schedule_delay_minutes,
             "message": f"마지막 자동 수집 후 {lag_minutes}분이 지났습니다.",
         }
@@ -2573,6 +2589,7 @@ def _auto_collector_timing_health(auto_status: object | None) -> dict[str, objec
             "status": "warning",
             "overdue": True,
             "lag_minutes": lag_minutes,
+            "run_minutes": None,
             "schedule_delay_minutes": schedule_delay_minutes,
             "message": f"다음 실행 예정 시각이 {schedule_delay_minutes}분 지났습니다.",
         }
@@ -2580,6 +2597,7 @@ def _auto_collector_timing_health(auto_status: object | None) -> dict[str, objec
         "status": "ok",
         "overdue": False,
         "lag_minutes": lag_minutes,
+        "run_minutes": None,
         "schedule_delay_minutes": schedule_delay_minutes,
         "message": "자동 수집 시간 상태 정상",
     }
@@ -2861,6 +2879,15 @@ def _auto_running_stale_minutes() -> int:
         minutes = int(raw_value)
     except ValueError:
         return DEFAULT_AUTO_RUNNING_STALE_MINUTES
+    return max(30, minutes)
+
+
+def _auto_running_warning_minutes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_AUTO_RUNNING_WARN_MINUTES", str(DEFAULT_AUTO_RUNNING_WARN_MINUTES))
+    try:
+        minutes = int(raw_value)
+    except ValueError:
+        return DEFAULT_AUTO_RUNNING_WARN_MINUTES
     return max(30, minutes)
 
 
