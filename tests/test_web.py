@@ -3152,6 +3152,9 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["gemini_pending_total"] == 0
     assert payload["gemini_failure_total"] == 0
     assert payload["gemini_retry_due"] == 0
+    assert payload["gemini_cooldown_active"] is False
+    assert payload["gemini_cooldown_until"] is None
+    assert payload["gemini_cooldown_reason"] is None
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
 
@@ -3196,6 +3199,31 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_failure_total"] == 2
     assert payload["gemini_retry_due"] == 2
     assert payload["gemini_queue_message"] == "Gemini 재시도 가능 실패 큐 2건"
+    assert payload["gemini_cooldown_active"] is False
+
+
+def test_healthz_reports_gemini_cooldown_window(monkeypatch):
+    db_path = Path(f"data/.test_healthz_gemini_cooldown_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    cooldown_until = (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat()
+    store.set_app_metadata("gemini_cooldown_until", cooldown_until)
+    store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 한도 초과")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz").get_json()
+
+    assert payload["ok"] is True
+    assert payload["gemini_queue_status"] == "warning"
+    assert payload["gemini_cooldown_active"] is True
+    assert payload["gemini_cooldown_until"] == cooldown_until
+    assert payload["gemini_cooldown_reason"] == "자동 초안 생성 한도 초과"
+    assert payload["gemini_queue_message"].startswith("Gemini 쿨다운 중:")
+    assert payload["gemini_queue_message"].endswith("까지")
 
 
 def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):

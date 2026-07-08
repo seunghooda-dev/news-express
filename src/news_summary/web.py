@@ -2556,13 +2556,21 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
             "gemini_pending_total": None,
             "gemini_failure_total": None,
             "gemini_retry_due": None,
+            "gemini_cooldown_active": None,
+            "gemini_cooldown_until": None,
+            "gemini_cooldown_reason": None,
             "gemini_queue_message": f"Gemini 대기열 확인 실패: {type(exc).__name__}",
         }
 
     pending_total = int(pending_queue.get("total") or 0)
     failure_total = int(draft_failure_summary.get("total") or 0)
     retry_due = int(draft_failure_summary.get("due") or 0)
-    if retry_due >= _gemini_retry_due_warning_count():
+    cooldown_until = gemini_cooldown_until(store)
+    cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
+    if cooldown_until:
+        status = "warning"
+        message = f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until)}까지"
+    elif retry_due >= _gemini_retry_due_warning_count():
         status = "warning"
         message = f"Gemini 재시도 가능 실패 큐 {retry_due}건"
     elif failure_total >= 100:
@@ -2579,6 +2587,9 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_pending_total": pending_total,
         "gemini_failure_total": failure_total,
         "gemini_retry_due": retry_due,
+        "gemini_cooldown_active": bool(cooldown_until),
+        "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+        "gemini_cooldown_reason": cooldown_reason,
         "gemini_queue_message": message,
     }
 
