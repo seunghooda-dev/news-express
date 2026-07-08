@@ -2520,6 +2520,48 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
     assert "/press-releases/1" in html
 
 
+def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
+    db_path = Path(f"data/.test_operations_gemini_cooldown_reason_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata(
+        "gemini_cooldown_until",
+        (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat(),
+    )
+    store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 한도 초과")
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflare_quick_tunnel_status",
+        lambda: {"running": False, "public_url": "", "log_path": "", "updated_at": None, "label": "터널 미감지"},
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_deployment_version_report",
+        lambda: {
+            "status_label": "최신 배포",
+            "status_level": "ok",
+            "running_commit": "abc1234",
+            "latest_commit": "abc1234",
+            "repo": "seunghooda-dev/news-express",
+            "branch": "codex/news-express",
+            "auto_deploy_label": "On Commit",
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_level": "ok",
+        },
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "Gemini 쿨다운 중:" in html
+    assert "사유: 자동 초안 생성 한도 초과" in html
+
+
 def test_operations_page_prefetches_metadata_once(monkeypatch):
     from contextlib import contextmanager
 

@@ -2499,7 +2499,14 @@ def _operations_health_report(
 
     cooldown_until = gemini_cooldown_until(store)
     if cooldown_until:
-        issues.append(f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until)}까지")
+        cooldown_issue = f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until)}까지"
+        cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY)
+        if cooldown_reason:
+            reason_label = re.sub(r"\s+", " ", str(cooldown_reason)).strip()
+            if len(reason_label) > 140:
+                reason_label = reason_label[:137].rstrip() + "..."
+            cooldown_issue = f"{cooldown_issue} · 사유: {reason_label}"
+        issues.append(cooldown_issue)
 
     pending_total = int(pending_queue.get("total") or 0)
     if pending_total >= 100:
