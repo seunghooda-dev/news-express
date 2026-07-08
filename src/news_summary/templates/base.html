@@ -68,6 +68,20 @@
           }
         });
       });
+      document.querySelectorAll("img[data-image-fallback]").forEach((image) => {
+        const showFallback = () => {
+          const fallback = image.parentElement?.querySelector(".image-load-fallback");
+          image.hidden = true;
+          if (fallback) {
+            fallback.hidden = false;
+          }
+        };
+        if (image.complete && image.naturalWidth === 0) {
+          showFallback();
+        } else {
+          image.addEventListener("error", showFallback, { once: true });
+        }
+      });
     })();
   </script>
 </body>

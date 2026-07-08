@@ -296,6 +296,9 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "수정 이력" not in html
     assert "첨부 사진/파일" in html
     assert "https://example.com/body-count-photo.jpg" in html
+    assert "data-image-fallback" in html
+    assert "이미지 불러오기 실패" in html
+    assert 'image.addEventListener("error", showFallback' in html
     assert "현장 사진" in html
     assert f'href="/press-releases/assets/' in html
     assert "다운로드" in html
@@ -428,7 +431,9 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     assert 'class="row draft-row"' in html
     assert f'href="/drafts/{image_draft_id}"' in html
     assert 'src="https://example.com/gwangyang-thumb.jpg"' in html
+    assert 'data-image-fallback' in html
     assert 'alt="교육 현장 사진"' in html
+    assert "이미지 불러오기 실패" in html
     assert html.index('src="https://example.com/gwangyang-thumb.jpg"') < html.index(
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
@@ -436,6 +441,7 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     assert 'class="row draft-row"' in dashboard_html
     assert f'href="/drafts/{image_draft_id}"' in dashboard_html
     assert 'src="https://example.com/gwangyang-thumb.jpg"' in dashboard_html
+    assert 'data-image-fallback' in dashboard_html
     assert dashboard_html.index('src="https://example.com/gwangyang-thumb.jpg"') < dashboard_html.index(
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
@@ -985,6 +991,8 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
     assert "최근 첨부 사진/파일" in detail_html
     assert "https://example.com/gwangju-photo.png" in detail_html
+    assert "data-image-fallback" in detail_html
+    assert "이미지 불러오기 실패" in detail_html
     assert "광주 현장 사진" in detail_html
     assert f'href="/press-releases/{release_id}"' in detail_html
     assert 'href="https://example.com/gwangju-photo.png"' not in detail_html
@@ -995,6 +1003,7 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "광주시는 첨부 표시 기능을 점검한다고 밝혔다." in release_html
     assert "첨부 사진/파일" in release_html
     assert "광주 현장 사진" in release_html
+    assert "data-image-fallback" in release_html
     assert 'href="/press-releases/assets/' in release_html
 
     asset_id = store.press_release_assets(release_id)[0]["id"]
