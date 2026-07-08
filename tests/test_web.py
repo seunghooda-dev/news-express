@@ -3134,6 +3134,78 @@ def test_healthz_restarts_enabled_auto_collector_thread(monkeypatch):
             collector._thread.join(timeout=1)
 
 
+def test_healthz_reports_overdue_auto_collection_timing(monkeypatch):
+    db_path = Path(f"data/.test_healthz_overdue_auto_collection_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_FINISH_OVERDUE_MINUTES", "90")
+
+    from news_summary.web import create_app
+
+    old_finished_at = (datetime.now(LOCAL_TZ) - timedelta(hours=3)).isoformat()
+    next_run_at = (datetime.now(LOCAL_TZ) + timedelta(minutes=20)).isoformat()
+
+    class IdleCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=False,
+                thread_alive=True,
+                interval_seconds=3600,
+                last_auto_finished_at=old_finished_at,
+                next_run_at=next_run_at,
+                progress_total=29,
+                progress_message="다음 정각 자동 수집 대기 중",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = IdleCollector()
+    app.testing = True
+    health = app.test_client().get("/healthz").get_json()
+
+    assert health["ok"] is True
+    assert health["auto_collector"] == "enabled"
+    assert health["auto_collector_timing"] == "warning"
+    assert health["auto_collector_overdue"] is True
+    assert health["auto_collector_lag_minutes"] >= 170
+    assert "마지막 자동 수집 후" in health["auto_collector_health_message"]
+
+
+def test_healthz_and_operations_report_missed_next_auto_run(monkeypatch):
+    db_path = Path(f"data/.test_healthz_missed_next_auto_run_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_NEXT_RUN_GRACE_MINUTES", "5")
+
+    from news_summary.web import create_app
+
+    missed_next_run_at = (datetime.now(LOCAL_TZ) - timedelta(minutes=20)).isoformat()
+
+    class IdleCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=False,
+                thread_alive=True,
+                interval_seconds=3600,
+                next_run_at=missed_next_run_at,
+                progress_total=29,
+                progress_message="다음 정각 자동 수집 대기 중",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = IdleCollector()
+    app.testing = True
+    client = app.test_client()
+
+    health = client.get("/healthz").get_json()
+    operations_html = client.get("/operations").data.decode("utf-8")
+
+    assert health["auto_collector_timing"] == "warning"
+    assert health["auto_collector_overdue"] is True
+    assert health["auto_collector_schedule_delay_minutes"] >= 19
+    assert "다음 실행 예정 시각" in health["auto_collector_health_message"]
+    assert "다음 실행 예정 시각" in operations_html
+
+
 def test_source_coverage_report_covers_required_municipal_sources():
     report = _source_coverage_report(Path("config/municipalities.yaml"))
 

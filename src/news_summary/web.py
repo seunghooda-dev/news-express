@@ -88,6 +88,8 @@ DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
 DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
+DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
+DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
@@ -325,12 +327,18 @@ def create_app() -> Flask:
             _ensure_auto_collector_running(auto_collector)
             auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
             auto_label = _auto_collector_health_label(auto_status)
+            timing_health = _auto_collector_timing_health(auto_status)
             return jsonify(
                 {
                     "ok": True,
                     "database": "ok",
                     "auto_collector": auto_label,
                     "auto_collector_thread_alive": auto_status.get("thread_alive"),
+                    "auto_collector_timing": timing_health["status"],
+                    "auto_collector_overdue": timing_health["overdue"],
+                    "auto_collector_lag_minutes": timing_health["lag_minutes"],
+                    "auto_collector_schedule_delay_minutes": timing_health["schedule_delay_minutes"],
+                    "auto_collector_health_message": timing_health["message"],
                     "last_auto_finished_at": auto_status["last_auto_finished_at"],
                     "next_run_at": auto_status["next_run_at"],
                     "commit": _running_commit_short(),
@@ -2153,6 +2161,7 @@ def _operations_health_report(
     last_auto_finished_at = _auto_status_value(auto_status, "last_auto_finished_at")
     last_auto_finished = _parse_datetime(last_auto_finished_at)
     stale_running_snapshot_at = _auto_status_value(auto_status, "stale_running_snapshot_at")
+    timing_health = _auto_collector_timing_health(auto_status) if auto_status is not None else None
     if auto_status is None:
         issues.append("자동 수집 컨트롤러 미감지")
     elif _auto_status_value(auto_status, "stale_running_snapshot"):
@@ -2162,6 +2171,8 @@ def _operations_health_report(
         issues.append("자동 수집 꺼짐")
     elif auto_thread_alive is False and not auto_running:
         issues.append("자동 수집 백그라운드 스레드 중단")
+    elif timing_health and timing_health.get("overdue"):
+        issues.append(str(timing_health.get("message") or "자동 수집 실행 지연"))
     elif last_auto_finished:
         minutes_since_auto = int((now - last_auto_finished.astimezone(LOCAL_TZ)).total_seconds() // 60)
         if minutes_since_auto >= 90 and not auto_running:
@@ -2217,6 +2228,94 @@ def _auto_collector_health_label(auto_status: dict[str, object]) -> str:
     if auto_status.get("thread_alive") is False:
         return "stopped"
     return "enabled"
+
+
+def _auto_collector_timing_health(auto_status: object | None) -> dict[str, object]:
+    if not auto_status or not bool(_auto_status_value(auto_status, "enabled")):
+        return {
+            "status": "disabled",
+            "overdue": False,
+            "lag_minutes": None,
+            "schedule_delay_minutes": None,
+            "message": "자동 수집이 꺼져 있습니다.",
+        }
+    if bool(_auto_status_value(auto_status, "running")):
+        return {
+            "status": "running",
+            "overdue": False,
+            "lag_minutes": _minutes_since(_auto_status_value(auto_status, "last_auto_finished_at")),
+            "schedule_delay_minutes": None,
+            "message": "자동 수집이 실행 중입니다.",
+        }
+
+    lag_minutes = _minutes_since(_auto_status_value(auto_status, "last_auto_finished_at"))
+    raw_schedule_delay_minutes = _minutes_after(_auto_status_value(auto_status, "next_run_at"))
+    schedule_delay_minutes = (
+        max(raw_schedule_delay_minutes, 0) if raw_schedule_delay_minutes is not None else None
+    )
+    finish_overdue_minutes = _auto_finish_overdue_minutes(_auto_status_value(auto_status, "interval_seconds"))
+    next_run_grace_minutes = _auto_next_run_grace_minutes()
+    finish_overdue = lag_minutes is not None and lag_minutes >= finish_overdue_minutes
+    schedule_overdue = raw_schedule_delay_minutes is not None and raw_schedule_delay_minutes >= next_run_grace_minutes
+    if finish_overdue:
+        return {
+            "status": "warning",
+            "overdue": True,
+            "lag_minutes": lag_minutes,
+            "schedule_delay_minutes": schedule_delay_minutes,
+            "message": f"마지막 자동 수집 후 {lag_minutes}분이 지났습니다.",
+        }
+    if schedule_overdue:
+        return {
+            "status": "warning",
+            "overdue": True,
+            "lag_minutes": lag_minutes,
+            "schedule_delay_minutes": schedule_delay_minutes,
+            "message": f"다음 실행 예정 시각이 {schedule_delay_minutes}분 지났습니다.",
+        }
+    return {
+        "status": "ok",
+        "overdue": False,
+        "lag_minutes": lag_minutes,
+        "schedule_delay_minutes": schedule_delay_minutes,
+        "message": "자동 수집 시간 상태 정상",
+    }
+
+
+def _minutes_since(value: object) -> int | None:
+    parsed = _parse_datetime(value)
+    if not parsed:
+        return None
+    return max(0, int((datetime.now(LOCAL_TZ) - parsed.astimezone(LOCAL_TZ)).total_seconds() // 60))
+
+
+def _minutes_after(value: object) -> int | None:
+    parsed = _parse_datetime(value)
+    if not parsed:
+        return None
+    return int((datetime.now(LOCAL_TZ) - parsed.astimezone(LOCAL_TZ)).total_seconds() // 60)
+
+
+def _auto_finish_overdue_minutes(interval_seconds: object | None = None) -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_AUTO_FINISH_OVERDUE_MINUTES")
+    if raw_value:
+        try:
+            return max(30, int(raw_value))
+        except ValueError:
+            return DEFAULT_AUTO_FINISH_OVERDUE_MINUTES
+    try:
+        interval_minutes = int(interval_seconds or 0) // 60
+    except (TypeError, ValueError):
+        interval_minutes = 0
+    return max(DEFAULT_AUTO_FINISH_OVERDUE_MINUTES, interval_minutes + 30)
+
+
+def _auto_next_run_grace_minutes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_AUTO_NEXT_RUN_GRACE_MINUTES", str(DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES))
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES
 
 
 def _ensure_auto_collector_running(auto_collector: object | None) -> bool:
