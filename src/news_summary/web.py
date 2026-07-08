@@ -2434,6 +2434,7 @@ def _operations_health_report(
             "pending_total": int(pending_queue.get("total") or 0),
             "last_auto_finished_at": _auto_status_value(auto_status, "last_auto_finished_at"),
             "top_failure_stages": [],
+            "top_failure_sources": [],
             "issues": [f"운영 점검 DB 조회 실패: {type(exc).__name__}"],
         }
 
@@ -2447,6 +2448,22 @@ def _operations_health_report(
     top_failure_stages = [
         {"stage": stage, "count": count}
         for stage, count in stage_counts.most_common(3)
+    ]
+    failure_source_counts: Counter[str] = Counter(str(row["source_id"]) for row in failure_rows)
+    source_latest_failure = {}
+    for row in failure_rows:
+        source_id = str(row["source_id"])
+        if source_id not in source_latest_failure:
+            source_latest_failure[source_id] = row
+    top_failure_sources = [
+        {
+            "source_id": source_id,
+            "source_name": source_display_label(str(source_latest_failure[source_id]["source_name"])),
+            "count": count,
+            "stage": str(source_latest_failure[source_id]["failure_stage"] or "수집 실패"),
+        }
+        for source_id, count in failure_source_counts.most_common(3)
+        if source_id in source_latest_failure
     ]
 
     consecutive_failures = _consecutive_failure_counts(status_sequence_rows)
@@ -2551,6 +2568,7 @@ def _operations_health_report(
         "draft_retry_due": draft_retry_due,
         "last_auto_finished_at": last_auto_finished_at,
         "top_failure_stages": top_failure_stages,
+        "top_failure_sources": top_failure_sources,
         "issues": issues[:5],
     }
 

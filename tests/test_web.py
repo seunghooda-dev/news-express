@@ -2426,6 +2426,8 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "최근 24시간 실패 1건" in html
     assert "자동 복구 1건" in html
     assert "외부 사이트 응답 지연 1건" in html
+    assert "실패 상위 기관" in html
+    assert "테스트 기관 1건 · 외부 사이트 응답 지연" in html
     assert "배포 버전" in html
     assert "최신 배포" in html
     assert "자동 배포 On Commit" in html

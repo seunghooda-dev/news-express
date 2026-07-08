@@ -116,6 +116,14 @@
         {% endfor %}
       </p>
     {% endif %}
+    {% if operations_health.top_failure_sources %}
+      <p class="gemini-models">
+        실패 상위 기관:
+        {% for item in operations_health.top_failure_sources %}
+          <span>{{ item.source_name }} {{ item.count }}건 · {{ item.stage }}</span>
+        {% endfor %}
+      </p>
+    {% endif %}
     {% if operations_health.issues %}
       <ul class="ops-mini-list">
         {% for issue in operations_health.issues %}
