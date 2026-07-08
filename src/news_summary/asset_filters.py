@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import unquote
 
 
 IMAGE_DECORATIVE_TOKENS = (
@@ -43,8 +45,8 @@ IMAGE_DECORATIVE_TOKENS = (
 
 
 def image_asset_looks_decorative(*values: object) -> bool:
-    text = " ".join(str(value or "") for value in values).lower()
-    return any(token in text for token in IMAGE_DECORATIVE_TOKENS)
+    text = unquote(" ".join(str(value or "") for value in values)).lower()
+    return any(_decorative_token_matches(text, token) for token in IMAGE_DECORATIVE_TOKENS)
 
 
 def is_display_noise_image_asset(asset: Any) -> bool:
@@ -75,3 +77,16 @@ def _row_value(row: Any, key: str) -> Any:
         return row[key]
     except (KeyError, IndexError, TypeError):
         return getattr(row, key, None)
+
+
+def _decorative_token_matches(text: str, token: str) -> bool:
+    token = token.lower()
+    if token.endswith("_"):
+        return token in text
+    normalized_text = re.sub(r"[^0-9a-z가-힣]+", " ", text)
+    normalized_token = re.sub(r"[^0-9a-z가-힣]+", " ", token).strip()
+    if not normalized_token:
+        return False
+    if " " in normalized_token:
+        return normalized_token in normalized_text
+    return bool(re.search(rf"(?<![0-9a-z가-힣]){re.escape(normalized_token)}(?![0-9a-z가-힣])", normalized_text))
