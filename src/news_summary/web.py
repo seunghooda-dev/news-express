@@ -82,6 +82,7 @@ DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
 LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
+DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
@@ -91,6 +92,8 @@ _latest_github_commit_cache: dict[tuple[str, str], tuple[float, str | None]] = {
 _github_compare_files_cache: dict[tuple[str, str, str], tuple[float, list[str] | None]] = {}
 _operations_report_cache: dict[tuple[str, ...], tuple[float, dict[str, object]]] = {}
 _operations_report_cache_lock = RLock()
+_dashboard_source_summary_cache: dict[tuple[str, str], tuple[float, list[dict[str, object]]]] = {}
+_dashboard_source_summary_cache_lock = RLock()
 _visitor_access_prune_lock = RLock()
 _visitor_access_last_pruned_at = 0.0
 
@@ -228,7 +231,7 @@ def create_app() -> Flask:
             store,
             status="needs_review",
             selected_regions=selected_regions,
-            limit=FILTER_FETCH_LIMIT,
+            limit=DASHBOARD_PENDING_LIMIT + 1,
             include_original_content=False,
         )
         recent_releases = _press_release_rows_for_listing(
@@ -237,12 +240,12 @@ def create_app() -> Flask:
             limit=DASHBOARD_RELEASE_LIMIT + 1,
         )
         source_summaries = _filter_source_summaries_by_regions(
-            _source_summaries(store, config_path),
+            _dashboard_source_summaries(store, config_path),
             selected_regions,
         )
         auto_collector = app.config.get("AUTO_COLLECTOR")
         duplicate_titles = _duplicate_titles(store)
-        attention_count = sum(1 for draft in pending_drafts if review_flags(draft, duplicate_titles))
+        attention_count = _attention_count_for_dashboard(store, selected_regions, duplicate_titles)
         auto_status = (
             _auto_collector_status_payload(store, auto_collector.snapshot()) if auto_collector else None
         )
@@ -1195,7 +1198,9 @@ def _should_redirect_asset_preview(asset_url: str) -> bool:
     path = parsed.path.lower()
     if not (host == "gangjin.go.kr" or host.endswith(".gangjin.go.kr")):
         return False
-    if "/ybmodule.file/board_www/www_press/" not in path:
+    if "/ybmodule.file/" not in path:
+        return False
+    if not any(token in path for token in ("/www_press/", "/board_www/")):
         return False
     return bool(re.search(r"\.(?:jpe?g|png|gif|webp|bmp)$", path))
 
@@ -2896,6 +2901,67 @@ def _duplicate_titles(store: Store) -> set[str]:
             """
         ).fetchall()
     return {str(row["title"]) for row in rows}
+
+
+def _dashboard_source_cache_seconds() -> int:
+    raw_value = os.getenv(
+        "NEWS_SUMMARY_DASHBOARD_SOURCE_CACHE_SECONDS",
+        str(DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS),
+    )
+    try:
+        seconds = int(raw_value)
+    except ValueError:
+        seconds = DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS
+    return max(0, seconds)
+
+
+def _dashboard_source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:
+    ttl_seconds = _dashboard_source_cache_seconds()
+    if ttl_seconds <= 0:
+        return _source_summaries(store, config_path)
+
+    cache_key = (store.display_location, str(config_path.resolve()))
+    now = time.monotonic()
+    with _dashboard_source_summary_cache_lock:
+        cached = _dashboard_source_summary_cache.get(cache_key)
+        if cached and now - cached[0] <= ttl_seconds:
+            return [dict(summary) for summary in cached[1]]
+
+    summaries = _source_summaries(store, config_path)
+    cached_summaries = [dict(summary) for summary in summaries]
+    with _dashboard_source_summary_cache_lock:
+        if len(_dashboard_source_summary_cache) >= 16:
+            _dashboard_source_summary_cache.clear()
+        _dashboard_source_summary_cache[cache_key] = (now, cached_summaries)
+    return [dict(summary) for summary in cached_summaries]
+
+
+def _attention_count_for_dashboard(
+    store: Store,
+    selected_regions: list[str] | None,
+    duplicate_titles: set[str],
+) -> int:
+    where = ["ad.status = 'needs_review'"]
+    params: list[object] = []
+    if selected_regions:
+        region_condition, region_params = _region_sql_condition("pr.region", selected_regions)
+        where.append(f"({region_condition})")
+        params.extend(region_params)
+    where_sql = "WHERE " + " AND ".join(where)
+    with store.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT ad.title, ad.body, ad.review_note, ad.model,
+                   '' AS original_content,
+                   pr.title AS original_title, pr.published_at,
+                   pr.validation_status, pr.validation_note
+            FROM article_drafts ad
+            JOIN press_releases pr ON pr.id = ad.press_release_id
+            {where_sql}
+            """,
+            tuple(params),
+        ).fetchall()
+    return sum(1 for draft in rows if review_flags(draft, duplicate_titles))
 
 
 def _consecutive_failure_counts(rows) -> dict[str, int]:

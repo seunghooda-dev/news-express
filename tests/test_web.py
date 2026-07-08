@@ -476,6 +476,84 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     )
 
 
+def test_dashboard_limits_pending_rows_but_counts_all_attention_items(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_pending_window_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    for index in range(25):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 군청",
+                region="전남",
+                title=f"대시보드 속도 테스트 원문 {index}",
+                url=f"https://example.com/dashboard-speed/{index}",
+                content="테스트 군은 보도자료를 배포했다고 밝혔다.",
+                published_at="2026-05-20",
+                validation_note="제목 핵심어 0개" if index == 0 else "원문 제목과 본문 구조를 확인했습니다.",
+            )
+        )
+        assert release_id is not None
+        store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=f"대시보드 속도 테스트 초안 {index}",
+                body="본문입니다.",
+                review_note="메모",
+                model="gemini-3.5-flash:gemini",
+                created_at=f"2026-05-{index + 1:02d}T09:00:00+09:00",
+            )
+        )
+
+    from news_summary import web as web_module
+
+    limits = []
+    original_listing = web_module._draft_rows_for_listing
+
+    def listing_spy(*args, **kwargs):
+        limits.append(kwargs.get("limit"))
+        return original_listing(*args, **kwargs)
+
+    monkeypatch.setattr(web_module, "_draft_rows_for_listing", listing_spy)
+    monkeypatch.setattr(web_module, "_source_summaries", lambda store, config_path: [])
+    app = web_module.create_app()
+    app.testing = True
+
+    html = app.test_client().get("/").data.decode("utf-8")
+
+    assert limits[0] == web_module.DASHBOARD_PENDING_LIMIT + 1
+    assert html.count('class="row draft-row"') == web_module.DASHBOARD_PENDING_LIMIT
+    assert "<span>주의 필요</span><b>1</b>" in html
+
+
+def test_dashboard_reuses_source_summary_cache(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_source_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_DASHBOARD_SOURCE_CACHE_SECONDS", "60")
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    calls = []
+
+    def fake_source_summaries(store, config_path):
+        calls.append((store.display_location, str(config_path)))
+        return []
+
+    with web_module._dashboard_source_summary_cache_lock:
+        web_module._dashboard_source_summary_cache.clear()
+    monkeypatch.setattr(web_module, "_source_summaries", fake_source_summaries)
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    assert client.get("/").status_code == 200
+    assert client.get("/").status_code == 200
+    assert len(calls) == 1
+
+
 def test_article_views_hide_previously_saved_decorative_images(monkeypatch):
     db_path = Path(f"data/.test_hide_decorative_assets_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -1439,6 +1517,16 @@ def test_gangjin_asset_preview_redirects_to_source_image(monkeypatch):
 
     assert response.status_code == 302
     assert response.headers["Location"] == gangjin_image_url
+
+    from news_summary.web import _should_redirect_asset_preview
+
+    assert _should_redirect_asset_preview(
+        "https://files.gangjin.go.kr/www/ybmodule.file/board_www/2026/field-photo.JPG?download=1"
+    )
+    assert _should_redirect_asset_preview(
+        "https://www.gangjin.go.kr/www/government/news/ybmodule.file/board_www/www_press/1783500702.jpg"
+    )
+    assert not _should_redirect_asset_preview("https://www.gangjin.go.kr/download?file=1783500277.jpg")
 
 
 def test_asset_preview_retries_ssl_certificate_failure_without_verification(monkeypatch):
