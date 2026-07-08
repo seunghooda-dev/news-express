@@ -1385,6 +1385,21 @@ h3 {
   gap: 8px;
 }
 
+.asset-empty {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid #d9e3df;
+  border-radius: 8px;
+  background: #f7faf8;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .asset-item {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);

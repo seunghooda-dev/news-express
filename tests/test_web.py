@@ -297,6 +297,62 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "현장 사진" in html
     assert f'href="/press-releases/assets/' in html
     assert "다운로드" in html
+    assert "이미지 없음" not in html
+
+
+def test_article_details_show_no_image_marker_when_only_file_assets(monkeypatch):
+    db_path = Path(f"data/.test_no_image_marker_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="파일 첨부 테스트 원문",
+            url="https://example.com/file-only",
+            content="테스트 군은 파일 첨부 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/press-release.hwp",
+                    title="보도자료 문서",
+                    filename="press-release.hwp",
+                    content_type="application/x-hwp",
+                    asset_type="file",
+                    is_image=False,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="파일 첨부 테스트 초안",
+            body="파일 첨부가 있는 테스트 기사입니다.",
+            review_note="메모",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    draft_html = client.get(f"/drafts/{draft_id}").data.decode("utf-8")
+    release_html = client.get(f"/press-releases/{release_id}").data.decode("utf-8")
+
+    for html in (draft_html, release_html):
+        assert "첨부 사진/파일" in html
+        assert "이미지 없음" in html
+        assert "보도자료 문서" in html
+        assert "press-release.hwp" in html
+        assert f'href="/press-releases/assets/' in html
+        assert "다운로드" in html
 
 
 def test_dashboard_metric_cards_link_to_full_lists(monkeypatch):

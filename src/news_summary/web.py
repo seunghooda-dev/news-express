@@ -579,10 +579,12 @@ def create_app() -> Flask:
         if not release:
             flash("수집 원문을 찾을 수 없습니다.")
             return redirect(url_for("press_releases"))
+        press_assets = store.press_release_assets(release_id)
         return render_template(
             "press_release_detail.html",
             release=release,
-            press_assets=store.press_release_assets(release_id),
+            press_assets=press_assets,
+            has_press_image=any(asset["is_image"] for asset in press_assets),
         )
 
     @app.get("/press-releases/assets/<int:asset_id>/download")
@@ -640,10 +642,12 @@ def create_app() -> Flask:
             flash("초안을 찾을 수 없습니다.")
             return redirect(url_for("dashboard"))
         duplicate_titles = _duplicate_titles(store)
+        press_assets = store.press_release_assets(int(draft["press_release_id"]))
         return render_template(
             "draft_detail.html",
             draft=draft,
-            press_assets=store.press_release_assets(int(draft["press_release_id"])),
+            press_assets=press_assets,
+            has_press_image=any(asset["is_image"] for asset in press_assets),
             statuses=STATUS_ORDER,
             duplicate_titles=duplicate_titles,
             checks=approval_checks(draft, duplicate_titles),

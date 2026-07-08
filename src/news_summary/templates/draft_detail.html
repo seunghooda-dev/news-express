@@ -118,12 +118,15 @@
   </form>
 </section>
 
-{% if press_assets %}
-  <section class="asset-panel attachment-panel">
-    <div class="section-head compact">
-      <h1>첨부 사진/파일</h1>
-      <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 사이트</a>
-    </div>
+<section class="asset-panel attachment-panel">
+  <div class="section-head compact">
+    <h1>첨부 사진/파일</h1>
+    <a class="source-link" href="{{ draft.url }}" target="_blank" rel="noopener noreferrer">원문 사이트</a>
+  </div>
+  {% if not has_press_image %}
+    <p class="asset-empty">이미지 없음</p>
+  {% endif %}
+  {% if press_assets %}
     <div class="asset-list">
       {% for asset in press_assets %}
         <article class="asset-item">
@@ -143,8 +146,8 @@
         </article>
       {% endfor %}
     </div>
-  </section>
-{% endif %}
+  {% endif %}
+</section>
 <script>
   (() => {
     const originalDetails = document.querySelector(".original-details");
