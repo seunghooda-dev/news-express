@@ -300,10 +300,12 @@ def test_draft_detail_shows_body_character_count(monkeypatch):
     assert "첨부 사진/파일" in html
     assert "https://example.com/body-count-photo.jpg" in html
     assert "data-image-fallback" in html
+    assert 'data-fallback-src="https://example.com/body-count-photo.jpg"' in html
     assert 'src="/press-releases/assets/' in html
     assert "/preview" in html
     assert "미리보기 없음" in html
-    assert 'image.addEventListener("error", showFallback' in html
+    assert "fallbackAttempted" in html
+    assert 'image.addEventListener("error", tryFallbackOrShow' in html
     assert "현장 사진" in html
     assert f'href="/press-releases/assets/' in html
     assert "다운로드" in html
@@ -454,8 +456,9 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     assert 'class="row draft-row"' in html
     assert f'href="/drafts/{image_draft_id}"' in html
     assert thumbnail_src in html
-    assert 'src="https://example.com/gwangyang-thumb.jpg"' not in html
+    assert '<img src="https://example.com/gwangyang-thumb.jpg"' not in html
     assert 'data-image-fallback' in html
+    assert 'data-fallback-src="https://example.com/gwangyang-thumb.jpg"' in html
     assert 'alt="교육 현장 사진"' in html
     assert "미리보기 없음" in html
     assert html.index(thumbnail_src) < html.index(
@@ -465,8 +468,9 @@ def test_drafts_list_shows_thumbnail_or_no_image_marker(monkeypatch):
     assert 'class="row draft-row"' in dashboard_html
     assert f'href="/drafts/{image_draft_id}"' in dashboard_html
     assert thumbnail_src in dashboard_html
-    assert 'src="https://example.com/gwangyang-thumb.jpg"' not in dashboard_html
+    assert '<img src="https://example.com/gwangyang-thumb.jpg"' not in dashboard_html
     assert 'data-image-fallback' in dashboard_html
+    assert 'data-fallback-src="https://example.com/gwangyang-thumb.jpg"' in dashboard_html
     assert dashboard_html.index(thumbnail_src) < dashboard_html.index(
         "광양시, 농산물 온라인 홍보 돕는 교육생 모집"
     )
@@ -542,7 +546,8 @@ def test_article_views_hide_previously_saved_decorative_images(monkeypatch):
     assert "press-photo.jpg" in detail_html
     assert "press.hwp" in detail_html
     assert f'src="/press-releases/assets/{press_photo_asset_id}/preview"' in drafts_html
-    assert 'src="https://example.com/upload/editor/press-photo.jpg"' not in drafts_html
+    assert '<img src="https://example.com/upload/editor/press-photo.jpg"' not in drafts_html
+    assert 'data-fallback-src="https://example.com/upload/editor/press-photo.jpg"' in drafts_html
 
 
 def test_article_detail_rewrites_jeonnam_governor_source_links(monkeypatch):
@@ -1088,7 +1093,8 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
     assert "최근 첨부 사진/파일" in detail_html
     assert preview_src in detail_html
-    assert "https://example.com/gwangju-photo.png" not in detail_html
+    assert '<img src="https://example.com/gwangju-photo.png"' not in detail_html
+    assert 'data-fallback-src="https://example.com/gwangju-photo.png"' in detail_html
     assert "data-image-fallback" in detail_html
     assert "미리보기 없음" in detail_html
     assert "광주 현장 사진" in detail_html
@@ -1102,6 +1108,7 @@ def test_source_status_records_collection_failures(monkeypatch):
     assert "첨부 사진/파일" in release_html
     assert "광주 현장 사진" in release_html
     assert "data-image-fallback" in release_html
+    assert 'data-fallback-src="https://example.com/gwangju-photo.png"' in release_html
     assert preview_src in release_html
     assert 'href="https://example.com/gwangju-photo.png"' in release_html
     assert 'href="/press-releases/assets/' in release_html
@@ -1389,6 +1396,49 @@ def test_default_asset_preview_limit_allows_large_press_photos(monkeypatch):
     monkeypatch.delenv("NEWS_SUMMARY_MAX_ASSET_PREVIEW_MB", raising=False)
 
     assert _max_asset_preview_bytes() == 12 * 1024 * 1024
+
+
+def test_gangjin_asset_preview_redirects_to_source_image(monkeypatch):
+    db_path = Path(f"data/.test_gangjin_asset_preview_redirect_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    gangjin_image_url = (
+        "https://www.gangjin.go.kr/www/government/news/"
+        "ybmodule.file/board_www/www_press/980x1x100/1783500277.jpg"
+    )
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="gangjin-county",
+            source_name="강진군청 보도자료",
+            region="전남 강진",
+            title="강진 이미지 미리보기 테스트 원문",
+            url="https://www.gangjin.go.kr/www/government/news/press?idx=664241&mode=view",
+            content="강진군은 보도자료 첨부 이미지 미리보기 기능을 점검한다고 밝혔다.",
+            published_at="2026-07-08",
+            assets=[
+                PressReleaseAsset(
+                    url=gangjin_image_url,
+                    title="강진 현장 사진",
+                    filename="1783500277.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/preview")
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == gangjin_image_url
 
 
 def test_asset_preview_retries_ssl_certificate_failure_without_verification(monkeypatch):

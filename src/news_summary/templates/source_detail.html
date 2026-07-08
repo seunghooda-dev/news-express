@@ -46,7 +46,7 @@
         {% set related_href = url_for('draft_detail', draft_id=asset.draft_id) if asset.draft_id else url_for('press_release_detail', release_id=asset.press_release_id) %}
         <article class="asset-item">
           {% if asset.is_image %}
-            <img src="{{ url_for('preview_press_release_asset', asset_id=asset.id) }}" alt="{{ asset.title or asset.filename or '첨부 사진' }}" loading="lazy" data-image-fallback>
+            <img src="{{ url_for('preview_press_release_asset', asset_id=asset.id) }}" alt="{{ asset.title or asset.filename or '첨부 사진' }}" loading="lazy" data-image-fallback data-fallback-src="{{ public_press_release_url(asset.url) }}">
             <span class="image-load-fallback" hidden>미리보기 없음</span>
           {% else %}
             <span class="asset-file-badge">파일</span>

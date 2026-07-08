@@ -56,7 +56,7 @@
     <a class="row draft-row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
       <span class="draft-thumbnail{% if not thumbnail %} draft-thumbnail-empty{% endif %}">
         {% if thumbnail %}
-          <img src="{{ url_for('preview_press_release_asset', asset_id=thumbnail.id) }}" alt="{{ thumbnail.title or draft.title }}" loading="lazy" data-image-fallback>
+          <img src="{{ url_for('preview_press_release_asset', asset_id=thumbnail.id) }}" alt="{{ thumbnail.title or draft.title }}" loading="lazy" data-image-fallback data-fallback-src="{{ public_press_release_url(thumbnail.url) }}">
           <span class="image-load-fallback" hidden>미리보기 없음</span>
         {% else %}
           <span>이미지 없음</span>

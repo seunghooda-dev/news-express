@@ -3,6 +3,7 @@ services:
     name: news-express
     runtime: python
     plan: starter
+    autoDeployTrigger: commit
     buildCommand: pip install -e .
     startCommand: gunicorn --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT news_summary.wsgi:app
     healthCheckPath: /healthz

@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import RLock
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -654,6 +654,8 @@ def create_app() -> Flask:
         asset_url = str(asset["url"] or "")
         if not asset_url.startswith(("http://", "https://")):
             return Response("이미지 미리보기를 표시할 수 없습니다.", status=404, content_type="text/plain; charset=utf-8")
+        if _should_redirect_asset_preview(asset_url):
+            return redirect(asset_url, code=302)
         cache_key = (int(asset_id), asset_url)
         with asset_preview_cache_lock:
             cached_preview = _asset_preview_cache_get(asset_preview_cache, cache_key)
@@ -1084,6 +1086,20 @@ def _download_asset_content_from_url(
         logger.warning("asset download ssl verification failed; retrying without verification url=%s", asset_url)
         with httpx.Client(follow_redirects=True, timeout=timeout, verify=False) as client:
             return _download_asset_content(client, asset_url, asset, max_bytes=max_bytes)
+
+
+def _should_redirect_asset_preview(asset_url: str) -> bool:
+    try:
+        parsed = urlparse(asset_url)
+    except ValueError:
+        return False
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if not (host == "gangjin.go.kr" or host.endswith(".gangjin.go.kr")):
+        return False
+    if "/ybmodule.file/board_www/www_press/" not in path:
+        return False
+    return bool(re.search(r"\.(?:jpe?g|png|gif|webp|bmp)$", path))
 
 
 def _should_retry_asset_download_without_tls_verify(asset_url: str, exc: BaseException) -> bool:

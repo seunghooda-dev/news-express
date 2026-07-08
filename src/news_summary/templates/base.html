@@ -79,10 +79,21 @@
             fallback.hidden = false;
           }
         };
-        if (image.complete && image.naturalWidth === 0) {
+        const tryFallbackOrShow = () => {
+          const fallbackSrc = image.dataset.fallbackSrc;
+          if (fallbackSrc && image.dataset.fallbackAttempted !== "true") {
+            image.dataset.fallbackAttempted = "true";
+            image.hidden = false;
+            image.removeAttribute("srcset");
+            image.src = fallbackSrc;
+            return;
+          }
           showFallback();
+        };
+        if (image.complete && image.naturalWidth === 0) {
+          tryFallbackOrShow();
         } else {
-          image.addEventListener("error", showFallback, { once: true });
+          image.addEventListener("error", tryFallbackOrShow);
         }
       });
     })();
