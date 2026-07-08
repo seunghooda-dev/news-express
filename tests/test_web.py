@@ -2162,6 +2162,9 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
             "latest_commit": "abc1234",
             "repo": "seunghooda-dev/news-express",
             "branch": "codex/news-express",
+            "auto_deploy_label": "On Commit",
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_level": "ok",
         },
     )
     app = web_module.create_app()
@@ -2178,6 +2181,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "외부 사이트 응답 지연 1건" in html
     assert "배포 버전" in html
     assert "최신 배포" in html
+    assert "자동 배포 On Commit" in html
     assert "일일 운영 리포트" in html
     assert "운영 요약" in html
     assert "서버 상태 점검" in html

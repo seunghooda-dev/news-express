@@ -53,6 +53,7 @@
     </div>
     <p class="meta">운영 {{ deployment_version.running_commit or '확인 불가' }} · GitHub {{ deployment_version.latest_commit or '확인 불가' }}</p>
     <p class="meta">{{ deployment_version.repo }} / {{ deployment_version.branch }}</p>
+    <p class="meta">자동 배포 {{ deployment_version.auto_deploy_label or '확인 불가' }}</p>
   </article>
 
   <article class="ops-card">

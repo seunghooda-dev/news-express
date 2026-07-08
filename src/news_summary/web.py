@@ -975,6 +975,7 @@ def _deployment_version_report() -> dict[str, object]:
     repo = os.getenv("NEWS_SUMMARY_GITHUB_REPO", "seunghooda-dev/news-express").strip()
     branch = os.getenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express").strip()
     latest_commit = _latest_github_commit(repo, branch) if repo and branch else None
+    deploy_config = _render_deploy_config_report()
     if running_commit and latest_commit:
         is_current = running_commit.lower().startswith(latest_commit[:12].lower()) or latest_commit.lower().startswith(
             running_commit[:12].lower()
@@ -994,6 +995,36 @@ def _deployment_version_report() -> dict[str, object]:
         "latest_commit": _short_commit(latest_commit),
         "repo": repo,
         "branch": branch,
+        **deploy_config,
+    }
+
+
+def _render_deploy_config_report() -> dict[str, object]:
+    config_path = PROJECT_ROOT / "render.yaml"
+    try:
+        import yaml
+
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        services = raw.get("services") or []
+        service = next((item for item in services if item.get("name") == "news-express"), None)
+        trigger = str((service or {}).get("autoDeployTrigger") or "").strip()
+    except Exception as exc:  # noqa: BLE001 - operations page should stay available when config parsing fails.
+        logger.warning("render deploy config check failed error=%s", exc)
+        return {
+            "auto_deploy_trigger": "",
+            "auto_deploy_label": "확인 불가",
+            "auto_deploy_level": "warning",
+        }
+
+    labels = {
+        "commit": "On Commit",
+        "checksPass": "Checks Pass",
+        "off": "Off",
+    }
+    return {
+        "auto_deploy_trigger": trigger,
+        "auto_deploy_label": labels.get(trigger, trigger or "확인 불가"),
+        "auto_deploy_level": "ok" if trigger in {"commit", "checksPass"} else "warning",
     }
 
 
