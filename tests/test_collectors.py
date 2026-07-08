@@ -330,6 +330,123 @@ def test_collect_html_board_skips_related_story_images_when_content_selector_is_
     assert all("old-event-photo" not in asset.url for asset in items[0].assets)
 
 
+def test_collect_html_board_extracts_lazy_loaded_press_images(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if url.endswith("/list"):
+                return FakeResponse("<a href='/view/1'>나주시 현장 사진 보도자료</a>")
+            return FakeResponse(
+                """
+                <main>
+                  <article class="board_view">
+                    <p>나주시는 지역 현장 점검 결과를 보도자료로 배포했다고 밝혔다.</p>
+                    <p>시는 주민 의견을 반영해 후속 조치를 마련하고 관계 기관 협의를 이어갈 계획이다.</p>
+                    <p>이번 점검은 지역 생활 여건 개선을 위해 추진됐다.</p>
+                    <img src="/images/blank.gif" data-src="/upload/press/lazy-photo.jpg" alt="현장 점검 사진">
+                    <img data-original="/upload/press/original-photo.png" alt="후속 조치 사진">
+                  </article>
+                </main>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="lazy-image-test",
+        name="지연 이미지 테스트 시청",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+        base_url="https://example.com",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": ["main"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert [asset.url for asset in items[0].assets] == [
+        "https://example.com/upload/press/lazy-photo.jpg",
+        "https://example.com/upload/press/original-photo.png",
+    ]
+    assert all("blank.gif" not in asset.url for asset in items[0].assets)
+
+
+def test_collect_html_board_uses_one_srcset_press_image_candidate(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if url.endswith("/list"):
+                return FakeResponse("<a href='/view/1'>화순군 행사 사진 보도자료</a>")
+            return FakeResponse(
+                """
+                <main>
+                  <article class="board_view">
+                    <p>화순군은 지역 행사를 개최하고 참여 주민을 대상으로 현장 의견을 들었다고 밝혔다.</p>
+                    <p>군은 행사 결과를 바탕으로 다음 사업 계획을 보완하고 지원 체계를 정비할 예정이다.</p>
+                    <p>이번 행사는 지역 공동체 활성화를 위해 마련됐다.</p>
+                    <img src="/images/blank.gif"
+                         srcset="/upload/press/event-small.jpg 480w, /upload/press/event-large.jpg 1024w"
+                         alt="행사 사진">
+                  </article>
+                </main>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="srcset-image-test",
+        name="srcset 이미지 테스트 군청",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+        base_url="https://example.com",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": ["main"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assert len(items) == 1
+    assert [asset.url for asset in items[0].assets] == [
+        "https://example.com/upload/press/event-large.jpg",
+    ]
+
+
 def test_collect_json_board_maps_nested_items(monkeypatch):
     class FakeResponse:
         def raise_for_status(self):

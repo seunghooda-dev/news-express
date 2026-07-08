@@ -40,6 +40,7 @@ IMAGE_DECORATIVE_TOKENS = (
     "youtube",
     "blog",
     "favicon",
+    "blank",
     "spacer",
 )
 

@@ -691,11 +691,14 @@ def _extract_detail_assets(
         )
 
     for node in nodes:
-        for img in node.select("img[src]"):
+        for img in node.select("img"):
             label = str(img.get("alt") or img.get("title") or "")
-            if _is_decorative_image(img):
-                continue
-            add_asset(str(img.get("src") or ""), label, force_image=True)
+            for image_url in _image_asset_urls(img):
+                if _is_decorative_image(img, image_url):
+                    continue
+                add_asset(image_url, label, force_image=True)
+                if len(assets) >= limit:
+                    break
         for link in node.select("a[href]"):
             label = _clean_text(link.get_text(" ") or str(link.get("title") or ""))
             add_asset(str(link.get("href") or ""), label)
@@ -798,9 +801,9 @@ def _dedupe_tags(nodes: list[Tag]) -> list[Tag]:
     return deduped
 
 
-def _is_decorative_image(img: Tag) -> bool:
+def _is_decorative_image(img: Tag, image_url: str = "") -> bool:
     parts = [
-        str(img.get("src") or ""),
+        image_url,
         " ".join(str(item) for item in img.get("class", [])),
         str(img.get("id") or ""),
     ]
@@ -817,6 +820,44 @@ def _is_decorative_image(img: Tag) -> bool:
         if ancestor.name in {"article", "main"}:
             break
     return image_asset_looks_decorative(*parts)
+
+
+def _image_asset_urls(img: Tag) -> list[str]:
+    urls: list[str] = []
+    for attr in (
+        "src",
+        "data-src",
+        "data-original",
+        "data-url",
+        "data-file",
+        "data-img",
+        "data-image",
+        "data-lazy-src",
+        "data-echo",
+        "lazy-src",
+    ):
+        _append_image_url_candidate(urls, str(img.get(attr) or ""))
+    srcset_urls = _image_srcset_urls(str(img.get("srcset") or "")) + _image_srcset_urls(
+        str(img.get("data-srcset") or "")
+    )
+    if srcset_urls and (not urls or all(image_asset_looks_decorative(url) for url in urls)):
+        _append_image_url_candidate(urls, srcset_urls[-1])
+    return urls
+
+
+def _image_srcset_urls(raw_srcset: str) -> list[str]:
+    urls: list[str] = []
+    for candidate in raw_srcset.split(","):
+        _append_image_url_candidate(urls, candidate.strip().split(" ", 1)[0])
+    return urls
+
+
+def _append_image_url_candidate(urls: list[str], raw_url: str) -> None:
+    raw_url = raw_url.strip()
+    if not raw_url or raw_url.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
+        return
+    if raw_url not in urls:
+        urls.append(raw_url)
 
 
 def _normal_asset_url(raw_url: str, base_url: str) -> str:
