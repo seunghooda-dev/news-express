@@ -1608,11 +1608,26 @@ def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
 
     backups = _backup_files(backup_dir)
     latest_backup = backups[0] if backups else None
+    storage_warning = _backup_storage_warning(backup_dir)
+    if not latest_backup:
+        status_level = "warning"
+        status_label = "백업 필요"
+    elif storage_warning:
+        status_level = "warning"
+        status_label = "보관 주의"
     if store.is_postgres:
-        if latest_backup:
+        if storage_warning and latest_backup:
+            note = f"{storage_warning} PostgreSQL 백업 ZIP은 확인됐지만 Neon 백업/스냅샷도 함께 유지하는 구성이 안전합니다."
+        elif storage_warning:
+            note = f"앱 백업 ZIP이 아직 없고, {storage_warning} PostgreSQL 백업은 JSON 덤프로 생성되며 Neon 스냅샷도 함께 확인하는 구성이 안전합니다."
+        elif latest_backup:
             note = "최근 앱 백업 ZIP이 확인됐습니다. Neon 백업/스냅샷도 함께 유지하는 구성이 안전합니다."
         else:
             note = "앱 백업 ZIP이 아직 없습니다. PostgreSQL 백업은 JSON 덤프로 생성되며 Neon 스냅샷도 함께 확인하는 구성이 안전합니다."
+    elif storage_warning and latest_backup:
+        note = f"{storage_warning} 최근 백업 파일은 확인됐지만 영구 보관 경로로 옮기는 구성이 안전합니다."
+    elif storage_warning:
+        note = f"아직 로컬 백업 파일이 없고, {storage_warning}"
     elif not latest_backup:
         note = "아직 로컬 백업 파일이 없습니다."
     else:
@@ -1626,6 +1641,24 @@ def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
         "backup_count": len(backups),
         "note": note,
     }
+
+
+def _backup_storage_warning(backup_dir: Path) -> str:
+    raw = backup_dir.as_posix().lower()
+    resolved = backup_dir if backup_dir.is_absolute() else (PROJECT_ROOT / backup_dir)
+    normalized = resolved.resolve().as_posix().lower()
+    volatile_prefixes = ("/tmp", "/var/tmp", "/temp")
+    if any(
+        value == prefix or value.startswith(f"{prefix}/")
+        for value in (raw, normalized)
+        for prefix in volatile_prefixes
+    ):
+        return "백업 폴더가 임시 경로라 재시작이나 재배포 때 사라질 수 있습니다."
+    if re.match(r"^[a-z]:/(tmp|temp)(/|$)", normalized):
+        return "백업 폴더가 임시 경로라 재시작이나 재배포 때 사라질 수 있습니다."
+    if "/appdata/local/temp" in normalized:
+        return "백업 폴더가 Windows 임시 경로라 정리 작업 때 사라질 수 있습니다."
+    return ""
 
 
 def _operations_cached_report_bundle(

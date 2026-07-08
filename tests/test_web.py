@@ -12,6 +12,7 @@ from news_summary.web import (
     _asset_request_headers,
     _collection_check_coverage_report,
     _date_warning,
+    _db_health_report,
     _draft_conversion_coverage_report,
     _filter_drafts_by_review,
     _filter_drafts_by_date,
@@ -3814,6 +3815,34 @@ def test_backup_verify_report_refreshes_stale_metadata(monkeypatch):
     assert report["status_label"] == "검증 정상"
     assert report["backup_name"] == backup_path.name
     assert "SQLite 무결성" in str(report["message"])
+
+
+def test_db_health_report_warns_when_backup_dir_is_temporary():
+    db_path = Path(f"data/.test_db_health_temp_backup_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    report = _db_health_report(store, Path("/tmp/news-express/backups"))
+
+    assert report["status_level"] == "warning"
+    assert report["status_label"] == "백업 필요"
+    assert "임시 경로" in str(report["note"])
+
+
+def test_operations_page_warns_for_temporary_backup_storage(monkeypatch):
+    db_path = Path(f"data/.test_operations_temp_backup_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", "/tmp/news-express/backups")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "DB 백업" in html
+    assert "백업 필요" in html
+    assert "임시 경로" in html
 
 
 def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):
