@@ -1549,3 +1549,23 @@ def test_auto_collector_snapshot_reports_thread_alive(monkeypatch):
         collector.stop()
         if collector._thread:
             collector._thread.join(timeout=1)
+
+
+def test_auto_collector_ensure_running_restarts_missing_thread(monkeypatch):
+    db_path = Path(f"data/.test_auto_collect_ensure_thread_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    monkeypatch.setenv("NEWS_SUMMARY_STARTUP_CATCHUP", "false")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector.snapshot().thread_alive is False
+    assert collector.ensure_running() is True
+    try:
+        assert collector.snapshot().thread_alive is True
+        assert collector.ensure_running() is False
+    finally:
+        collector.stop()
+        if collector._thread:
+            collector._thread.join(timeout=1)

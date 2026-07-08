@@ -248,6 +248,7 @@ def create_app() -> Flask:
             selected_regions,
         )
         auto_collector = app.config.get("AUTO_COLLECTOR")
+        _ensure_auto_collector_running(auto_collector)
         duplicate_titles = _duplicate_titles(store)
         attention_count = _attention_count_for_dashboard(store, selected_regions, duplicate_titles)
         auto_status = (
@@ -284,6 +285,7 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "database": "error"}), 503
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
+            _ensure_auto_collector_running(auto_collector)
             auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
             auto_label = _auto_collector_health_label(auto_status)
             return jsonify(
@@ -372,6 +374,7 @@ def create_app() -> Flask:
         with store.reusable_connection_scope():
             with store.app_metadata_cache_scope():
                 auto_collector = app.config.get("AUTO_COLLECTOR")
+                _ensure_auto_collector_running(auto_collector)
                 auto_status = (
                     _auto_collector_status_payload(store, auto_collector.snapshot()) if auto_collector else None
                 )
@@ -974,6 +977,7 @@ def create_app() -> Flask:
                     "gemini_cooldown_until": None,
                 }
             )
+        _ensure_auto_collector_running(auto_collector)
         status = auto_collector.snapshot()
         cooldown_until = gemini_cooldown_until(store)
         payload = _auto_collector_status_payload(store, status)
@@ -2022,6 +2026,17 @@ def _auto_collector_health_label(auto_status: dict[str, object]) -> str:
     if auto_status.get("thread_alive") is False:
         return "stopped"
     return "enabled"
+
+
+def _ensure_auto_collector_running(auto_collector: object | None) -> bool:
+    ensure_running = getattr(auto_collector, "ensure_running", None)
+    if not callable(ensure_running):
+        return False
+    try:
+        return bool(ensure_running())
+    except Exception:  # noqa: BLE001 - health display must stay available even if recovery fails.
+        logger.exception("auto collector self-heal failed")
+        return False
 
 
 def _cloudflare_quick_tunnel_status(log_path: Path | None = None) -> dict[str, object]:

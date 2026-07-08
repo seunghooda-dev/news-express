@@ -3010,6 +3010,35 @@ def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch
     assert "자동 수집 백그라운드 스레드 중단" in operations_html
 
 
+def test_healthz_restarts_enabled_auto_collector_thread(monkeypatch):
+    db_path = Path(f"data/.test_healthz_restart_collector_thread_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_STARTUP_CATCHUP", "false")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    from news_summary.scheduler import AutoCollector
+    from news_summary.web import create_app
+
+    store = Store(db_path)
+    store.init_db()
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = collector
+    app.testing = True
+    client = app.test_client()
+
+    try:
+        health = client.get("/healthz").get_json()
+
+        assert health["auto_collector"] == "enabled"
+        assert health["auto_collector_thread_alive"] is True
+        assert collector.snapshot().thread_alive is True
+    finally:
+        collector.stop()
+        if collector._thread:
+            collector._thread.join(timeout=1)
+
+
 def test_operations_page_creates_and_restores_backup(monkeypatch):
     db_path = Path(f"data/.test_operations_backup_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_operations_backups_{uuid4().hex}").resolve()

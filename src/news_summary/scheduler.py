@@ -156,6 +156,21 @@ class AutoCollector:
         self._thread.start()
         logger.info("auto collector thread started interval=%s collect_limit=%s", self.interval_seconds, self.collect_limit)
 
+    def ensure_running(self) -> bool:
+        """Restart the hourly worker if auto collection is enabled but the thread is gone."""
+        with self._state_lock:
+            enabled = self._status.enabled
+            running = self._status.running
+        if not enabled or running:
+            return False
+        if self._thread and self._thread.is_alive():
+            return False
+        self.start()
+        restarted = bool(self._thread and self._thread.is_alive())
+        if restarted:
+            logger.warning("auto collector worker restarted by health check")
+        return restarted
+
     def stop(self) -> None:
         self._stop_event.set()
         with self._state_lock:
