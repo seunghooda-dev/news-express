@@ -93,6 +93,7 @@ DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
 DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
 DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
+DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT = 10
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
 RECOVERY_REASON_LABELS = {
@@ -2493,6 +2494,20 @@ def _operations_health_report(
     pending_total = int(pending_queue.get("total") or 0)
     if pending_total >= 100:
         issues.append(f"Gemini 미변환 큐 {pending_total}건")
+    try:
+        draft_failure_summary = store.draft_generation_failure_summary(limit=1)
+    except Exception as exc:  # noqa: BLE001 - operations health should surface the problem, not break the page.
+        draft_failure_total = 0
+        draft_retry_due = 0
+        issues.append(f"Gemini 실패 큐 확인 실패: {type(exc).__name__}")
+    else:
+        draft_failure_total = int(draft_failure_summary.get("total") or 0)
+        draft_retry_due = int(draft_failure_summary.get("due") or 0)
+        retry_warning_count = _gemini_retry_due_warning_count()
+        if draft_retry_due >= retry_warning_count:
+            issues.append(f"Gemini 재시도 가능 실패 큐 {draft_retry_due}건")
+        elif draft_failure_total >= 100:
+            issues.append(f"Gemini 실패 큐 {draft_failure_total}건")
 
     if unresolved_rows:
         status_level = "error"
@@ -2512,6 +2527,8 @@ def _operations_health_report(
         "unresolved_count": len(unresolved_rows),
         "temporary_count": len(temporary_rows),
         "pending_total": pending_total,
+        "draft_failure_total": draft_failure_total,
+        "draft_retry_due": draft_retry_due,
         "last_auto_finished_at": last_auto_finished_at,
         "top_failure_stages": top_failure_stages,
         "issues": issues[:5],
@@ -2890,6 +2907,15 @@ def _auto_running_warning_minutes() -> int:
     except ValueError:
         return DEFAULT_AUTO_RUNNING_WARN_MINUTES
     return max(30, minutes)
+
+
+def _gemini_retry_due_warning_count() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_GEMINI_RETRY_DUE_WARNING_COUNT", str(DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT))
+    try:
+        count = int(raw_value)
+    except ValueError:
+        return DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT
+    return max(1, count)
 
 
 def _stored_auto_collector_status_payload(store: Store) -> dict[str, object]:

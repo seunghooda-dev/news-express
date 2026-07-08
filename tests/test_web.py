@@ -2449,6 +2449,72 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "https://sample.trycloudflare.com" in html
 
 
+def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
+    db_path = Path(f"data/.test_operations_gemini_retry_due_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_RETRY_DUE_WARNING_COUNT", "2")
+    store = Store(db_path)
+    store.init_db()
+
+    due_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    for index in range(2):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="sample",
+                source_name="테스트 기관",
+                region="전남",
+                title=f"재시도 대기 원문 {index + 1}",
+                url=f"https://example.com/retry-due-{index}",
+                content="Gemini 재시도가 필요한 원문입니다.",
+                published_at="2026-06-26 09:00",
+            )
+        )
+        assert release_id is not None
+        store.record_draft_generation_failure(
+            release_id,
+            "quota_or_cooldown",
+            "Gemini 요청 한도 감지",
+            "gemini-3.5-flash",
+            due_at,
+        )
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflare_quick_tunnel_status",
+        lambda: {"running": False, "public_url": "", "log_path": "", "updated_at": None, "label": "터널 미감지"},
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_deployment_version_report",
+        lambda: {
+            "status_label": "최신 배포",
+            "status_level": "ok",
+            "running_commit": "abc1234",
+            "latest_commit": "abc1234",
+            "repo": "seunghooda-dev/news-express",
+            "branch": "codex/news-express",
+            "auto_deploy_label": "On Commit",
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_level": "ok",
+        },
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/operations").data.decode("utf-8")
+
+    assert "자동 복구 점검" in html
+    assert "주의" in html
+    assert "Gemini 재시도 가능 실패 큐 2건" in html
+    assert "재시도 가능 2건" in html
+
+
 def test_operations_page_prefetches_metadata_once(monkeypatch):
     from contextlib import contextmanager
 
