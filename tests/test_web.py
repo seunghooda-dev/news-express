@@ -1184,6 +1184,146 @@ def test_asset_download_rejects_html_error_response(monkeypatch):
     assert response.headers["Location"].endswith(f"/press-releases/{release_id}")
 
 
+def test_asset_download_accepts_octet_stream_when_image_magic_matches(monkeypatch):
+    db_path = Path(f"data/.test_asset_download_octet_image_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="이미지 시그니처 테스트 원문",
+            url="https://example.com/octet-image-release",
+            content="테스트 군은 이미지 첨부 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=1",
+                    title="첨부 사진",
+                    filename="",
+                    content_type="",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeOctetImageResponse:
+        content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 12
+        headers = {"content-type": "application/octet-stream"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self.content
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            return FakeOctetImageResponse()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/download")
+
+    assert response.status_code == 200
+    assert response.data == FakeOctetImageResponse.content
+    assert response.headers["Content-Type"].startswith("image/png")
+    assert ".png" in response.headers["Content-Disposition"]
+
+
+def test_asset_download_rejects_octet_stream_when_image_magic_is_missing(monkeypatch):
+    db_path = Path(f"data/.test_asset_download_bad_octet_image_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="이미지 아닌 첨부 차단 테스트 원문",
+            url="https://example.com/bad-octet-image-release",
+            content="테스트 군은 잘못된 이미지 응답 차단 기능을 점검한다고 밝혔다.",
+            published_at="2026-05-20",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=2",
+                    title="첨부 사진",
+                    filename="",
+                    content_type="",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    class FakeBadOctetImageResponse:
+        content = b"not an image"
+        headers = {"content-type": "application/octet-stream"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self.content
+
+    class FakeAssetClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            return FakeBadOctetImageResponse()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    monkeypatch.setattr("news_summary.web.httpx.Client", FakeAssetClient)
+    response = app.test_client().get(f"/press-releases/assets/{asset_id}/download")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/press-releases/{release_id}")
+
+
 def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     db_path = Path(f"data/.test_admin_login_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

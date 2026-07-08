@@ -1018,9 +1018,10 @@ def _download_asset_content(client: httpx.Client, asset_url: str, asset) -> tupl
             chunks.append(chunk)
 
     content = b"".join(chunks)
-    if not _asset_download_content_allowed(asset, content_type, content):
+    effective_content_type = _asset_download_content_type(asset, content_type, content)
+    if not effective_content_type:
         raise AssetDownloadError(f"첨부파일이 아닌 응답: {content_type or 'unknown'}")
-    return content_type, content
+    return effective_content_type, content
 
 
 def _max_asset_download_bytes() -> int:
@@ -1043,13 +1044,39 @@ def _response_content_length(headers) -> int | None:
         return None
 
 
-def _asset_download_content_allowed(asset, content_type: str, content: bytes) -> bool:
+def _asset_download_content_type(asset, content_type: str, content: bytes) -> str:
     normalized_type = content_type.split(";", 1)[0].strip().lower()
     if normalized_type == "text/html" or _looks_like_html_document(content):
-        return False
-    if asset["is_image"] and normalized_type and not normalized_type.startswith("image/"):
-        return normalized_type == "application/octet-stream"
-    return True
+        return ""
+    if asset["is_image"]:
+        if normalized_type.startswith("image/"):
+            return normalized_type
+        detected_type = _image_content_type_from_magic(content)
+        if detected_type:
+            return detected_type
+        return ""
+    return normalized_type or str(content_type or "application/octet-stream")
+
+
+def _asset_download_content_allowed(asset, content_type: str, content: bytes) -> bool:
+    return bool(_asset_download_content_type(asset, content_type, content))
+
+
+def _image_content_type_from_magic(content: bytes) -> str:
+    head = content[:16]
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if head.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "image/webp"
+    if head.startswith(b"BM"):
+        return "image/bmp"
+    if head.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+    return ""
 
 
 def _looks_like_html_document(content: bytes) -> bool:
