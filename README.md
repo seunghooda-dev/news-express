@@ -148,14 +148,23 @@ NEWS_SUMMARY_ADMIN_PASSWORD=테스트 사용자에게 공유할 관리자 비밀
 
 ### Render 자동 배포 보완
 
-Render의 `Auto-Deploy`가 `On Commit`인데도 GitHub 푸시가 자동 배포로 이어지지 않으면 GitHub Actions 보완 배포를 사용합니다. 저장소에는 `.github/workflows/render-deploy.yml`이 포함되어 있으며, `codex/news-express` 브랜치에 푸시될 때 Render Deploy Hook을 호출합니다.
+Render의 `Auto-Deploy`가 `On Commit`인데도 GitHub 푸시가 자동 배포로 이어지지 않으면 GitHub Actions 보완 배포를 사용합니다. 저장소에는 `.github/workflows/render-deploy.yml`이 포함되어 있으며, `codex/news-express` 브랜치에서 운영 영향 경로가 바뀔 때만 Render Deploy Hook을 호출합니다.
+
+배포 대상 경로:
+
+- `src/**`
+- `config/**`
+- `scripts/**`
+- `templates/**`
+- `pyproject.toml`
+- `render.yaml`
 
 설정 순서:
 
 1. Render Dashboard의 `news-express` 서비스 `Settings` -> `Deploy Hook`에서 hook URL을 복사합니다.
 2. GitHub 저장소 `Settings` -> `Secrets and variables` -> `Actions`에서 새 Repository secret을 만듭니다.
 3. Secret 이름은 `RENDER_DEPLOY_HOOK_URL`로 지정하고, 값에는 Render Deploy Hook URL을 넣습니다.
-4. 이후 `codex/news-express` 브랜치 푸시마다 GitHub Actions가 Render 배포를 보완 실행합니다.
+4. 이후 `codex/news-express` 브랜치의 운영 영향 경로가 바뀔 때 GitHub Actions가 Render 배포를 보완 실행합니다.
 
 Deploy Hook URL은 비밀번호와 같은 민감 정보입니다. README, 코드, 이슈, 채팅에 직접 저장하지 말고 GitHub Secret 또는 Render 화면 안에서만 관리합니다.
 Secret이 아직 없으면 워크플로는 실패하지 않고 보완 배포를 건너뜁니다.

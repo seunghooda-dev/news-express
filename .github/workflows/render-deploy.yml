@@ -4,6 +4,13 @@ name: Render deploy fallback
   push:
     branches:
       - codex/news-express
+    paths:
+      - src/**
+      - config/**
+      - scripts/**
+      - templates/**
+      - pyproject.toml
+      - render.yaml
   workflow_dispatch:
 
 concurrency:
