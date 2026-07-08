@@ -85,6 +85,7 @@ LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
+DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
 
@@ -1947,8 +1948,12 @@ def _operations_health_report(
     auto_running = bool(_auto_status_value(auto_status, "running"))
     last_auto_finished_at = _auto_status_value(auto_status, "last_auto_finished_at")
     last_auto_finished = _parse_datetime(last_auto_finished_at)
+    stale_running_snapshot_at = _auto_status_value(auto_status, "stale_running_snapshot_at")
     if auto_status is None:
         issues.append("자동 수집 컨트롤러 미감지")
+    elif _auto_status_value(auto_status, "stale_running_snapshot"):
+        label = format_datetime_label(stale_running_snapshot_at) if stale_running_snapshot_at else "시각 확인 불가"
+        issues.append(f"오래된 자동 수집 실행 표시 자동 보정: {label}")
     elif not auto_enabled:
         issues.append("자동 수집 꺼짐")
     elif last_auto_finished:
@@ -2164,6 +2169,12 @@ def _auto_collector_status_payload(store: Store, status) -> dict[str, object]:
 
     stored_updated_at = _parse_datetime(stored_payload.get("status_updated_at"))
     current_updated_at = _parse_datetime(payload.get("last_finished_at") or payload.get("last_started_at"))
+    if _stale_running_status(stored_payload, stored_updated_at):
+        payload["stale_running_snapshot"] = True
+        payload["stale_running_snapshot_at"] = stored_payload.get("status_updated_at") or stored_payload.get("last_started_at")
+        if payload.get("enabled") and not payload.get("running"):
+            payload["progress_message"] = "이전 실행 상태 만료, 다음 정각 자동 수집 대기 중"
+        return payload
     if bool(stored_payload.get("running")) or current_updated_at is None or (
         stored_updated_at and stored_updated_at >= current_updated_at
     ):
@@ -2172,6 +2183,26 @@ def _auto_collector_status_payload(store: Store, status) -> dict[str, object]:
                 payload[key] = stored_payload[key]
         payload["status_updated_at"] = stored_payload.get("status_updated_at")
     return payload
+
+
+def _stale_running_status(payload: dict[str, object], updated_at: datetime | None = None) -> bool:
+    if not bool(payload.get("running")):
+        return False
+    last_update = updated_at or _parse_datetime(payload.get("status_updated_at")) or _parse_datetime(payload.get("last_started_at"))
+    if not last_update:
+        return False
+    stale_minutes = _auto_running_stale_minutes()
+    age_seconds = (datetime.now(LOCAL_TZ) - last_update.astimezone(LOCAL_TZ)).total_seconds()
+    return age_seconds >= stale_minutes * 60
+
+
+def _auto_running_stale_minutes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_AUTO_RUNNING_STALE_MINUTES", str(DEFAULT_AUTO_RUNNING_STALE_MINUTES))
+    try:
+        minutes = int(raw_value)
+    except ValueError:
+        return DEFAULT_AUTO_RUNNING_STALE_MINUTES
+    return max(30, minutes)
 
 
 def _stored_auto_collector_status_payload(store: Store) -> dict[str, object]:

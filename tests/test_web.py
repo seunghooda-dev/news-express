@@ -3262,6 +3262,7 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 def test_recrawl_status_uses_persisted_auto_collector_snapshot(monkeypatch):
     db_path = Path(f"data/.test_recrawl_persisted_status_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RUNNING_STALE_MINUTES", "100000")
 
     from news_summary.scheduler import AUTO_COLLECT_STATUS_KEY
     from news_summary.web import create_app
@@ -3297,6 +3298,68 @@ def test_recrawl_status_uses_persisted_auto_collector_snapshot(monkeypatch):
     assert status["progress_current"] == 7
     assert status["progress_message"] == "7/29 수집 중"
     assert status["progress_source_name"] == "시청 보도자료"
+
+
+def test_recrawl_status_ignores_stale_running_snapshot(monkeypatch):
+    db_path = Path(f"data/.test_recrawl_stale_running_status_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RUNNING_STALE_MINUTES", "60")
+
+    from news_summary.scheduler import AUTO_COLLECT_STATUS_KEY
+    from news_summary.web import create_app
+
+    store = Store(db_path)
+    store.init_db()
+    old_status_updated_at = (datetime.now(LOCAL_TZ) - timedelta(hours=3)).isoformat()
+    store.set_app_metadata(
+        AUTO_COLLECT_STATUS_KEY,
+        json.dumps(
+            {
+                "enabled": True,
+                "running": True,
+                "active_label": "자동 수집",
+                "progress_current": 7,
+                "progress_total": 29,
+                "progress_message": "7/29 수집 중",
+                "progress_source_name": "전남광주통합특별시청 보도자료",
+                "progress_phase": "collecting",
+                "last_error": None,
+                "last_started_at": old_status_updated_at,
+                "last_finished_at": None,
+                "last_auto_finished_at": "2026-07-03T04:15:43+00:00",
+                "next_run_at": None,
+                "run_count": 0,
+                "status_updated_at": old_status_updated_at,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    class IdleCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=False,
+                progress_total=29,
+                progress_message="다음 정각 자동 수집 대기 중",
+                next_run_at="2026-07-06T05:00:00+00:00",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = IdleCollector()
+    app.testing = True
+    client = app.test_client()
+
+    status = client.get("/recrawl/status").get_json()
+    html = client.get("/operations").data.decode("utf-8")
+    health = client.get("/healthz").get_json()
+
+    assert status["running"] is False
+    assert status["progress_current"] == 0
+    assert status["progress_message"] == "이전 실행 상태 만료, 다음 정각 자동 수집 대기 중"
+    assert status["stale_running_snapshot"] is True
+    assert "오래된 자동 수집 실행 표시 자동 보정" in html
+    assert health["auto_collector"] == "enabled"
 
 
 def test_operations_uses_persisted_next_auto_run_time(monkeypatch):
