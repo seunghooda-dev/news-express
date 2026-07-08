@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -1526,6 +1527,9 @@ def test_gangjin_asset_preview_redirects_to_source_image(monkeypatch):
     assert _should_redirect_asset_preview(
         "https://www.gangjin.go.kr/www/government/news/ybmodule.file/board_www/www_press/1783500702.jpg"
     )
+    assert _should_redirect_asset_preview(
+        "https://www.gangjin.go.kr/www/government/news/ybmodule.file/board_www/www_press/980x1x100/1783500876.JPG"
+    )
     assert not _should_redirect_asset_preview("https://www.gangjin.go.kr/download?file=1783500277.jpg")
 
 
@@ -3011,6 +3015,39 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert restore_response.status_code == 200
     assert "백업을 복구했습니다" in restore_html
     assert len(list(backup_dir.glob("*.zip"))) >= 2
+
+
+def test_backup_verify_report_refreshes_stale_metadata(monkeypatch):
+    db_path = Path(f"data/.test_backup_verify_stale_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_backup_verify_stale_{uuid4().hex}").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary.backup import create_backup
+    from news_summary.scheduler import AUTO_BACKUP_VERIFY_STATUS_KEY
+    from news_summary.web import _backup_verify_report
+
+    backup_path = create_backup(Path.cwd(), db_path, backup_dir)
+    store.set_app_metadata(
+        AUTO_BACKUP_VERIFY_STATUS_KEY,
+        json.dumps(
+            {
+                "ok": False,
+                "status_label": "백업 없음",
+                "message": "검증할 백업 파일이 없습니다.",
+                "backup_name": "old-backup.zip",
+                "updated_at": "2026-07-08T00:00:00+00:00",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    report = _backup_verify_report(store, backup_dir)
+
+    assert report["ok"] is True
+    assert report["status_label"] == "검증 정상"
+    assert report["backup_name"] == backup_path.name
+    assert "SQLite 무결성" in str(report["message"])
 
 
 def test_gemini_usage_page_is_separate_from_dashboard(monkeypatch):

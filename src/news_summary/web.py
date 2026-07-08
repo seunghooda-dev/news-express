@@ -459,6 +459,7 @@ def create_app() -> Flask:
             logger.exception("backup creation failed")
             flash(f"백업 생성에 실패했습니다: {type(exc).__name__}: {exc}")
             return redirect(url_for("operations"))
+        _persist_backup_verification_result(store, backup_path)
         _clear_operations_report_cache()
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")
@@ -1739,28 +1740,32 @@ def _url_discovery_report(store: Store) -> dict[str, object]:
 
 
 def _backup_verify_report(store: Store, backup_dir: Path) -> dict[str, object]:
+    latest_backup = _backup_files(backup_dir)[:1]
     raw_value = store.get_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY)
     if raw_value:
         try:
             payload = json.loads(raw_value)
         except json.JSONDecodeError:
             payload = {}
-        if isinstance(payload, dict):
+        payload_backup_name = str(payload.get("backup_name") or "") if isinstance(payload, dict) else ""
+        latest_backup_name = latest_backup[0]["name"] if latest_backup else ""
+        if isinstance(payload, dict) and (not latest_backup_name or payload_backup_name == latest_backup_name):
             return {
                 "ok": bool(payload.get("ok")),
                 "status_label": str(payload.get("status_label") or "검증 기록"),
                 "message": str(payload.get("message") or ""),
                 "checked_sqlite": bool(payload.get("checked_sqlite")),
+                "checked_database_export": bool(payload.get("checked_database_export")),
                 "backup_name": str(payload.get("backup_name") or ""),
                 "updated_at": payload.get("updated_at"),
             }
-    latest_backup = _backup_files(backup_dir)[:1]
     if not latest_backup:
         return {
             "ok": False,
             "status_label": "백업 없음",
             "message": "검증할 백업 파일이 없습니다.",
             "checked_sqlite": False,
+            "checked_database_export": False,
             "backup_name": "",
             "updated_at": None,
         }
@@ -1770,6 +1775,16 @@ def _backup_verify_report(store: Store, backup_dir: Path) -> dict[str, object]:
         "updated_at": None,
         **result,
     }
+
+
+def _persist_backup_verification_result(store: Store, backup_path: Path) -> None:
+    result = verify_backup(backup_path)
+    payload = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "backup_name": backup_path.name,
+        **result,
+    }
+    store.set_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY, json.dumps(payload, ensure_ascii=False))
 
 
 def _fallback_url_report(config_path: Path) -> dict[str, object]:
