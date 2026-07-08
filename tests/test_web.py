@@ -15,6 +15,7 @@ from news_summary.web import (
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
     _max_asset_preview_bytes,
+    _source_coverage_report,
     _sort_drafts_latest_first,
     LOCAL_TZ,
     approval_checks,
@@ -3037,6 +3038,68 @@ def test_healthz_restarts_enabled_auto_collector_thread(monkeypatch):
         collector.stop()
         if collector._thread:
             collector._thread.join(timeout=1)
+
+
+def test_source_coverage_report_covers_required_municipal_sources():
+    report = _source_coverage_report(Path("config/municipalities.yaml"))
+
+    assert report["status_level"] == "ok"
+    assert report["expected_total"] == 29
+    assert report["configured_required_count"] == 29
+    assert report["enabled_required_count"] == 29
+    assert report["missing_labels"] == []
+    assert report["disabled_labels"] == []
+    assert report["duplicate_ids"] == []
+
+
+def test_source_coverage_report_flags_missing_disabled_and_duplicate_sources(tmp_path):
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+sources:
+  - id: gwangju-city
+    name: 광주청사
+    region: 광주
+    type: html_board
+    enabled: false
+  - id: gwangju-city
+    name: 광주청사 중복
+    region: 광주
+    type: html_board
+  - id: unexpected-source
+    name: 추가 소스
+    region: 기타
+    type: html_board
+""",
+        encoding="utf-8",
+    )
+
+    report = _source_coverage_report(config_path)
+
+    assert report["status_level"] == "warning"
+    assert report["expected_total"] == 29
+    assert report["configured_required_count"] == 1
+    assert report["enabled_required_count"] == 1
+    assert "광주 동구" in report["missing_labels"]
+    assert "gwangju-city" in report["duplicate_ids"]
+    assert report["extra_ids"] == ["unexpected-source"]
+
+
+def test_operations_page_shows_source_coverage_card(monkeypatch):
+    db_path = Path(f"data/.test_operations_source_coverage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/operations").data.decode("utf-8")
+
+    assert "수집 대상 커버리지" in html
+    assert "29/29" in html
+    assert "광주·전남 필수 수집 대상이 모두 포함되어 있습니다." in html
 
 
 def test_operations_page_creates_and_restores_backup(monkeypatch):

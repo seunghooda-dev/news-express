@@ -156,6 +156,32 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>수집 대상 커버리지</h2>
+      <span class="badge {% if source_coverage_report.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">
+        {{ source_coverage_report.enabled_required_count }}/{{ source_coverage_report.expected_total }}
+      </span>
+    </div>
+    <p class="meta">{{ source_coverage_report.message }}</p>
+    <p class="meta">필수 설정 {{ source_coverage_report.configured_required_count }}곳 · 활성 {{ source_coverage_report.enabled_required_count }}곳 · 전체 소스 {{ source_coverage_report.configured_total }}곳</p>
+    {% if source_coverage_report.missing_labels or source_coverage_report.disabled_labels or source_coverage_report.duplicate_ids %}
+      <p class="gemini-models">
+        {% for item in source_coverage_report.missing_labels[:5] %}
+          <span>누락 {{ item }}</span>
+        {% endfor %}
+        {% for item in source_coverage_report.disabled_labels[:5] %}
+          <span>비활성 {{ item }}</span>
+        {% endfor %}
+        {% for item in source_coverage_report.duplicate_ids[:5] %}
+          <span>중복 {{ item }}</span>
+        {% endfor %}
+      </p>
+    {% elif source_coverage_report.extra_ids %}
+      <p class="meta">추가 소스 {{ source_coverage_report.extra_ids|length }}곳이 함께 관리됩니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>서버 상태 점검</h2>
       <span class="badge {% if server_health_report.status_level == 'ok' %}badge-gemini{% elif server_health_report.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
         {{ server_health_report.status_label }}

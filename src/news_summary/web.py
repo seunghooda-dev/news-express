@@ -90,6 +90,37 @@ DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
+REQUIRED_SOURCE_COVERAGE = (
+    ("gwangju-city", "광주청사"),
+    ("gwangju-donggu", "광주 동구"),
+    ("gwangju-seogu", "광주 서구"),
+    ("gwangju-namgu", "광주 남구"),
+    ("gwangju-bukgu", "광주 북구"),
+    ("gwangju-gwangsan", "광주 광산구"),
+    ("jeonnam-province", "전남광주통합특별시청"),
+    ("mokpo-city", "목포"),
+    ("yeosu-city", "여수"),
+    ("suncheon-city", "순천"),
+    ("naju-city", "나주"),
+    ("gwangyang-city", "광양"),
+    ("damyang-county", "담양"),
+    ("gokseong-county", "곡성"),
+    ("gurye-county", "구례"),
+    ("goheung-county", "고흥"),
+    ("boseong-county", "보성"),
+    ("hwasun-county", "화순"),
+    ("jangheung-county", "장흥"),
+    ("gangjin-county", "강진"),
+    ("haenam-county", "해남"),
+    ("yeongam-county", "영암"),
+    ("muan-county", "무안"),
+    ("hampyeong-county", "함평"),
+    ("yeonggwang-county", "영광"),
+    ("jangseong-county", "장성"),
+    ("wando-county", "완도"),
+    ("jindo-county", "진도"),
+    ("shinan-county", "신안"),
+)
 
 AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]]
 _latest_github_commit_cache: dict[tuple[str, str], tuple[float, str | None]] = {}
@@ -1566,6 +1597,7 @@ def _operations_cached_report_bundle(
         "date_issue_report": _date_issue_report(store),
         "daily_report": _daily_operations_report(store),
         "operations_summary": _operations_summary_report(store),
+        "source_coverage_report": _source_coverage_report(config_path),
         "server_health_report": _server_health_report(store),
         "anomaly_report": _collection_anomaly_report(store),
         "deduplicate_report": _deduplicate_report(store),
@@ -1611,6 +1643,63 @@ def _operations_report_cache_seconds() -> int:
     except ValueError:
         seconds = DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS
     return max(0, min(seconds, 120))
+
+
+def _source_coverage_report(config_path: Path) -> dict[str, object]:
+    required_labels = dict(REQUIRED_SOURCE_COVERAGE)
+    required_ids = set(required_labels)
+    try:
+        sources = load_sources(config_path)
+    except Exception as exc:  # noqa: BLE001 - operations page should surface config errors.
+        return {
+            "status_level": "error",
+            "status_label": "확인 필요",
+            "expected_total": len(REQUIRED_SOURCE_COVERAGE),
+            "configured_required_count": 0,
+            "enabled_required_count": 0,
+            "configured_total": 0,
+            "missing_labels": list(required_labels.values()),
+            "disabled_labels": [],
+            "duplicate_ids": [],
+            "extra_ids": [],
+            "message": f"수집 설정을 읽지 못했습니다: {type(exc).__name__}",
+        }
+
+    id_counts = Counter(source.id for source in sources)
+    configured_ids = set(id_counts)
+    enabled_ids = {source.id for source in sources if source.enabled}
+    missing_ids = [source_id for source_id, _label in REQUIRED_SOURCE_COVERAGE if source_id not in configured_ids]
+    disabled_ids = [
+        source_id
+        for source_id, _label in REQUIRED_SOURCE_COVERAGE
+        if source_id in configured_ids and source_id not in enabled_ids
+    ]
+    duplicate_ids = sorted(source_id for source_id, count in id_counts.items() if count > 1)
+    extra_ids = sorted(configured_ids - required_ids)
+    issues = bool(missing_ids or disabled_ids or duplicate_ids)
+    if missing_ids:
+        message = f"필수 기관 {len(missing_ids)}곳이 설정에서 누락됐습니다."
+    elif disabled_ids:
+        message = f"필수 기관 {len(disabled_ids)}곳이 비활성화되어 있습니다."
+    elif duplicate_ids:
+        message = f"중복 소스 ID {len(duplicate_ids)}개를 확인해야 합니다."
+    elif extra_ids:
+        message = "필수 기관은 모두 포함됐고 추가 소스가 있습니다."
+    else:
+        message = "광주·전남 필수 수집 대상이 모두 포함되어 있습니다."
+    return {
+        "status_level": "warning" if issues else "ok",
+        "status_label": "확인 필요" if issues else "정상",
+        "expected_total": len(REQUIRED_SOURCE_COVERAGE),
+        "configured_required_count": len(required_ids & configured_ids),
+        "enabled_required_count": len(required_ids & enabled_ids),
+        "configured_total": len(sources),
+        "missing_labels": [required_labels[source_id] for source_id in missing_ids],
+        "disabled_labels": [required_labels[source_id] for source_id in disabled_ids],
+        "duplicate_ids": duplicate_ids,
+        "extra_ids": extra_ids,
+        "message": message,
+    }
 
 
 def _clear_operations_report_cache() -> None:
