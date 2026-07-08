@@ -2779,6 +2779,39 @@ def test_cloudflare_tunnel_status_detects_reconnecting_log(tmp_path, monkeypatch
     assert status["label"] == "터널 재연결 중"
 
 
+def test_deployment_report_treats_docs_only_changes_as_current(monkeypatch):
+    from news_summary import web as web_module
+
+    monkeypatch.setenv("NEWS_SUMMARY_GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express")
+    monkeypatch.setenv("NEWS_SUMMARY_GIT_COMMIT", "aaa111")
+    monkeypatch.setattr(web_module, "_latest_github_commit", lambda repo, branch: "bbb222")
+    monkeypatch.setattr(web_module, "_github_compare_files", lambda repo, base, head: ["README.md", ".github/workflows/render-deploy.yml"])
+
+    report = web_module._deployment_version_report()
+
+    assert report["status_label"] == "문서 변경만 미배포"
+    assert report["status_level"] == "ok"
+    assert report["change_report"]["changed_count"] == 2
+    assert report["change_report"]["runtime_change_count"] == 0
+
+
+def test_deployment_report_marks_runtime_changes_as_deploy_needed(monkeypatch):
+    from news_summary import web as web_module
+
+    monkeypatch.setenv("NEWS_SUMMARY_GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express")
+    monkeypatch.setenv("NEWS_SUMMARY_GIT_COMMIT", "aaa111")
+    monkeypatch.setattr(web_module, "_latest_github_commit", lambda repo, branch: "bbb222")
+    monkeypatch.setattr(web_module, "_github_compare_files", lambda repo, base, head: ["README.md", "src/news_summary/web.py"])
+
+    report = web_module._deployment_version_report()
+
+    assert report["status_label"] == "배포 필요"
+    assert report["status_level"] == "warning"
+    assert report["change_report"]["runtime_change_count"] == 1
+
+
 def test_cloudflare_tunnel_status_skips_process_check_on_render(monkeypatch):
     from news_summary import web as web_module
 

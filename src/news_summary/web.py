@@ -83,9 +83,12 @@ DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
 LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
+RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
+RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
 
 AssetPreviewCache = OrderedDict[tuple[int, str], tuple[float, float, str, bytes]]
 _latest_github_commit_cache: dict[tuple[str, str], tuple[float, str | None]] = {}
+_github_compare_files_cache: dict[tuple[str, str, str], tuple[float, list[str] | None]] = {}
 _operations_report_cache: dict[tuple[str, ...], tuple[float, dict[str, object]]] = {}
 _operations_report_cache_lock = RLock()
 _visitor_access_prune_lock = RLock()
@@ -976,12 +979,20 @@ def _deployment_version_report() -> dict[str, object]:
     branch = os.getenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express").strip()
     latest_commit = _latest_github_commit(repo, branch) if repo and branch else None
     deploy_config = _render_deploy_config_report()
+    change_report = _deployment_change_report(repo, running_commit, branch) if repo and running_commit and latest_commit else None
     if running_commit and latest_commit:
         is_current = running_commit.lower().startswith(latest_commit[:12].lower()) or latest_commit.lower().startswith(
             running_commit[:12].lower()
         )
-        status_label = "최신 배포" if is_current else "배포 필요"
-        status_level = "ok" if is_current else "warning"
+        if is_current:
+            status_label = "최신 배포"
+            status_level = "ok"
+        elif change_report and change_report["runtime_change_count"] == 0:
+            status_label = "문서 변경만 미배포"
+            status_level = "ok"
+        else:
+            status_label = "배포 필요"
+            status_level = "warning"
     elif running_commit:
         status_label = "실행 버전 확인"
         status_level = "neutral"
@@ -995,6 +1006,7 @@ def _deployment_version_report() -> dict[str, object]:
         "latest_commit": _short_commit(latest_commit),
         "repo": repo,
         "branch": branch,
+        "change_report": change_report,
         **deploy_config,
     }
 
@@ -1079,6 +1091,53 @@ def _latest_github_commit(repo: str, branch: str) -> str | None:
     result = str(sha).strip() if sha else None
     _latest_github_commit_cache[cache_key] = (now, result)
     return result
+
+
+def _deployment_change_report(repo: str, running_commit: str | None, branch: str) -> dict[str, object] | None:
+    if not running_commit:
+        return None
+    filenames = _github_compare_files(repo, running_commit, branch)
+    if filenames is None:
+        return None
+    runtime_files = [filename for filename in filenames if _is_runtime_deploy_file(filename)]
+    return {
+        "changed_count": len(filenames),
+        "runtime_change_count": len(runtime_files),
+        "sample_files": filenames[:5],
+        "runtime_sample_files": runtime_files[:5],
+    }
+
+
+def _github_compare_files(repo: str, base_commit: str, head: str) -> list[str] | None:
+    cache_key = (repo, base_commit[:40], head)
+    now = time.monotonic()
+    cached = _github_compare_files_cache.get(cache_key)
+    if cached and now - cached[0] <= LATEST_GITHUB_COMMIT_CACHE_SECONDS:
+        return cached[1]
+    url = f"https://api.github.com/repos/{repo}/compare/{quote(base_commit, safe='')}...{quote(head, safe='')}"
+    try:
+        response = httpx.get(url, timeout=3.0, headers={"Accept": "application/vnd.github+json"})
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        _github_compare_files_cache[cache_key] = (now, None)
+        return None
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, list):
+        _github_compare_files_cache[cache_key] = (now, None)
+        return None
+    filenames = [
+        str(item.get("filename") or "").strip().replace("\\", "/")
+        for item in files
+        if isinstance(item, dict) and str(item.get("filename") or "").strip()
+    ]
+    _github_compare_files_cache[cache_key] = (now, filenames)
+    return filenames
+
+
+def _is_runtime_deploy_file(filename: str) -> bool:
+    normalized = filename.strip().replace("\\", "/")
+    return normalized in RUNTIME_DEPLOY_PATHS or normalized.startswith(RUNTIME_DEPLOY_PATH_PREFIXES)
 
 
 def _short_commit(value: str | None) -> str | None:
