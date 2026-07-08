@@ -33,6 +33,7 @@ from .scheduler import (
     AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
     AUTO_SERVER_HEALTH_STATUS_KEY,
     AUTO_URL_DISCOVERY_STATUS_KEY,
+    _source_recovery_candidates,
 )
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
@@ -90,6 +91,11 @@ DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
+RECOVERY_REASON_LABELS = {
+    "failed": "실패 재검증",
+    "focused": "이상치 집중 재수집",
+    "quiet": "업무일 무수집 보정",
+}
 REQUIRED_SOURCE_COVERAGE = (
     ("gwangju-city", "광주청사"),
     ("gwangju-donggu", "광주 동구"),
@@ -1592,6 +1598,7 @@ def _operations_cached_report_bundle(
     reports = {
         "retention_policy": _retention_policy_summary(),
         "operations_health": _operations_health_report(store, auto_status, pending_queue),
+        "recovery_candidate_report": _recovery_candidate_report(store, config_path),
         "deployment_version": _deployment_version_report(),
         "db_health": _db_health_report(store, backup_dir),
         "date_issue_report": _date_issue_report(store),
@@ -1698,6 +1705,61 @@ def _source_coverage_report(config_path: Path) -> dict[str, object]:
         "disabled_labels": [required_labels[source_id] for source_id in disabled_ids],
         "duplicate_ids": duplicate_ids,
         "extra_ids": extra_ids,
+        "message": message,
+    }
+
+
+def _recovery_candidate_report(store: Store, config_path: Path) -> dict[str, object]:
+    try:
+        limit = int(os.getenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "5"))
+    except ValueError:
+        limit = 5
+    limit = max(0, limit)
+    if limit <= 0:
+        return {
+            "status_level": "ok",
+            "status_label": "꺼짐",
+            "count": 0,
+            "limit": 0,
+            "candidates": [],
+            "message": "자동 복구 후보 재검증이 꺼져 있습니다.",
+        }
+    try:
+        candidates = _source_recovery_candidates(store, config_path, limit)
+    except Exception as exc:  # noqa: BLE001 - operations page should surface diagnostics without failing.
+        return {
+            "status_level": "warning",
+            "status_label": "확인 필요",
+            "count": 0,
+            "limit": limit,
+            "candidates": [],
+            "message": f"자동 복구 후보를 확인하지 못했습니다: {type(exc).__name__}",
+        }
+
+    rows = [
+        {
+            "source_id": candidate.source.id,
+            "source_name": candidate.source.name,
+            "region": candidate.source.region,
+            "reason": candidate.reason,
+            "reason_label": RECOVERY_REASON_LABELS.get(candidate.reason, candidate.reason),
+        }
+        for candidate in candidates
+    ]
+    if rows:
+        message = f"다음 자동 유지보수에서 {len(rows)}곳을 우선 재검증합니다."
+        status_level = "warning"
+        status_label = "대기"
+    else:
+        message = "현재 자동 복구 재검증 후보가 없습니다."
+        status_level = "ok"
+        status_label = "대상 없음"
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "count": len(rows),
+        "limit": limit,
+        "candidates": rows,
         "message": message,
     }
 

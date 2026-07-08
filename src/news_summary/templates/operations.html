@@ -128,6 +128,24 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>자동 복구 예정</h2>
+      <span class="badge {% if recovery_candidate_report.status_level == 'ok' %}badge-gemini{% else %}badge-neutral{% endif %}">
+        {{ recovery_candidate_report.count }}곳
+      </span>
+    </div>
+    <p class="meta">{{ recovery_candidate_report.message }}</p>
+    <p class="meta">한 번에 최대 {{ recovery_candidate_report.limit }}곳까지 자동 재검증합니다.</p>
+    {% if recovery_candidate_report.candidates %}
+      <p class="gemini-models">
+        {% for item in recovery_candidate_report.candidates[:5] %}
+          <span>{{ source_display_label(item.source_name) }} · {{ item.reason_label }}</span>
+        {% endfor %}
+      </p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>일일 운영 리포트</h2>
       <span class="badge badge-neutral">{{ daily_report.date }}</span>
     </div>

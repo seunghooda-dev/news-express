@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import httpx
 
-from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset
+from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, Source
 from news_summary.scheduler import AutoCollectorStatus
 from news_summary.storage import Store
 from news_summary.web import (
@@ -15,6 +15,7 @@ from news_summary.web import (
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
     _max_asset_preview_bytes,
+    _recovery_candidate_report,
     _source_coverage_report,
     _sort_drafts_latest_first,
     LOCAL_TZ,
@@ -3100,6 +3101,85 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     assert "수집 대상 커버리지" in html
     assert "29/29" in html
     assert "광주·전남 필수 수집 대상이 모두 포함되어 있습니다." in html
+
+
+def test_recovery_candidate_report_lists_sources_due_for_recheck(monkeypatch):
+    db_path = Path(f"data/.test_recovery_candidate_report_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="sample-source", name="테스트 기관 보도자료", region="전남", type="html_board")
+    store.record_source_collection_status(
+        source.id,
+        source.name,
+        "failed",
+        "목록 후보를 찾지 못했습니다",
+        failure_stage="사이트 구조 변경",
+        failure_reason="목록/본문 선택자 확인 필요",
+    )
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "3")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [source])
+
+    report = _recovery_candidate_report(store, Path("unused.yaml"))
+
+    assert report["status_level"] == "warning"
+    assert report["status_label"] == "대기"
+    assert report["count"] == 1
+    assert report["limit"] == 3
+    assert report["candidates"][0]["source_name"] == "테스트 기관 보도자료"
+    assert report["candidates"][0]["reason_label"] == "실패 재검증"
+
+
+def test_recovery_candidate_report_handles_disabled_recovery(monkeypatch):
+    db_path = Path(f"data/.test_recovery_candidate_report_disabled_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "0")
+
+    report = _recovery_candidate_report(store, Path("unused.yaml"))
+
+    assert report["status_level"] == "ok"
+    assert report["status_label"] == "꺼짐"
+    assert report["count"] == 0
+    assert report["message"] == "자동 복구 후보 재검증이 꺼져 있습니다."
+
+
+def test_operations_page_shows_recovery_candidate_card(monkeypatch):
+    db_path = Path(f"data/.test_operations_recovery_candidates_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+    from news_summary.web import create_app
+
+    monkeypatch.setattr(
+        web_module,
+        "_recovery_candidate_report",
+        lambda store, config_path: {
+            "status_level": "warning",
+            "status_label": "대기",
+            "count": 1,
+            "limit": 5,
+            "candidates": [
+                {
+                    "source_id": "sample-source",
+                    "source_name": "전남광주통합특별시 테스트 기관",
+                    "region": "전남",
+                    "reason": "focused",
+                    "reason_label": "이상치 집중 재수집",
+                }
+            ],
+            "message": "다음 자동 유지보수에서 1곳을 우선 재검증합니다.",
+        },
+    )
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "자동 복구 예정" in html
+    assert "다음 자동 유지보수에서 1곳을 우선 재검증합니다." in html
+    assert "테스트 기관 · 이상치 집중 재수집" in html
 
 
 def test_operations_page_creates_and_restores_backup(monkeypatch):
