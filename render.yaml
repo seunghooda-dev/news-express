@@ -62,6 +62,12 @@ services:
         value: "50"
       - key: NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT
         value: "3"
+      - key: NEWS_SUMMARY_AUTO_BACKUP_CREATE
+        value: "1"
+      - key: NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS
+        value: "24"
+      - key: NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT
+        value: "7"
       - key: NEWS_SUMMARY_AUTO_BACKUP_VERIFY
         value: "1"
       - key: NEWS_SUMMARY_PUBLIC_URL

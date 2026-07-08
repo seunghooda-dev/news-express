@@ -53,6 +53,7 @@ AUTO_DEDUPLICATE_LIMIT_ENV = "NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT"
 AUTO_URL_DISCOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT"
 AUTO_BACKUP_CREATE_ENV = "NEWS_SUMMARY_AUTO_BACKUP_CREATE"
 AUTO_BACKUP_MAX_AGE_HOURS_ENV = "NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS"
+AUTO_BACKUP_KEEP_COUNT_ENV = "NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
 PUBLIC_URL_ENV = "NEWS_SUMMARY_PUBLIC_URL"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
@@ -481,6 +482,9 @@ class AutoCollector:
         backup_create_message = self._create_backup_if_needed_once(now)
         if backup_create_message:
             messages.append(backup_create_message)
+        backup_prune_message = self._prune_old_backups_once()
+        if backup_prune_message:
+            messages.append(backup_prune_message)
         backup_message = self._verify_latest_backup_once()
         if backup_message:
             messages.append(backup_message)
@@ -697,6 +701,29 @@ class AutoCollector:
         reason = "백업 없음" if not latest_backup else f"최근 백업 {max_age_hours}시간 초과"
         logger.info("auto backup created path=%s reason=%s", backup_path, reason)
         return f"자동 백업 생성: {backup_path.name} ({reason})"
+
+    def _prune_old_backups_once(self) -> str | None:
+        keep_count = env_int(AUTO_BACKUP_KEEP_COUNT_ENV, 7, minimum=0)
+        if keep_count <= 0:
+            return None
+        backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
+        files = _backup_files_newest_first(backup_dir)
+        old_files = files[keep_count:]
+        if not old_files:
+            return None
+        deleted = 0
+        failed = 0
+        for path in old_files:
+            try:
+                path.unlink()
+                deleted += 1
+            except OSError as exc:
+                failed += 1
+                logger.warning("auto backup prune failed path=%s error=%s", path, exc)
+        if failed:
+            return f"오래된 백업 자동 정리 {deleted}개 완료, {failed}개 실패"
+        logger.info("auto backup pruned deleted=%s keep=%s dir=%s", deleted, keep_count, backup_dir)
+        return f"오래된 백업 자동 정리 {deleted}개"
 
     def _drain_pending_queue_once(self) -> list[str]:
         if not env_bool(AUTO_QUEUE_DRAIN_ENV, True):
@@ -1052,12 +1079,20 @@ def _same_host(url: str, base_url: str) -> bool:
 
 
 def _latest_backup_file(backup_dir: Path) -> Path | None:
-    if not backup_dir.exists():
-        return None
-    files = [path for path in backup_dir.glob("*.zip") if path.is_file()]
+    files = _backup_files_newest_first(backup_dir)
     if not files:
         return None
-    return max(files, key=lambda path: path.stat().st_mtime)
+    return files[0]
+
+
+def _backup_files_newest_first(backup_dir: Path) -> list[Path]:
+    if not backup_dir.exists():
+        return []
+    return sorted(
+        [path for path in backup_dir.glob("*.zip") if path.is_file()],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
 
 
 def _backup_is_stale(backup_path: Path, now: datetime, max_age_hours: int) -> bool:

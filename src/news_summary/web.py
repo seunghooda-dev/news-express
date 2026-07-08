@@ -2367,6 +2367,7 @@ def _automation_settings_report() -> dict[str, object]:
         "url_discovery_limit": os.getenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "3"),
         "backup_create": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_CREATE", "1"),
         "backup_max_age_hours": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS", "24"),
+        "backup_keep_count": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT", "7"),
         "backup_verify": os.getenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "1"),
     }
 

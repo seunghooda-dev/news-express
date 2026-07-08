@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -422,6 +423,54 @@ def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):
     assert verify_payload["backup_name"] == backups[0].name
     daily_report = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
     assert any("자동 백업 생성" in message for message in daily_report["messages"])
+
+
+def test_auto_maintenance_prunes_old_backups_and_verifies_latest(monkeypatch):
+    db_path = Path(f"data/.test_auto_backup_prune_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_auto_backup_prune_{uuid4().hex}").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="자동 백업 정리 대상 원문",
+            url="https://example.com/auto-backup-prune",
+            content="자동 백업 정리 검증용 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+
+    from news_summary.backup import create_backup
+
+    backup_paths = [create_backup(Path.cwd(), db_path, backup_dir) for _ in range(3)]
+    for index, path in enumerate(backup_paths):
+        timestamp = 1_700_000_000 + index
+        path.touch()
+        os.utime(path, (timestamp, timestamp))
+
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_CREATE", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_DEDUPLICATE", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "0")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+    collector._execute_maintenance_once(datetime(2026, 7, 6, 3, 0, tzinfo=timezone.utc))
+
+    remaining = sorted(backup_dir.glob("*.zip"), key=lambda path: path.stat().st_mtime)
+    assert len(remaining) == 2
+    assert backup_paths[0] not in remaining
+    verify_payload = json.loads(store.get_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY) or "{}")
+    assert verify_payload["ok"] is True
+    assert verify_payload["backup_name"] == backup_paths[-1].name
+    daily_report = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
+    assert any("오래된 백업 자동 정리 1개" in message for message in daily_report["messages"])
 
 
 def test_auto_maintenance_recovers_failed_sources(monkeypatch):
