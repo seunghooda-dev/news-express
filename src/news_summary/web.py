@@ -69,6 +69,7 @@ CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
+OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 LIST_PAGE_SIZE = 50
 MAX_LIST_LIMIT = 500
 DASHBOARD_PENDING_LIMIT = 20
@@ -315,6 +316,8 @@ def create_app() -> Flask:
     @app.post("/logout")
     def logout():
         session.pop("admin_authenticated", None)
+        session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
+        session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
         flash("로그아웃했습니다.")
         return redirect(url_for("login"))
 
@@ -385,12 +388,15 @@ def create_app() -> Flask:
                     "admin_password_unlocked": bool(
                         admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
                     ),
+                    "operations_write_unlocked": _operations_write_access_unlocked(store),
                 }
                 context.update(_operations_cached_report_bundle(store, config_path, backup_dir, auto_status, pending_queue))
                 return render_template("operations.html", **context)
 
     @app.post("/operations/auto-collect")
     def update_auto_collect():
+        if locked_response := _require_operations_write_access(store):
+            return locked_response
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if not auto_collector:
             flash("자동 수집 컨트롤러가 준비되지 않았습니다. 프로그램을 다시 실행해 주세요.")
@@ -400,6 +406,28 @@ def create_app() -> Flask:
         _clear_operations_report_cache()
         logger.info("auto collector setting changed enabled=%s", enabled)
         flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
+        return redirect(url_for("operations"))
+
+    @app.post("/operations/write-access/unlock")
+    def unlock_operations_write_access():
+        source = _configured_admin_password_source(store)
+        if not source:
+            flash("운영 변경 기능을 사용하려면 관리자 비밀번호를 먼저 설정하세요.")
+            return redirect(url_for("admin_setup"))
+        current_password = request.form.get("current_password") or ""
+        if verify_admin_password(store, current_password):
+            session[OPERATIONS_WRITE_UNLOCKED_KEY] = True
+            logger.info("operations write access unlocked remote_addr=%s", _masked_request_ip())
+            flash("운영 변경 기능 잠금을 해제했습니다.")
+        else:
+            logger.warning("operations write access unlock failed remote_addr=%s", _masked_request_ip())
+            flash("관리자 비밀번호가 올바르지 않습니다.")
+        return redirect(url_for("operations"))
+
+    @app.post("/operations/write-access/lock")
+    def lock_operations_write_access():
+        session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
+        flash("운영 변경 기능을 다시 잠갔습니다.")
         return redirect(url_for("operations"))
 
     @app.post("/operations/admin-password/unlock")
@@ -415,6 +443,7 @@ def create_app() -> Flask:
         current_password = request.form.get("current_password") or ""
         if verify_admin_password(store, current_password):
             session[OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY] = True
+            session[OPERATIONS_WRITE_UNLOCKED_KEY] = True
             logger.info("admin password panel unlocked remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호 변경 입력칸을 열었습니다.")
         else:
@@ -446,6 +475,7 @@ def create_app() -> Flask:
             set_admin_password(store, new_password)
             session["admin_authenticated"] = True
             session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
+            session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
             _clear_operations_report_cache()
             logger.info("admin password changed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
@@ -453,6 +483,8 @@ def create_app() -> Flask:
 
     @app.post("/operations/backup")
     def create_backup_route():
+        if locked_response := _require_operations_write_access(store):
+            return locked_response
         try:
             backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
         except Exception as exc:  # noqa: BLE001 - backup failures should be visible in operations.
@@ -467,6 +499,8 @@ def create_app() -> Flask:
 
     @app.get("/operations/backups/<path:filename>")
     def download_backup(filename: str):
+        if locked_response := _require_operations_write_access(store):
+            return locked_response
         backup_path = _safe_backup_file(backup_dir, filename)
         if not backup_path:
             flash("백업 파일을 찾을 수 없습니다.")
@@ -475,6 +509,8 @@ def create_app() -> Flask:
 
     @app.post("/operations/restore")
     def restore_backup_route():
+        if locked_response := _require_operations_write_access(store):
+            return locked_response
         backup_path = _safe_backup_file(backup_dir, request.form.get("backup_name") or "")
         if not backup_path:
             flash("복구할 백업 파일을 선택하세요.")
@@ -2076,6 +2112,22 @@ def _configured_admin_password_source(store: Store) -> str:
     if store.get_app_metadata(ADMIN_PASSWORD_HASH_KEY):
         return "database"
     return ""
+
+
+def _operations_write_access_unlocked(store: Store) -> bool:
+    if session.get("admin_authenticated"):
+        return True
+    return bool(_configured_admin_password_source(store) and session.get(OPERATIONS_WRITE_UNLOCKED_KEY))
+
+
+def _require_operations_write_access(store: Store):
+    if _operations_write_access_unlocked(store):
+        return None
+    if not _configured_admin_password_source(store):
+        flash("운영 변경 기능을 사용하려면 관리자 비밀번호를 먼저 설정하세요.")
+        return redirect(url_for("admin_setup"))
+    flash("운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다.")
+    return redirect(url_for("operations"))
 
 
 def _safe_next(default_endpoint: str = "dashboard") -> str:

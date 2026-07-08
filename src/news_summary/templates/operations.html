@@ -14,6 +14,32 @@
 <section class="ops-grid">
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>운영 변경 잠금</h2>
+      <span class="badge {% if operations_write_unlocked %}badge-gemini{% else %}badge-warning{% endif %}">
+        {% if operations_write_unlocked %}해제됨{% else %}잠김{% endif %}
+      </span>
+    </div>
+    {% if operations_write_unlocked %}
+      <p class="meta">백업, 복구, 자동 수집 변경 기능을 사용할 수 있습니다.</p>
+      <form class="inline-actions" method="post" action="{{ url_for('lock_operations_write_access') }}">
+        <button class="secondary" type="submit">다시 잠그기</button>
+      </form>
+    {% elif admin_password_configured %}
+      <p class="meta">운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다.</p>
+      <form class="ops-form" method="post" action="{{ url_for('unlock_operations_write_access') }}">
+        <input type="hidden" name="username" value="admin" autocomplete="username">
+        <label for="operations_unlock_password">관리자 비밀번호</label>
+        <input id="operations_unlock_password" name="current_password" type="password" autocomplete="current-password" required>
+        <button type="submit">운영 변경 잠금 해제</button>
+      </form>
+    {% else %}
+      <p class="meta">운영 변경 기능을 사용하려면 먼저 관리자 비밀번호를 설정해야 합니다.</p>
+      <a class="source-link" href="{{ url_for('admin_setup') }}">관리자 비밀번호 설정</a>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>자동 수집</h2>
       <span class="badge {% if auto_collector_status and auto_collector_status.enabled %}badge-gemini{% else %}badge-neutral{% endif %}">
         {% if auto_collector_status and auto_collector_status.enabled %}켜짐{% else %}꺼짐{% endif %}
@@ -36,10 +62,10 @@
     <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}" data-confirm="자동 수집 설정을 변경할까요?">
       {% if auto_collector_status and auto_collector_status.enabled %}
         <input type="hidden" name="enabled" value="false">
-        <button class="secondary" type="submit">자동 수집 끄기</button>
+        <button class="secondary" type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 끄기</button>
       {% else %}
         <input type="hidden" name="enabled" value="true">
-        <button type="submit">자동 수집 켜기</button>
+        <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 켜기</button>
       {% endif %}
     </form>
   </article>
@@ -340,7 +366,7 @@
     <p class="meta">현재 DB: {{ db_path }}</p>
     <p class="meta">백업 폴더: {{ backup_dir }}</p>
     <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">
-      <button type="submit">지금 백업 생성</button>
+      <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>지금 백업 생성</button>
     </form>
   </article>
 
@@ -392,7 +418,11 @@
           <span class="row-meta">
             <span>{{ backup.modified_at|date_label }}</span>
             <span>{{ file_size_label(backup.size) }}</span>
-            <a class="source-link" href="{{ url_for('download_backup', filename=backup.name) }}">다운로드</a>
+            {% if operations_write_unlocked %}
+              <a class="source-link" href="{{ url_for('download_backup', filename=backup.name) }}">다운로드</a>
+            {% else %}
+              <span>잠금 필요</span>
+            {% endif %}
           </span>
         </div>
       {% endfor %}
@@ -417,8 +447,8 @@
       현재 운영 데이터를 선택한 백업 내용으로 덮어쓰는 것을 확인했습니다.
     </label>
     <div class="actions">
-      <button class="secondary" type="submit" name="action" value="preview">복구 대상 확인</button>
-      <button type="submit" name="action" value="restore">선택 백업 복구</button>
+      <button class="secondary" type="submit" name="action" value="preview" {% if not operations_write_unlocked %}disabled{% endif %}>복구 대상 확인</button>
+      <button type="submit" name="action" value="restore" {% if not operations_write_unlocked %}disabled{% endif %}>선택 백업 복구</button>
     </div>
   </form>
 </section>

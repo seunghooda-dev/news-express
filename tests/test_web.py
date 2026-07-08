@@ -2158,6 +2158,8 @@ def test_ops_logs_page_filters_categories(monkeypatch, tmp_path):
 def test_operations_page_toggles_auto_collection(monkeypatch):
     db_path = Path(f"data/.test_operations_auto_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
 
     from news_summary.web import create_app
 
@@ -2183,6 +2185,18 @@ def test_operations_page_toggles_auto_collection(monkeypatch):
 
     assert "운영 관리" in html
     assert "자동 수집 켜기" in html
+    assert "운영 변경 잠금" in html
+
+    locked_response = client.post("/operations/auto-collect", data={"enabled": "true"}, follow_redirects=True)
+    assert "운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다." in locked_response.data.decode("utf-8")
+    assert collector.calls == []
+
+    unlock_response = client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "secret1234"},
+        follow_redirects=True,
+    )
+    assert "운영 변경 기능 잠금을 해제했습니다." in unlock_response.data.decode("utf-8")
 
     enabled_response = client.post("/operations/auto-collect", data={"enabled": "true"}, follow_redirects=True)
     disabled_response = client.post("/operations/auto-collect", data={"enabled": "false"}, follow_redirects=True)
@@ -2970,12 +2984,27 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     backup_dir = Path(f"data/tmp/test_operations_backups_{uuid4().hex}").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
 
     from news_summary.web import create_app
 
     app = create_app()
     app.testing = True
     client = app.test_client()
+
+    locked_response = client.post("/operations/backup", follow_redirects=True)
+    locked_html = locked_response.data.decode("utf-8")
+
+    assert "운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다." in locked_html
+    assert not list(backup_dir.glob("*.zip"))
+
+    unlock_response = client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "secret1234"},
+        follow_redirects=True,
+    )
+    assert "운영 변경 기능 잠금을 해제했습니다." in unlock_response.data.decode("utf-8")
 
     backup_response = client.post("/operations/backup", follow_redirects=True)
     backup_html = backup_response.data.decode("utf-8")
@@ -3015,6 +3044,52 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert restore_response.status_code == 200
     assert "백업을 복구했습니다" in restore_html
     assert len(list(backup_dir.glob("*.zip"))) >= 2
+
+
+def test_public_operations_write_access_can_be_locked_again(monkeypatch):
+    db_path = Path(f"data/.test_operations_write_lock_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_operations_write_lock_{uuid4().hex}").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    operations_html = client.get("/operations").data.decode("utf-8")
+    assert "운영 변경 잠금" in operations_html
+    assert "운영 변경 잠금 해제" in operations_html
+    assert "disabled>지금 백업 생성</button>" in operations_html
+
+    wrong_unlock = client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "wrong"},
+        follow_redirects=True,
+    )
+    assert "관리자 비밀번호가 올바르지 않습니다." in wrong_unlock.data.decode("utf-8")
+
+    right_unlock = client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "secret1234"},
+        follow_redirects=True,
+    )
+    assert "운영 변경 기능 잠금을 해제했습니다." in right_unlock.data.decode("utf-8")
+    assert "해제됨" in right_unlock.data.decode("utf-8")
+
+    backup_response = client.post("/operations/backup", follow_redirects=True)
+    backup_html = backup_response.data.decode("utf-8")
+    assert "백업을 생성했습니다" in backup_html
+    backup_name = sorted(backup_dir.glob("*.zip"))[0].name
+
+    lock_response = client.post("/operations/write-access/lock", follow_redirects=True)
+    assert "운영 변경 기능을 다시 잠갔습니다." in lock_response.data.decode("utf-8")
+
+    download_response = client.get(f"/operations/backups/{backup_name}", follow_redirects=True)
+    assert "운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다." in download_response.data.decode("utf-8")
 
 
 def test_backup_verify_report_refreshes_stale_metadata(monkeypatch):
