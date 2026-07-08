@@ -387,6 +387,10 @@ class AutoCollector:
                 payload = {
                     "enabled": self._status.enabled,
                     "running": self._status.running,
+                    "interval_seconds": self._status.interval_seconds,
+                    "collect_limit": self._status.collect_limit,
+                    "draft_limit": self._status.draft_limit,
+                    "require_gemini": self._status.require_gemini,
                     "active_label": self._status.active_label or "",
                     "progress_current": self._status.progress_current,
                     "progress_total": self._status.progress_total,

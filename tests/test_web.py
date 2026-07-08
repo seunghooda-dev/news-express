@@ -2888,7 +2888,9 @@ def test_operations_uses_persisted_next_auto_run_time(monkeypatch):
     html = client.get("/operations").data.decode("utf-8")
     health = client.get("/healthz").get_json()
 
+    assert "매시간 정각 실행" in html
     assert "다음 실행 2026.07.06 14:00" in html
+    assert "주기 미상" not in html
     assert "다음 실행 일시 미상" not in html
     assert "마지막 자동 수집 2026.07.06 13:15" in html
     assert health["next_run_at"] == "2026-07-06T05:00:00+00:00"

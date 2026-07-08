@@ -1865,6 +1865,10 @@ def _auto_collector_status_payload(store: Store, status) -> dict[str, object]:
     payload = {
         "enabled": status.enabled,
         "running": status.running,
+        "interval_seconds": status.interval_seconds,
+        "collect_limit": status.collect_limit,
+        "draft_limit": status.draft_limit,
+        "require_gemini": status.require_gemini,
         "active_label": status.active_label or "",
         "progress_current": status.progress_current,
         "progress_total": status.progress_total,
