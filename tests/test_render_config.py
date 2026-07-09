@@ -39,5 +39,5 @@ def test_operations_deployment_report_reads_render_auto_deploy_config():
     report = _render_deploy_config_report()
 
     assert report["auto_deploy_trigger"] == "commit"
-    assert report["auto_deploy_label"] == "On Commit"
+    assert report["auto_deploy_label"] == "커밋 시 자동 배포"
     assert report["auto_deploy_level"] == "ok"

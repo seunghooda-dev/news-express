@@ -1314,9 +1314,9 @@ def _render_deploy_config_report() -> dict[str, object]:
         }
 
     labels = {
-        "commit": "On Commit",
-        "checksPass": "Checks Pass",
-        "off": "Off",
+        "commit": "커밋 시 자동 배포",
+        "checksPass": "검사 통과 후 자동 배포",
+        "off": "자동 배포 꺼짐",
     }
     return {
         "auto_deploy_trigger": trigger,

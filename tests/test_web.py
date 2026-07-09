@@ -2324,7 +2324,7 @@ def test_operations_page_reuses_short_diagnostics_cache(monkeypatch):
             "latest_commit": "abc1234",
             "repo": "seunghooda-dev/news-express",
             "branch": "codex/news-express",
-            "auto_deploy_label": "On Commit",
+            "auto_deploy_label": "커밋 시 자동 배포",
             "auto_deploy_trigger": "commit",
             "auto_deploy_level": "ok",
         }
@@ -2423,7 +2423,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
             "latest_commit": "abc1234",
             "repo": "seunghooda-dev/news-express",
             "branch": "codex/news-express",
-            "auto_deploy_label": "On Commit",
+            "auto_deploy_label": "커밋 시 자동 배포",
             "auto_deploy_trigger": "commit",
             "auto_deploy_level": "ok",
         },
@@ -2444,7 +2444,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "테스트 기관 1건 · 외부 사이트 응답 지연" in html
     assert "배포 버전" in html
     assert "최신 배포" in html
-    assert "자동 배포 On Commit" in html
+    assert "자동 배포 커밋 시 자동 배포" in html
     assert "백업 자동 생성" in html
     assert "최근 7개 유지" in html
     assert "일일 운영 리포트" in html
@@ -2522,7 +2522,7 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
             "latest_commit": "abc1234",
             "repo": "seunghooda-dev/news-express",
             "branch": "codex/news-express",
-            "auto_deploy_label": "On Commit",
+            "auto_deploy_label": "커밋 시 자동 배포",
             "auto_deploy_trigger": "commit",
             "auto_deploy_level": "ok",
         },
@@ -2614,7 +2614,7 @@ def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
             "latest_commit": "abc1234",
             "repo": "seunghooda-dev/news-express",
             "branch": "codex/news-express",
-            "auto_deploy_label": "On Commit",
+            "auto_deploy_label": "커밋 시 자동 배포",
             "auto_deploy_trigger": "commit",
             "auto_deploy_level": "ok",
         },
@@ -2661,7 +2661,7 @@ def test_operations_page_prefetches_metadata_once(monkeypatch):
             "latest_commit": "abc1234",
             "repo": "seunghooda-dev/news-express",
             "branch": "codex/news-express",
-            "auto_deploy_label": "On Commit",
+            "auto_deploy_label": "커밋 시 자동 배포",
             "auto_deploy_trigger": "commit",
             "auto_deploy_level": "ok",
         },
