@@ -496,6 +496,13 @@ def create_app() -> Flask:
                         pending_queue,
                     )
                 )
+                context["operations_overview_items"] = _operations_overview_items(
+                    pending_queue,
+                    draft_failure_summary,
+                    context["draft_conversion_coverage_report"],
+                    context["date_issue_report"],
+                    context["operations_health"],
+                )
                 return render_template("operations.html", **context)
 
     @app.post("/operations/auto-collect")
@@ -2020,6 +2027,71 @@ def _operations_cached_report_bundle(
                 _operations_report_cache.clear()
             _operations_report_cache[cache_key] = (now, reports)
     return dict(reports)
+
+
+def _operations_overview_items(
+    pending_queue: dict[str, object],
+    draft_failure_summary: dict[str, object],
+    draft_conversion_coverage_report: dict[str, object],
+    date_issue_report: dict[str, object],
+    operations_health: dict[str, object],
+) -> list[dict[str, object]]:
+    total_pending = int(pending_queue.get("total") or 0)
+    today_pending = int(draft_conversion_coverage_report.get("today_pending") or 0)
+    retry_total = int(draft_failure_summary.get("total") or 0)
+    retry_due = int(draft_failure_summary.get("due") or 0)
+    issue_count = int(date_issue_report.get("issue_count") or 0)
+    priority_sources = len(operations_health.get("priority_sources") or [])
+    today_date = str(draft_conversion_coverage_report.get("date") or "").strip()
+    today_pending_href = (
+        url_for("press_releases", draft="missing", date=today_date)
+        if today_date
+        else url_for("press_releases", draft="missing")
+    )
+    retry_detail = "재처리 대기 없음"
+    if retry_total:
+        retry_detail = (
+            f"{draft_failure_summary.get('retry_due_label') or '자동 처리 대기'} {retry_due}건"
+            if retry_due
+            else "예약 재시도 확인"
+        )
+    return [
+        {
+            "label": "전체 미변환",
+            "value": f"{total_pending}건",
+            "detail": "전체 초안 대기 원문",
+            "href": url_for("press_releases", draft="missing"),
+            "tone": "warning" if total_pending else "ok",
+        },
+        {
+            "label": "오늘 미변환",
+            "value": f"{today_pending}건",
+            "detail": f"{today_date or '오늘'} 기준",
+            "href": today_pending_href,
+            "tone": "warning" if today_pending else "ok",
+        },
+        {
+            "label": "재처리 대기",
+            "value": f"{retry_total}건",
+            "detail": retry_detail,
+            "href": "#ops-gemini-retry-queue",
+            "tone": "warning" if retry_total else "ok",
+        },
+        {
+            "label": "게시일 확인",
+            "value": f"{issue_count}건",
+            "detail": "게시일 표기 재점검",
+            "href": url_for("press_releases", draft="date_issue"),
+            "tone": "warning" if issue_count else "ok",
+        },
+        {
+            "label": "반복 실패",
+            "value": f"{priority_sources}곳",
+            "detail": "우선 확인 기관",
+            "href": "#ops-priority-sources",
+            "tone": "warning" if priority_sources else "ok",
+        },
+    ]
 
 
 def _operations_report_cache_key(

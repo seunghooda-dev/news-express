@@ -11,6 +11,16 @@
   </div>
 </section>
 
+<section class="ops-overview" aria-label="운영 핵심 현황">
+  {% for item in operations_overview_items %}
+    <a class="ops-overview-link ops-overview-link-{{ item.tone }}" href="{{ item.href }}">
+      <span class="ops-overview-label">{{ item.label }}</span>
+      <b>{{ item.value }}</b>
+      <small>{{ item.detail }}</small>
+    </a>
+  {% endfor %}
+</section>
+
 <section class="ops-grid">
   <article class="ops-card" id="ops-service-status">
     <div class="ops-card-head">
@@ -235,7 +245,7 @@
     {% endif %}
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-priority-sources">
     <div class="ops-card-head">
       <h2>반복 실패 기관 우선순위</h2>
       <span class="badge {% if operations_health.priority_sources %}badge-warning{% else %}badge-gemini{% endif %}">
@@ -265,7 +275,7 @@
   <details class="ops-secondary-section">
     <summary class="ops-secondary-toggle">
       <span>참고 항목 펼치기</span>
-      <b>10개</b>
+      <b>16개</b>
     </summary>
     <div class="ops-grid ops-grid-secondary">
 

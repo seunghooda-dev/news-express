@@ -1366,6 +1366,68 @@ h3 {
   margin-bottom: 18px;
 }
 
+.ops-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.ops-overview-link {
+  display: grid;
+  gap: 5px;
+  min-height: 88px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #ffffff 0, #fbfdfd 100%);
+  color: var(--muted);
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+
+.ops-overview-link:hover,
+.ops-overview-link:focus-visible {
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.ops-overview-link b {
+  color: var(--accent-strong);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.ops-overview-label {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ops-overview-link small {
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ops-overview-link-warning {
+  border-color: #f2d2a8;
+  color: var(--warn);
+  background: linear-gradient(180deg, #fffdf8 0, #fff7ed 100%);
+}
+
+.ops-overview-link-warning b {
+  color: var(--warn);
+}
+
+.ops-overview-link-ok {
+  border-color: #cfe3de;
+  color: var(--accent-strong);
+  background: linear-gradient(180deg, #fbfefd 0, #f3fbf8 100%);
+}
+
 .ops-secondary-section {
   grid-column: 1 / -1;
   border: 1px solid var(--line);
@@ -2506,6 +2568,10 @@ h3 {
 
   .ops-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ops-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ops-secondary-toggle {

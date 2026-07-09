@@ -3340,6 +3340,125 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "최근 7개 유지" in html
 
 
+def test_operations_page_shows_actionable_overview_links(monkeypatch):
+    db_path = Path(f"data/.test_operations_overview_links_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module.Store,
+        "pending_press_release_summary",
+        lambda self, limit=5: {
+            "total": 7,
+            "by_date": [{"date": "2026-07-10", "count": 4}],
+            "by_source": [{"source_id": "gwangyang", "source_name": "광양시청 보도자료", "count": 4}],
+            "latest_published_at": "2026-07-10 15:00",
+            "oldest_published_at": "2026-07-09 08:00",
+        },
+    )
+    monkeypatch.setattr(
+        web_module.Store,
+        "draft_generation_failure_summary",
+        lambda self, limit=5: {
+            "total": 5,
+            "due": 3,
+            "next_retry_at": "2026-07-10T06:30:00+00:00",
+            "by_kind": [],
+            "latest": [],
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_draft_conversion_coverage_report",
+        lambda store: {
+            "status_level": "warning",
+            "status_label": "주의",
+            "message": "오늘 수집 원문 중 초안 미변환이 남아 있습니다.",
+            "date": "2026-07-10",
+            "today_releases": 12,
+            "today_drafted": 8,
+            "drafted_percent": 67,
+            "today_pending": 4,
+            "retry_ready_pending": 3,
+            "retry_scheduled_pending": 1,
+            "retry_ready_label": "자동 처리 대기",
+            "effective_next_retry_at": "2026-07-10T15:30:00+09:00",
+            "next_retry_at": "2026-07-10T15:30:00+09:00",
+            "latest_pending_at": "2026-07-10 15:00",
+            "oldest_pending_at": "2026-07-09 08:00",
+            "pending_sources": [],
+            "pending_source_total": 0,
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_date_issue_report",
+        lambda store: {
+            "status_label": "확인 필요",
+            "status_level": "warning",
+            "issue_count": 2,
+            "by_source": [],
+            "samples": [],
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_operations_health_report",
+        lambda store, auto_status, pending_queue: {
+            "status_label": "주의",
+            "status_level": "warning",
+            "failure_count": 4,
+            "retry_success_count": 1,
+            "unresolved_count": 2,
+            "last_auto_finished_at": "2026-07-10T14:00:00+09:00",
+            "top_failure_stages": [],
+            "top_failure_sources": [],
+            "issues": [],
+            "priority_sources": [
+                {
+                    "source_id": "gangjin",
+                    "source_name": "강진군청 보도자료",
+                    "priority_label": "우선 확인",
+                    "consecutive_failures": 4,
+                    "failure_stage": "외부 사이트 응답 지연",
+                    "failure_reason": "TLS 연결 시간 초과",
+                    "checked_at": "2026-07-10T14:05:00+09:00",
+                    "level": "error",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_operations_service_status_report",
+        lambda store, config_path, auto_status, reports: {
+            "status_level": "warning",
+            "status_label": "주의",
+            "message": "즉시 확인이 필요한 운영 항목이 있습니다.",
+            "issues": [],
+        },
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "운영 핵심 현황" in html
+    assert "전체 미변환" in html
+    assert "7건" in html
+    assert 'href="/press-releases?draft=missing"' in html
+    assert "오늘 미변환" in html
+    assert 'href="/press-releases?draft=missing&amp;date=2026-07-10"' in html
+    assert "재처리 대기" in html
+    assert 'href="#ops-gemini-retry-queue"' in html
+    assert "자동 처리 대기 3건" in html
+    assert "게시일 확인" in html
+    assert 'href="/press-releases?draft=date_issue"' in html
+    assert "반복 실패" in html
+    assert 'href="#ops-priority-sources"' in html
+
+
 def test_operations_page_collapses_secondary_reference_cards_by_default(monkeypatch):
     db_path = Path(f"data/.test_operations_secondary_section_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -3353,7 +3472,7 @@ def test_operations_page_collapses_secondary_reference_cards_by_default(monkeypa
     assert '<details class="ops-secondary-section">' in html
     assert '<details class="ops-secondary-section" open' not in html
     assert "참고 항목 펼치기" in html
-    assert "10개" in html
+    assert "16개" in html
     assert "일일 운영 리포트" in html
     assert "운영 요약" in html
     assert "서버 상태 점검" in html
