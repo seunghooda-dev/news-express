@@ -38,6 +38,30 @@
     {% endif %}
   </article>
 
+  <article class="ops-card" id="ops-log-summary">
+    <div class="ops-card-head">
+      <h2>최근 운영 로그</h2>
+      <span class="badge {% if operations_log_report.status_level == 'ok' %}badge-gemini{% elif operations_log_report.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ operations_log_report.status_label }}
+      </span>
+    </div>
+    <p class="meta">{{ operations_log_report.message }}</p>
+    <p class="meta">
+      최근 {{ operations_log_report.total_lines }}줄 기준
+      {% if operations_log_report.updated_at %}· 마지막 갱신 {{ operations_log_report.updated_at|date_label }}{% endif %}
+    </p>
+    {% if operations_log_report.entries %}
+      <ul class="ops-mini-list">
+        {% for item in operations_log_report.entries %}
+          <li>
+            <span class="badge {% if item.status_level == 'warning' %}badge-warning{% elif item.status_level == 'ok' %}badge-gemini{% else %}badge-neutral{% endif %}">{{ item.label }} {{ item.count }}줄</span>
+            <a href="{{ url_for('ops_logs', tab=item.id) }}">{{ item.latest_excerpt }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </article>
+
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>운영 변경 잠금</h2>

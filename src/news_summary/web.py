@@ -467,6 +467,7 @@ def create_app() -> Flask:
                 admin_password_configured = bool(admin_password_source)
                 pending_queue = store.pending_press_release_summary()
                 draft_failure_summary = _draft_failure_display_summary(store, store.draft_generation_failure_summary())
+                log_path = Path(app.config["NEWS_SUMMARY_LOG_PATH"])
                 context = {
                     "auto_collector_status": auto_status,
                     "pending_queue": pending_queue,
@@ -475,7 +476,7 @@ def create_app() -> Flask:
                     "backup_dir": backup_dir,
                     "backup_files": _backup_files(backup_dir),
                     "db_path": store.display_location,
-                    "log_path": Path(app.config["NEWS_SUMMARY_LOG_PATH"]),
+                    "log_path": log_path,
                     "admin_password_source": admin_password_source,
                     "admin_password_configured": admin_password_configured,
                     "admin_password_unlocked": bool(
@@ -485,7 +486,16 @@ def create_app() -> Flask:
                     "operations_write_expires_at": _operations_write_access_expires_at(),
                     "operations_write_unlock_minutes": _operations_write_unlock_minutes(),
                 }
-                context.update(_operations_cached_report_bundle(store, config_path, backup_dir, auto_status, pending_queue))
+                context.update(
+                    _operations_cached_report_bundle(
+                        store,
+                        config_path,
+                        backup_dir,
+                        log_path,
+                        auto_status,
+                        pending_queue,
+                    )
+                )
                 return render_template("operations.html", **context)
 
     @app.post("/operations/auto-collect")
@@ -1911,11 +1921,12 @@ def _operations_cached_report_bundle(
     store: Store,
     config_path: Path,
     backup_dir: Path,
+    log_path: Path,
     auto_status: object | None,
     pending_queue: dict[str, object],
 ) -> dict[str, object]:
     ttl_seconds = _operations_report_cache_seconds()
-    cache_key = _operations_report_cache_key(store, config_path, backup_dir, auto_status, pending_queue)
+    cache_key = _operations_report_cache_key(store, config_path, backup_dir, log_path, auto_status, pending_queue)
     now = time.monotonic()
     if ttl_seconds > 0:
         with _operations_report_cache_lock:
@@ -1944,6 +1955,7 @@ def _operations_cached_report_bundle(
         "backup_verify_report": _backup_verify_report(store, backup_dir),
         "automation_settings": _automation_settings_report(),
         "cloudflare_tunnel": _cloudflare_quick_tunnel_status(),
+        "operations_log_report": _operations_log_summary_report(log_path),
     }
     reports["service_status_report"] = _operations_service_status_report(store, config_path, auto_status, reports)
     if ttl_seconds > 0:
@@ -1958,6 +1970,7 @@ def _operations_report_cache_key(
     store: Store,
     config_path: Path,
     backup_dir: Path,
+    log_path: Path,
     auto_status: object | None,
     pending_queue: dict[str, object],
 ) -> tuple[str, ...]:
@@ -1965,6 +1978,8 @@ def _operations_report_cache_key(
         store.display_location,
         str(config_path),
         str(backup_dir),
+        str(log_path),
+        *_log_file_signature(log_path),
         str(_auto_status_value(auto_status, "enabled")),
         str(_auto_status_value(auto_status, "running")),
         str(_auto_status_value(auto_status, "last_auto_finished_at")),
@@ -5377,6 +5392,26 @@ def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
         return ["운영 로그 파일을 읽을 수 없습니다."]
 
 
+def _log_file_signature(log_path: Path) -> tuple[str, ...]:
+    try:
+        stat = log_path.stat()
+    except OSError:
+        return ("missing",)
+    return (
+        "present",
+        str(stat.st_size),
+        str(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+    )
+
+
+def _log_line_excerpt(line: str, max_length: int = 140) -> str:
+    text = " ".join(str(line or "").split())
+    text = _gemini_public_status_text(text)
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 1].rstrip()}…"
+
+
 def _filter_log_lines(lines: list[str], query: str) -> list[str]:
     needle = " ".join((query or "").split()).strip()
     if not needle:
@@ -5416,6 +5451,54 @@ def _ops_log_tabs(lines: list[str]) -> list[dict[str, object]]:
         matched = [line for line in lines if matcher(line)][-80:]
         tabs.append({"id": tab_id, "label": label, "count": len(matched), "lines": matched})
     return tabs
+
+
+def _operations_log_summary_report(log_path: Path) -> dict[str, object]:
+    lines = _recent_log_lines(log_path, limit=250)
+    log_tabs = _ops_log_tabs(lines)
+    summary_items = []
+    error_count = 0
+    for tab in log_tabs:
+        if tab["id"] == "all":
+            continue
+        matched_lines = list(tab["lines"])
+        count = int(tab["count"])
+        latest_line = matched_lines[-1] if matched_lines else ""
+        if tab["id"] == "errors":
+            error_count = count
+        summary_items.append(
+            {
+                "id": tab["id"],
+                "label": str(tab["label"]),
+                "count": count,
+                "status_level": "warning" if tab["id"] == "errors" and count else ("ok" if count else "neutral"),
+                "latest_excerpt": _log_line_excerpt(latest_line) if latest_line else "최근 기록이 없습니다.",
+            }
+        )
+    try:
+        updated_at = datetime.fromtimestamp(log_path.stat().st_mtime, tz=LOCAL_TZ).isoformat()
+    except OSError:
+        updated_at = None
+    if not lines:
+        status_level = "neutral"
+        status_label = "로그 없음"
+        message = "최근 운영 로그를 아직 찾지 못했습니다."
+    elif error_count:
+        status_level = "warning"
+        status_label = "확인 필요"
+        message = f"최근 운영 로그 {len(lines)}줄 중 오류/경고 {error_count}줄을 확인했습니다."
+    else:
+        status_level = "ok"
+        status_label = "정상"
+        message = f"최근 운영 로그 {len(lines)}줄을 기준으로 요약했습니다."
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "message": message,
+        "updated_at": updated_at,
+        "total_lines": len(lines),
+        "entries": summary_items,
+    }
 
 
 def _sort_drafts_latest_first(drafts):

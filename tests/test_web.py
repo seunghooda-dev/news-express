@@ -2718,6 +2718,35 @@ def test_ops_logs_page_filters_by_query_and_preserves_tab(monkeypatch, tmp_path)
     assert "검색 1줄 / 전체 2줄" in html
 
 
+def test_operations_page_shows_recent_log_summary(monkeypatch, tmp_path):
+    db_path = Path(f"data/.test_operations_log_summary_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_LOG_DIR", str(tmp_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    log_path = tmp_path / "news_summary.log"
+    log_path.write_text(
+        "2026-07-10 INFO [news_summary.scheduler] auto collector waiting\n"
+        "2026-07-10 INFO [news_summary.writer] Gemini 초안 생성 완료\n"
+        "2026-07-10 WARNING [news_summary.web] slow web request path=/drafts\n",
+        encoding="utf-8",
+    )
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "최근 운영 로그" in html
+    assert "최근 운영 로그 3줄 중 오류/경고 1줄을 확인했습니다." in html
+    assert "최근 3줄 기준" in html
+    assert 'href="/ops-logs?tab=errors"' in html
+    assert 'href="/ops-logs?tab=gemini"' in html
+    assert 'href="/ops-logs?tab=collector"' in html
+    assert "slow web request path=/drafts" in html
+    assert "Gemini 초안 생성 완료" in html
+    assert "auto collector waiting" in html
+
+
 def test_operations_page_toggles_auto_collection(monkeypatch):
     db_path = Path(f"data/.test_operations_auto_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
