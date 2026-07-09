@@ -39,6 +39,7 @@ from .scheduler import (
     _auto_queue_drain_ready_recheck_seconds,
     _source_recovery_candidates,
 )
+from .models import Source
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
     business_days_between,
@@ -946,6 +947,7 @@ def create_app() -> Flask:
             source=source,
             summary=summary,
             source_detail_metrics=source_detail_metrics,
+            source_route_summary=_source_route_summary(store, source),
             source_collection_history=source_collection_history,
             source_failure_summary=source_failure_summary,
             recent_releases=[_press_release_listing_item(row) for row in store.press_releases_by_source(source_id, limit=20)],
@@ -5443,6 +5445,57 @@ def _source_detail_metrics(store: Store, source_id: str) -> dict[str, int]:
         "missing_drafts": int(pending_row["count"] or 0) if pending_row else 0,
         "date_issues": sum(1 for row in published_rows if _press_release_date_warning(row)),
         "assets": int(asset_row["count"] or 0) if asset_row else 0,
+    }
+
+
+def _source_route_summary(store: Store, source: Source) -> dict[str, object]:
+    configured_urls: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for label, raw_url in (
+        ("목록 주소", source.list_url),
+        ("기본 사이트", source.base_url),
+        ("피드 주소", source.feed_url),
+    ):
+        url = str(raw_url or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        configured_urls.append({"label": label, "url": url})
+
+    fallback_urls: list[str] = []
+    for raw_url in source.fallback_urls:
+        url = str(raw_url or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        fallback_urls.append(url)
+
+    discovery = _source_url_discovery_summary(store, source.id)
+    return {
+        "configured_urls": configured_urls,
+        "fallback_urls": fallback_urls,
+        "discovered_urls": discovery["urls"],
+        "discovered_at": discovery["updated_at"],
+    }
+
+
+def _source_url_discovery_summary(store: Store, source_id: str) -> dict[str, object]:
+    report = _url_discovery_report(store)
+    for item in report.get("discoveries") or []:
+        if str(item.get("source_id") or "") != source_id:
+            continue
+        urls = [
+            str(url).strip()
+            for url in item.get("urls") or []
+            if str(url).strip()
+        ]
+        return {
+            "updated_at": report.get("updated_at"),
+            "urls": urls,
+        }
+    return {
+        "updated_at": report.get("updated_at"),
+        "urls": [],
     }
 
 

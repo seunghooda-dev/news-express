@@ -2970,6 +2970,93 @@ def test_source_detail_shows_failure_summary(monkeypatch):
     assert "마지막 정상 수집" in html
 
 
+def test_source_detail_shows_route_diagnostics(monkeypatch):
+    db_path = Path(f"data/.test_source_detail_routes_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata(
+        "auto_url_discovery_snapshot",
+        json.dumps(
+            {
+                "updated_at": "2026-07-10T14:30:00+09:00",
+                "discoveries": [
+                    {
+                        "source_id": "route-source",
+                        "source_name": "전남광주통합특별시 테스트군청 보도자료",
+                        "urls": [
+                            "https://example.com/discovered/press",
+                            "https://example.com/discovered/news",
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    from news_summary import web as web_module
+
+    source = Source(
+        id="route-source",
+        name="전남광주통합특별시 테스트군청 보도자료",
+        region="전남 테스트",
+        type="html",
+        list_url="https://example.com/list",
+        feed_url="https://example.com/feed.xml",
+        base_url="https://example.com/",
+        fallback_urls=[
+            "https://example.com/fallback/press",
+            "https://example.com/fallback/news",
+        ],
+    )
+    monkeypatch.setattr(web_module, "_source_by_id", lambda config_path, source_id: source if source_id == "route-source" else None)
+    monkeypatch.setattr(
+        web_module,
+        "_source_summary_by_id",
+        lambda store, config_path, source_id: {
+            "id": "route-source",
+            "name": source.name,
+            "region": source.region,
+            "releases": 0,
+            "yesterday_releases": 0,
+            "today_releases": 0,
+            "last_collected": None,
+            "issue": "",
+            "status_label": "점검 전",
+            "status_level": "warning",
+            "status_detail": "기관 설정은 있지만 아직 수집 점검 기록이 없습니다.",
+            "business_gap": None,
+            "consecutive_failures": 0,
+            "last_status": "unknown",
+            "last_checked_at": None,
+            "last_message": "",
+            "failure_stage": "",
+            "failure_reason": "",
+        },
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/sources/route-source").data.decode("utf-8")
+
+    assert "수집 경로 점검" in html
+    assert "목록 주소" in html
+    assert "기본 사이트" in html
+    assert "피드 주소" in html
+    assert "대체 경로:" in html
+    assert "자동 탐색 후보 2개" in html
+    assert "https://example.com/list" in html
+    assert "https://example.com/feed.xml" in html
+    assert "https://example.com/fallback/press" in html
+    assert "https://example.com/discovered/press" in html
+    assert "테스트군청 보도자료" in html
+
+
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     db_path = Path(f"data/.test_recrawl_route_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

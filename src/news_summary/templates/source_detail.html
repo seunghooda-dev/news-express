@@ -101,6 +101,43 @@
   </section>
 {% endif %}
 
+<section class="source-health">
+  <h2>수집 경로 점검</h2>
+  {% if source_route_summary.configured_urls %}
+    <p class="gemini-models">
+      기본 경로:
+      {% for item in source_route_summary.configured_urls %}
+        <span>{{ item.label }} · <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.url }}</a></span>
+      {% endfor %}
+    </p>
+  {% else %}
+    <p class="meta">현재 등록된 기본 수집 경로가 없습니다.</p>
+  {% endif %}
+  {% if source_route_summary.fallback_urls %}
+    <p class="gemini-models">
+      대체 경로:
+      {% for url in source_route_summary.fallback_urls %}
+        <span><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></span>
+      {% endfor %}
+    </p>
+  {% else %}
+    <p class="meta">등록된 대체 URL이 없습니다.</p>
+  {% endif %}
+  {% if source_route_summary.discovered_urls %}
+    <p class="meta">자동 탐색 후보 {{ source_route_summary.discovered_urls|length }}개 · 최근 탐색 {{ source_route_summary.discovered_at|date_label }}</p>
+    <p class="gemini-models">
+      후보 URL:
+      {% for url in source_route_summary.discovered_urls %}
+        <span><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></span>
+      {% endfor %}
+    </p>
+  {% elif source_route_summary.discovered_at %}
+    <p class="meta">최근 자동 탐색에서는 새 후보 URL이 없었습니다. 마지막 탐색 {{ source_route_summary.discovered_at|date_label }}</p>
+  {% else %}
+    <p class="meta">자동 탐색 후보 URL 기록이 아직 없습니다.</p>
+  {% endif %}
+</section>
+
 {% if recent_assets %}
   <section class="asset-panel source-asset-panel" id="source-assets">
     <div class="section-head compact">
