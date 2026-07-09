@@ -115,13 +115,15 @@
           </span>
           <span class="draft-row-content">
             <strong>{{ draft.title }}</strong>
-            <span class="row-meta">
+            <span class="row-meta row-meta-main">
               <span>{{ source_display_label(draft.source_name) }}</span>
+              <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+            </span>
+            <span class="row-meta row-meta-secondary">
               <span>초안 {{ draft.created_at|date_label }}</span>
               {% if draft.published_at %}
                 <span>게시 {{ draft.published_at|date_label }}</span>
               {% endif %}
-              <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
               {% for flag in review_flags(draft, duplicate_titles)[:3] %}
                 <span class="badge badge-warning">{{ flag }}</span>
               {% endfor %}
@@ -147,20 +149,27 @@
     <div class="list">
       {% for item in recent_releases[:10] %}
         <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ public_press_release_url(item.url) }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
-          <strong>{{ item.title }}</strong>
-          <span class="row-meta">
-            <span>{{ source_display_label(item.source_name) }}</span>
-            {% if item.published_at %}
-              <span>게시 {{ item.published_at|date_label }}</span>
-            {% else %}
-              <span>수집 {{ item.collected_at|date_label }}</span>
-            {% endif %}
-            {% if item.draft_id %}
-              <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
-              <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
-            {% else %}
-              <span class="badge badge-neutral">초안 없음</span>
-            {% endif %}
+          <span class="row-content">
+            <strong>{{ item.title }}</strong>
+            <span class="row-meta row-meta-main">
+              <span>{{ source_display_label(item.source_name) }}</span>
+              {% if item.draft_id %}
+                <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
+                <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
+              {% else %}
+                <span class="badge badge-neutral">초안 없음</span>
+              {% endif %}
+            </span>
+            <span class="row-meta row-meta-secondary">
+              {% if item.published_at %}
+                <span>게시 {{ item.published_at|date_label }}</span>
+              {% else %}
+                <span>수집 {{ item.collected_at|date_label }}</span>
+              {% endif %}
+              {% if item.asset_count %}
+                <span class="badge badge-neutral">첨부 {{ item.asset_count }}개</span>
+              {% endif %}
+            </span>
           </span>
         </a>
       {% else %}

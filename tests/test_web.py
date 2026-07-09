@@ -876,6 +876,7 @@ def test_drafts_page_filters_assets_and_models(monkeypatch):
             url="https://example.com/drafts-lite-image",
             content="사진이 포함된 Lite 초안 원문입니다.",
             published_at="2026-07-10",
+            validation_note="제목 핵심어 0개",
             assets=[
                 PressReleaseAsset(
                     url="https://example.com/drafts-lite-image.jpg",
@@ -946,6 +947,8 @@ def test_drafts_page_filters_assets_and_models(monkeypatch):
     assert "사진 있는 Flash 초안" not in combined_page
     assert "이미지 없는 Lite 초안" not in combined_page
     assert 'href="/drafts?status=needs_review"' in combined_page
+    assert 'class="row-meta row-meta-main"' in combined_page
+    assert 'class="row-meta row-meta-secondary"' in combined_page
 
 
 def test_drafts_page_shows_active_filter_chips(monkeypatch):
@@ -1211,6 +1214,58 @@ def test_press_releases_page_filters_models(monkeypatch):
     assert "Flash 원문" in flash_page
     assert "Lite 원문" not in flash_page
     assert "초안 없는 원문" not in flash_page
+    assert 'class="row-content"' in flash_page
+    assert 'class="row-meta row-meta-main"' in flash_page
+
+
+def test_dashboard_preview_rows_split_primary_and_secondary_meta(monkeypatch):
+    db_path = Path(f"data/.test_dashboard_preview_row_meta_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="대시보드 미리보기 테스트 원문",
+            url="https://example.com/dashboard-preview-meta",
+            content="대시보드 메타 정보 테스트입니다.",
+            published_at="2026-07-10",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/dashboard-preview.jpg",
+                    title="대시보드 사진",
+                    filename="dashboard-preview.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="대시보드 미리보기 테스트 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/").data.decode("utf-8")
+
+    assert 'class="row draft-row"' in html
+    assert 'class="row-content"' in html
+    assert html.count('class="row-meta row-meta-main"') >= 2
+    assert html.count('class="row-meta row-meta-secondary"') >= 2
 
 
 def test_press_releases_page_shows_active_filter_chips(monkeypatch):

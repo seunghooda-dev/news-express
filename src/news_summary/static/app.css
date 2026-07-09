@@ -538,8 +538,10 @@ h3 {
   display: none;
 }
 
-.draft-row-content {
-  display: block;
+.draft-row-content,
+.row-content {
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -568,6 +570,18 @@ h3 {
 .row-meta {
   color: var(--muted);
   font-size: 13px;
+}
+
+.row-meta-main {
+  margin-bottom: 2px;
+}
+
+.row-meta-secondary {
+  gap: 5px 8px;
+}
+
+.row-meta-secondary .badge-warning {
+  order: 10;
 }
 
 .badge {
@@ -2314,6 +2328,14 @@ h3 {
   .row-meta {
     font-size: 12px;
     line-height: 1.35;
+  }
+
+  .row-meta-main {
+    margin-bottom: 1px;
+  }
+
+  .row-meta-secondary {
+    gap: 4px 5px;
   }
 
   .row-meta .badge {
