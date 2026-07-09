@@ -3447,6 +3447,7 @@ def test_healthz_reports_draft_conversion_coverage(monkeypatch):
     assert payload["draft_conversion_retry_ready_pending"] == 1
     assert payload["draft_conversion_retry_scheduled_pending"] == 0
     assert payload["draft_conversion_next_retry_at"] is None
+    assert payload["draft_conversion_effective_next_retry_at"] is None
     assert payload["draft_conversion_drafted_percent"] == 50
     assert payload["draft_conversion_pending_sources"] == [
         {"source_name": "순천시청 보도자료", "count": 1}
@@ -4238,10 +4239,59 @@ def test_draft_conversion_coverage_report_splits_ready_and_scheduled_pending(mon
     assert report["today_releases"] == 2
     assert report["today_pending"] == 2
     assert report["retry_ready_pending"] == 1
+    assert report["retry_ready_label"] == "즉시 처리 가능"
     assert report["retry_scheduled_pending"] == 1
     assert report["next_retry_at"] == "2026-07-06T06:30:00+00:00"
-    assert "즉시 재시도 가능 1건" in report["message"]
+    assert report["effective_next_retry_at"] == "2026-07-06T06:30:00+00:00"
+    assert "즉시 처리 가능 1건" in report["message"]
     assert "예약 대기 1건" in report["message"]
+
+
+def test_draft_conversion_coverage_report_uses_effective_retry_time_during_gemini_wait(monkeypatch):
+    db_path = Path(f"data/.test_draft_conversion_effective_retry_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 14, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    scheduled_id = store.add_press_release(
+        PressRelease(
+            source_id="scheduled",
+            source_name="예약 기관 보도자료",
+            region="전남",
+            title="예약 대기 원문",
+            url="https://example.com/effective-scheduled-draft",
+            content="재개 시각 기준 메시지 점검용 원문입니다.",
+            published_at="2026-07-06 11:00",
+        )
+    )
+    assert scheduled_id is not None
+    store.record_draft_generation_failure(
+        scheduled_id,
+        "quota",
+        "예약 대기 테스트",
+        "gemini-3.5-flash",
+        "2026-07-06T06:30:00+00:00",
+    )
+    monkeypatch.setattr(
+        web_module,
+        "gemini_cooldown_until",
+        lambda store: datetime(2026, 7, 6, 7, 0, tzinfo=timezone.utc),
+    )
+
+    report = _draft_conversion_coverage_report(store)
+
+    assert report["next_retry_at"] == "2026-07-06T06:30:00+00:00"
+    assert report["effective_next_retry_at"] == "2026-07-06T07:00:00+00:00"
+    assert "다음 처리 가능 시각은 2026.07.06 16:00" in report["message"]
+    assert "초안 생성 재개 예정" not in report["message"]
 
 
 def test_draft_conversion_coverage_report_marks_complete_when_all_today_releases_have_drafts(monkeypatch):
@@ -4324,7 +4374,7 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
     assert "오늘 초안 변환 커버리지" in html
     assert "3/4" in html
     assert "변환율 75%" in html
-    assert "즉시 재시도 1건" in html
+    assert "즉시 처리 가능 1건" in html
     assert "예약 대기 0건" in html
     assert "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다." in html
     assert "순천시청 보도자료 1건" in html

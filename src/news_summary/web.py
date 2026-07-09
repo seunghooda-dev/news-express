@@ -2103,6 +2103,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
             "retry_ready_pending": 0,
             "retry_scheduled_pending": 0,
             "next_retry_at": None,
+            "effective_next_retry_at": None,
             "drafted_percent": 0,
             "pending_sources": [],
             "latest_pending_at": None,
@@ -2116,6 +2117,9 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     retry_ready_pending = int(pending_retry["ready_count"] or 0) if pending_retry else 0
     retry_scheduled_pending = int(pending_retry["scheduled_count"] or 0) if pending_retry else 0
     next_retry_at = str(pending_retry["next_retry_at"] or "") if pending_retry else ""
+    cooldown_until = gemini_cooldown_until(store)
+    effective_next_retry_at = _effective_next_draft_retry_at(next_retry_at, cooldown_until) if today_pending > 0 else ""
+    retry_ready_label = "처리 가능 대기" if cooldown_until else "즉시 처리 가능"
     drafted_percent = round((today_drafted / today_releases) * 100) if today_releases else 0
     pending_sources = [
         {"source_name": str(row["source_name"]), "count": int(row["count"])}
@@ -2132,18 +2136,17 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         message = f"오늘 수집 원문 중 초안 미변환 {today_pending}건이 남아 있습니다."
         if retry_ready_pending and retry_scheduled_pending:
             message = (
-                f"{message} 즉시 재시도 가능 {retry_ready_pending}건, "
+                f"{message} {retry_ready_label} {retry_ready_pending}건, "
                 f"예약 대기 {retry_scheduled_pending}건입니다."
             )
         elif retry_ready_pending:
-            message = f"{message} 즉시 재시도 가능 {retry_ready_pending}건입니다."
+            message = f"{message} {retry_ready_label} {retry_ready_pending}건입니다."
         elif retry_scheduled_pending:
-            next_retry_label = format_datetime_label(next_retry_at) if next_retry_at else "시각 확인 중"
-            message = f"{message} 예약 대기 {retry_scheduled_pending}건이며 다음 재시도는 {next_retry_label}입니다."
-        cooldown_until = gemini_cooldown_until(store)
-        if cooldown_until:
+            next_retry_label = format_datetime_label(effective_next_retry_at or next_retry_at) if (effective_next_retry_at or next_retry_at) else "시각 확인 중"
+            message = f"{message} 예약 대기 {retry_scheduled_pending}건이며 다음 처리 가능 시각은 {next_retry_label}입니다."
+        if cooldown_until and not (retry_scheduled_pending and not retry_ready_pending):
             cooldown_label = format_datetime_label(cooldown_until.astimezone(LOCAL_TZ).isoformat())
-            message = f"{message} 초안 생성 재개 예정은 {cooldown_label}입니다."
+            message = f"{message} 실제 다음 처리 가능 시각은 {cooldown_label}입니다."
     else:
         status_level = "ok"
         status_label = "정상"
@@ -2162,8 +2165,10 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         "today_drafted": today_drafted,
         "today_pending": today_pending,
         "retry_ready_pending": retry_ready_pending,
+        "retry_ready_label": retry_ready_label,
         "retry_scheduled_pending": retry_scheduled_pending,
         "next_retry_at": next_retry_at or None,
+        "effective_next_retry_at": effective_next_retry_at or None,
         "drafted_percent": drafted_percent,
         "pending_sources": pending_sources,
         "latest_pending_at": pending_time(latest_pending),
@@ -2185,6 +2190,7 @@ def _draft_conversion_coverage_health_payload(store: Store) -> dict[str, object]
         "draft_conversion_retry_ready_pending": int(report.get("retry_ready_pending") or 0),
         "draft_conversion_retry_scheduled_pending": int(report.get("retry_scheduled_pending") or 0),
         "draft_conversion_next_retry_at": report.get("next_retry_at"),
+        "draft_conversion_effective_next_retry_at": report.get("effective_next_retry_at"),
         "draft_conversion_drafted_percent": int(report.get("drafted_percent") or 0),
         "draft_conversion_latest_pending_at": report.get("latest_pending_at"),
         "draft_conversion_oldest_pending_at": report.get("oldest_pending_at"),
@@ -2460,6 +2466,16 @@ def _queue_drain_next_run_at(
     if next_run_at < now_utc:
         next_run_at = now_utc
     return next_run_at.isoformat()
+
+
+def _effective_next_draft_retry_at(next_retry_at: object, cooldown_until: datetime | None = None) -> str | None:
+    next_retry = _parse_datetime(next_retry_at)
+    effective = next_retry.astimezone(timezone.utc) if next_retry else None
+    if cooldown_until:
+        cooldown_utc = cooldown_until.astimezone(timezone.utc)
+        if effective is None or effective < cooldown_utc:
+            effective = cooldown_utc
+    return effective.isoformat() if effective else None
 
 
 def _draft_retry_due_count(store: Store) -> int:
