@@ -3488,6 +3488,7 @@ def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
             "latest_failure_stage": "본문 파싱 실패",
         }
     ]
+    assert payload["source_collection_recovered_recent_sources"] == []
     assert payload["source_collection_failure_stages"] == [
         {"stage": "본문 파싱 실패", "count": 3}
     ]
@@ -3551,6 +3552,15 @@ def test_healthz_treats_recent_collection_failures_recovered_by_latest_ok_as_ok(
     assert payload["source_collection_recovered_recent_failure_count"] == 2
     assert payload["source_collection_unresolved_count"] == 0
     assert payload["source_collection_temporary_count"] == 0
+    assert payload["source_collection_recent_failed_sources"] == []
+    assert payload["source_collection_recovered_recent_sources"] == [
+        {
+            "source_id": "sample-source",
+            "source_name": "테스트 기관 보도자료",
+            "failure_count": 2,
+            "latest_failure_stage": "외부 사이트 응답 지연",
+        }
+    ]
     assert payload["source_collection_message"] == "최근 실패 2건은 최신 점검에서 복구됐습니다."
 
 

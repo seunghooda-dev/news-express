@@ -2892,6 +2892,7 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
             "source_collection_unresolved_count": None,
             "source_collection_temporary_count": None,
             "source_collection_recent_failed_sources": [],
+            "source_collection_recovered_recent_sources": [],
             "source_collection_failure_stages": [],
             "source_collection_unresolved_sources": [],
             "source_collection_message": f"수집 상태 확인 실패: {type(exc).__name__}",
@@ -2904,7 +2905,15 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
         for row in failure_rows
         if latest_status_by_source.get(str(row["source_id"])) == "ok"
     ]
-    failure_source_counts: Counter[str] = Counter(str(row["source_id"]) for row in failure_rows)
+    active_failure_source_counts: Counter[str] = Counter(
+        str(row["source_id"])
+        for row in failure_rows
+        if latest_status_by_source.get(str(row["source_id"])) == "failed"
+    )
+    recovered_source_counts: Counter[str] = Counter(
+        str(row["source_id"])
+        for row in recovered_failure_rows
+    )
     source_latest_failure = {}
     for row in failure_rows:
         source_id = str(row["source_id"])
@@ -2956,7 +2965,17 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
                 "failure_count": count,
                 "latest_failure_stage": str(source_latest_failure[source_id]["failure_stage"] or "수집 실패"),
             }
-            for source_id, count in failure_source_counts.most_common(5)
+            for source_id, count in active_failure_source_counts.most_common(5)
+            if source_id in source_latest_failure
+        ],
+        "source_collection_recovered_recent_sources": [
+            {
+                "source_id": source_id,
+                "source_name": source_display_label(str(source_latest_failure[source_id]["source_name"])),
+                "failure_count": count,
+                "latest_failure_stage": str(source_latest_failure[source_id]["failure_stage"] or "수집 실패"),
+            }
+            for source_id, count in recovered_source_counts.most_common(5)
             if source_id in source_latest_failure
         ],
         "source_collection_failure_stages": [
