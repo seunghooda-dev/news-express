@@ -2119,6 +2119,16 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
             ).fetchone()
             pending_retry = conn.execute(
                 f"""
+                WITH latest_failure AS (
+                    SELECT dgf.*
+                    FROM draft_generation_failures dgf
+                    JOIN (
+                        SELECT press_release_id, MAX(id) AS max_id
+                        FROM draft_generation_failures
+                        WHERE resolved_at IS NULL
+                        GROUP BY press_release_id
+                    ) latest ON latest.max_id = dgf.id
+                )
                 SELECT
                     SUM(
                         CASE
@@ -2145,9 +2155,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
                     ) AS next_retry_at
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
-                LEFT JOIN draft_generation_failures dgf
-                  ON dgf.press_release_id = pr.id
-                 AND dgf.resolved_at IS NULL
+                LEFT JOIN latest_failure dgf ON dgf.press_release_id = pr.id
                 WHERE {date_expr} = ?
                 """,
                 (now_utc, now_utc, now_utc, today),

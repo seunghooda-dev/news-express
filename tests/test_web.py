@@ -4398,6 +4398,65 @@ def test_draft_conversion_coverage_report_splits_ready_and_scheduled_pending(mon
     assert "예약 대기 1건" in report["message"]
 
 
+def test_draft_conversion_coverage_report_uses_latest_unresolved_failure_per_release(monkeypatch):
+    db_path = Path(f"data/.test_draft_conversion_latest_failure_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 14, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="retry",
+            source_name="재처리 기관 보도자료",
+            region="전남",
+            title="중복 실패 기록 원문",
+            url="https://example.com/latest-failure-draft-coverage",
+            content="오늘 초안 변환 현황에서 중복 실패 기록이 한 번만 집계되어야 합니다.",
+            published_at="2026-07-06 11:00",
+        )
+    )
+    assert release_id is not None
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'generation_error', '이전 실패', 'gemini-3.5-flash', 1,
+                    '2026-07-06T04:00:00+00:00', '2026-07-06T04:00:00+00:00',
+                    '2026-07-06T04:30:00+00:00', NULL)
+            """,
+            (release_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'quota', '최신 실패', 'gemini-3.5-flash', 2,
+                    '2026-07-06T04:00:00+00:00', '2026-07-06T05:00:00+00:00',
+                    '2026-07-06T06:30:00+00:00', NULL)
+            """,
+            (release_id,),
+        )
+
+    report = _draft_conversion_coverage_report(store)
+
+    assert report["today_pending"] == 1
+    assert report["retry_ready_pending"] == 0
+    assert report["retry_scheduled_pending"] == 1
+    assert report["next_retry_at"] == "2026-07-06T06:30:00+00:00"
+    assert "예약 대기 1건" in report["message"]
+
+
 def test_draft_conversion_coverage_report_uses_effective_retry_time_during_gemini_wait(monkeypatch):
     db_path = Path(f"data/.test_draft_conversion_effective_retry_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

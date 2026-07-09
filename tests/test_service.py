@@ -190,6 +190,57 @@ def test_draft_generation_failure_summary_ignores_items_that_already_have_drafts
     assert [int(row["id"]) for row in ready_rows] == [ready_id]
 
 
+def test_draft_generation_failure_summary_uses_latest_unresolved_failure_per_release():
+    db_path = Path(f"data/.test_draft_failure_summary_latest_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="retry",
+            source_name="재처리 기관",
+            region="전남",
+            title="중복 실패 기록 원문",
+            url="https://example.com/duplicate-failures",
+            content="중복 실패 기록이 있어도 원문 기준으로 한 번만 집계되어야 합니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    assert release_id is not None
+    now = datetime.now(timezone.utc)
+    older_due_at = (now - timedelta(minutes=10)).isoformat()
+    latest_retry_at = (now + timedelta(minutes=30)).isoformat()
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'generation_error', '이전 실패', 'gemini-3.5-flash', 1, ?, ?, ?, NULL)
+            """,
+            (release_id, older_due_at, older_due_at, older_due_at),
+        )
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'quota', '최신 실패', 'gemini-3.5-flash', 2, ?, ?, ?, NULL)
+            """,
+            (release_id, older_due_at, now.isoformat(), latest_retry_at),
+        )
+
+    summary = store.draft_generation_failure_summary()
+    ready_rows = store.pending_press_releases_ready_for_retry(10)
+
+    assert summary["total"] == 1
+    assert summary["due"] == 0
+    assert summary["next_retry_at"] == latest_retry_at
+    assert summary["by_kind"] == [{"kind": "quota", "count": 1}]
+    assert summary["latest"][0]["press_release_id"] == release_id
+    assert summary["latest"][0]["failure_kind"] == "quota"
+    assert ready_rows == []
+
+
 def test_gemini_cooldown_message_uses_korean_time_label():
     cooldown_until = datetime(2026, 7, 1, 21, 39, tzinfo=timezone.utc)
 
