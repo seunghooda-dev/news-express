@@ -8,15 +8,22 @@
   <div class="section-actions">
     <a class="source-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}">검수 대기 보기</a>
     <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
+    <a class="source-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}">게시일 확인 원문</a>
     <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
   </div>
 </section>
 
 <section class="metrics source-detail-metrics">
   <div class="metric-link metric-static"><b>{{ summary.releases }}</b><span>누적 원문</span></div>
-  <div class="metric-link metric-static"><b>{{ summary.today_releases }}</b><span>오늘 수집</span></div>
+  <a class="metric-link" href="{{ url_for('press_releases', source=source.id, date=today_iso) }}"><b>{{ summary.today_releases }}</b><span>오늘 원문</span></a>
   <a class="metric-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}"><b>{{ pending_drafts|length }}</b><span>검수 대기</span></a>
-  <div class="metric-link metric-static"><b>{{ summary.status_label }}</b><span>현재 상태</span></div>
+  <a class="metric-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}"><b>{{ source_detail_metrics.missing_drafts }}</b><span>초안 없는 원문</span></a>
+  <a class="metric-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}"><b>{{ source_detail_metrics.date_issues }}</b><span>게시일 확인 원문</span></a>
+  {% if source_detail_metrics.assets %}
+    <a class="metric-link" href="#source-assets"><b>{{ source_detail_metrics.assets }}</b><span>첨부 파일</span></a>
+  {% else %}
+    <div class="metric-link metric-static"><b>0</b><span>첨부 파일</span></div>
+  {% endif %}
 </section>
 
 <section class="source-health">
@@ -34,11 +41,19 @@
   {% if summary.status_detail %}
     <p class="meta">{{ summary.status_detail }}</p>
   {% endif %}
+  {% if source_detail_metrics.missing_drafts or source_detail_metrics.date_issues %}
+    <p class="meta">
+      운영 확인:
+      {% if source_detail_metrics.missing_drafts %}초안 없는 원문 {{ source_detail_metrics.missing_drafts }}건{% endif %}
+      {% if source_detail_metrics.missing_drafts and source_detail_metrics.date_issues %} · {% endif %}
+      {% if source_detail_metrics.date_issues %}게시일 확인 원문 {{ source_detail_metrics.date_issues }}건{% endif %}
+    </p>
+  {% endif %}
   <p class="meta">{{ summary.last_message or "아직 수집 점검 기록이 없습니다." }}</p>
 </section>
 
 {% if recent_assets %}
-  <section class="asset-panel source-asset-panel">
+  <section class="asset-panel source-asset-panel" id="source-assets">
     <div class="section-head compact">
       <h1>최근 첨부 사진/파일</h1>
     </div>
@@ -95,6 +110,8 @@
     <div class="section-head compact">
       <h1>최근 원문</h1>
       <div class="section-actions">
+        <a class="source-link" href="{{ url_for('press_releases', source=source.id, date=today_iso) }}">오늘 원문</a>
+        <a class="source-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}">게시일 확인 원문</a>
         <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
         <a class="source-link" href="{{ url_for('press_releases', source=source.id) }}">원문 전체</a>
       </div>
@@ -105,6 +122,9 @@
           <strong>{{ item.title }}</strong>
           <span class="row-meta">
             <span>{{ item.published_at|date_label }}</span>
+            {% if item.date_warning %}
+              <span class="badge badge-warning">{{ item.date_warning }}</span>
+            {% endif %}
             {% if item.draft_id %}
               <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
               <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>

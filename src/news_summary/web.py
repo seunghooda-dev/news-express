@@ -854,15 +854,18 @@ def create_app() -> Flask:
             flash("기관 정보를 찾을 수 없습니다.")
             return redirect(url_for("dashboard"))
         summary = _source_summary_by_id(store, config_path, source_id)
+        source_detail_metrics = _source_detail_metrics(store, source_id)
         return render_template(
             "source_detail.html",
             source=source,
             summary=summary,
-            recent_releases=store.press_releases_by_source(source_id, limit=20),
+            source_detail_metrics=source_detail_metrics,
+            recent_releases=[_press_release_listing_item(row) for row in store.press_releases_by_source(source_id, limit=20)],
             recent_assets=_display_press_assets(store.press_release_assets_by_source(source_id, limit=30)),
             recent_drafts=store.drafts_by_source(source_id, limit=20),
             pending_drafts=store.drafts_by_source(source_id, status="needs_review", limit=20),
             duplicate_titles=_duplicate_titles(store),
+            today_iso=datetime.now(LOCAL_TZ).date().isoformat(),
         )
 
     @app.get("/drafts/<int:draft_id>")
@@ -4888,6 +4891,42 @@ def _source_summary_by_id(store: Store, config_path: Path, source_id: str) -> di
         "last_message": "",
         "failure_stage": "",
         "failure_reason": "",
+    }
+
+
+def _source_detail_metrics(store: Store, source_id: str) -> dict[str, int]:
+    with store.connect() as conn:
+        pending_row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM press_releases pr
+            LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+            WHERE pr.source_id = ?
+              AND ad.id IS NULL
+            """,
+            (source_id,),
+        ).fetchone()
+        asset_row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM press_release_assets pra
+            JOIN press_releases pr ON pr.id = pra.press_release_id
+            WHERE pr.source_id = ?
+            """,
+            (source_id,),
+        ).fetchone()
+        published_rows = conn.execute(
+            """
+            SELECT published_at
+            FROM press_releases
+            WHERE source_id = ?
+            """,
+            (source_id,),
+        ).fetchall()
+    return {
+        "missing_drafts": int(pending_row["count"] or 0) if pending_row else 0,
+        "date_issues": sum(1 for row in published_rows if _press_release_date_warning(row)),
+        "assets": int(asset_row["count"] or 0) if asset_row else 0,
     }
 
 

@@ -2272,7 +2272,77 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     assert "Gemini Lite" in releases_html
     assert "진도군 농업기술센터 보도자료" not in releases_html
     assert 'href="/press-releases?draft=missing&amp;source=jindo-county"' in html
+    assert 'href="/press-releases?draft=date_issue&amp;source=jindo-county"' in html
     assert 'href="/press-releases?source=jindo-county"' in html
+
+
+def test_source_detail_shows_operational_counts_and_shortcuts(monkeypatch):
+    db_path = Path(f"data/.test_source_detail_shortcuts_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+    today_iso = datetime.now(LOCAL_TZ).date().isoformat()
+    drafted_id = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="오늘 수집 원문",
+            url="https://example.com/jindo-today",
+            content="오늘 수집된 정상 보도자료입니다.",
+            published_at=today_iso,
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/jindo-thumb.jpg",
+                    title="현장 사진",
+                    filename="jindo-thumb.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert drafted_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_id,
+            title="오늘 수집 원문",
+            body="오늘 수집된 정상 보도자료입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="게시일 미정 원문",
+            url="https://example.com/jindo-date-issue",
+            content="게시일이 아직 정리되지 않은 보도자료입니다.",
+            published_at="미정",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/sources/jindo-county").data.decode("utf-8")
+
+    assert f'href="/press-releases?source=jindo-county&amp;date={today_iso}"' in html
+    assert 'href="/press-releases?draft=missing&amp;source=jindo-county"' in html
+    assert 'href="/press-releases?draft=date_issue&amp;source=jindo-county"' in html
+    assert 'href="#source-assets"' in html
+    assert "운영 확인:" in html
+    assert "초안 없는 원문 1건" in html
+    assert "게시일 확인 원문 1건" in html
+    assert "게시일 파싱 실패" in html
 
 
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
