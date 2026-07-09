@@ -2534,7 +2534,7 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
 
     assert "자동 복구 점검" in html
     assert "주의" in html
-    assert "Gemini 재처리 가능 원문 2건" in html
+    assert "Gemini 자동 재처리 대기 원문 2건" in html
     assert "재시도 가능 2건" in html
     assert "재시도 대기 원문 1" in html
     assert "재시도 대기 원문 2" in html
@@ -3280,16 +3280,16 @@ def test_service_health_summary_merges_retry_due_when_today_pending_covers_it():
             "ok": True,
             "database": "ok",
             "draft_conversion_coverage_status": "warning",
-            "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 즉시 처리 가능 29건입니다.",
+            "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 자동 처리 대기 29건입니다.",
             "draft_conversion_today_pending": 29,
             "gemini_queue_status": "warning",
-            "gemini_queue_message": "Gemini 재처리 가능 원문 29건",
+            "gemini_queue_message": "Gemini 자동 재처리 대기 원문 29건",
             "gemini_retry_due": 29,
         }
     )
 
     assert summary["service_status_level"] == "warning"
-    assert summary["service_status_message"] == "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 즉시 처리 가능 29건입니다."
+    assert summary["service_status_message"] == "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 자동 처리 대기 29건입니다."
     assert [issue["component"] for issue in summary["service_status_issues"]] == [
         "draft_conversion_coverage"
     ]
@@ -3304,7 +3304,7 @@ def test_service_health_summary_keeps_retry_due_when_it_exceeds_today_pending():
             "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다.",
             "draft_conversion_today_pending": 29,
             "gemini_queue_status": "warning",
-            "gemini_queue_message": "Gemini 재처리 가능 원문 35건",
+            "gemini_queue_message": "Gemini 자동 재처리 대기 원문 35건",
             "gemini_retry_due": 35,
         }
     )
@@ -3759,7 +3759,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
         "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 기준 25건",
         "초안 생성 완료 2건",
     ]
-    assert payload["gemini_queue_message"] == "Gemini 재처리 가능 원문 2건"
+    assert payload["gemini_queue_message"] == "Gemini 자동 재처리 대기 원문 2건"
     assert payload["gemini_cooldown_active"] is False
 
 
@@ -3828,7 +3828,7 @@ def test_healthz_reports_small_gemini_queue_without_warning(monkeypatch):
     assert payload["gemini_pending_total"] == 1
     assert payload["gemini_failure_total"] == 1
     assert payload["gemini_retry_due"] == 1
-    assert payload["gemini_queue_message"] == "Gemini 재처리 가능 원문 1건"
+    assert payload["gemini_queue_message"] == "Gemini 자동 재처리 대기 원문 1건"
 
 
 def test_healthz_reports_gemini_cooldown_window(monkeypatch):
@@ -4390,11 +4390,11 @@ def test_draft_conversion_coverage_report_splits_ready_and_scheduled_pending(mon
     assert report["today_releases"] == 2
     assert report["today_pending"] == 2
     assert report["retry_ready_pending"] == 1
-    assert report["retry_ready_label"] == "즉시 처리 가능"
+    assert report["retry_ready_label"] == "자동 처리 대기"
     assert report["retry_scheduled_pending"] == 1
     assert report["next_retry_at"] == "2026-07-06T06:30:00+00:00"
     assert report["effective_next_retry_at"] == "2026-07-06T06:30:00+00:00"
-    assert "즉시 처리 가능 1건" in report["message"]
+    assert "자동 처리 대기 1건" in report["message"]
     assert "예약 대기 1건" in report["message"]
 
 
@@ -4584,7 +4584,7 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
     assert "오늘 초안 변환 커버리지" in html
     assert "3/4" in html
     assert "변환율 75%" in html
-    assert "즉시 처리 가능 1건" in html
+    assert "자동 처리 대기 1건" in html
     assert "예약 대기 0건" not in html
     assert "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다." in html
     assert "순천시청 보도자료 1건" in html
@@ -4621,7 +4621,7 @@ def test_operations_page_hides_zero_ready_retry_counts(monkeypatch):
     app.testing = True
     html = app.test_client().get("/operations").data.decode("utf-8")
 
-    assert "즉시 처리 가능 0건" not in html
+    assert "자동 처리 대기 0건" not in html
     assert "예약 대기 1건" in html
     assert "다음 처리 2026.07.06 15:30" in html
 

@@ -2226,7 +2226,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     next_retry_at = str(pending_retry["next_retry_at"] or "") if pending_retry else ""
     cooldown_until = gemini_cooldown_until(store)
     effective_next_retry_at = _effective_next_draft_retry_at(next_retry_at, cooldown_until) if today_pending > 0 else ""
-    retry_ready_label = "처리 가능 대기" if cooldown_until else "즉시 처리 가능"
+    retry_ready_label = "처리 재개 대기" if cooldown_until else "자동 처리 대기"
     drafted_percent = round((today_drafted / today_releases) * 100) if today_releases else 0
     pending_sources = [
         {"source_name": str(row["source_name"]), "count": int(row["count"])}
@@ -2888,7 +2888,7 @@ def _operations_health_report(
         draft_retry_due = int(draft_failure_summary.get("due") or 0)
         retry_warning_count = _gemini_retry_due_warning_count()
         if draft_retry_due >= retry_warning_count:
-            issues.append(f"Gemini 재처리 가능 원문 {draft_retry_due}건")
+            issues.append(f"Gemini 자동 재처리 대기 원문 {draft_retry_due}건")
         elif draft_failure_total >= 100:
             issues.append(f"Gemini 재처리 대기 원문 {draft_failure_total}건")
 
@@ -2962,7 +2962,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         message = f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until)}까지"
     elif retry_due >= _gemini_retry_due_warning_count():
         status = "warning"
-        message = f"Gemini 재처리 가능 원문 {retry_due}건"
+        message = f"Gemini 자동 재처리 대기 원문 {retry_due}건"
     elif failure_total >= 100:
         status = "warning"
         message = f"Gemini 재처리 대기 원문 {failure_total}건"
@@ -2971,7 +2971,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         message = f"Gemini 초안 대기 원문 {pending_total}건"
     elif retry_due > 0:
         status = "ok"
-        message = f"Gemini 재처리 가능 원문 {retry_due}건"
+        message = f"Gemini 자동 재처리 대기 원문 {retry_due}건"
     elif failure_total > 0:
         status = "ok"
         message = f"Gemini 재처리 대기 원문 {failure_total}건"
