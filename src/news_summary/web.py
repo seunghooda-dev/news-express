@@ -1152,20 +1152,27 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
         add_issue(draft_status, "draft_conversion_coverage", payload.get("draft_conversion_coverage_message"))
 
     gemini_status = str(payload.get("gemini_queue_status") or "")
+    draft_today_pending = int(payload.get("draft_conversion_today_pending") or 0)
+    draft_retry_ready_pending = int(payload.get("draft_conversion_retry_ready_pending") or draft_today_pending or 0)
+    gemini_pending_total = int(payload.get("gemini_pending_total") or 0)
+    gemini_retry_due = int(payload.get("gemini_retry_due") or 0)
+    gemini_pending_outside_today = gemini_pending_total > draft_today_pending > 0
+    gemini_retry_outside_today = gemini_retry_due > draft_retry_ready_pending > 0
     gemini_wait_already_counted = (
         gemini_status == "warning"
         and draft_status in {"warning", "error"}
         and bool(payload.get("gemini_cooldown_active"))
-        and int(payload.get("draft_conversion_today_pending") or 0) > 0
+        and draft_today_pending > 0
+        and not gemini_pending_outside_today
+        and not gemini_retry_outside_today
     )
-    draft_today_pending = int(payload.get("draft_conversion_today_pending") or 0)
-    gemini_retry_due = int(payload.get("gemini_retry_due") or 0)
     gemini_retry_already_counted = (
         gemini_status == "warning"
         and draft_status in {"warning", "error"}
         and draft_today_pending > 0
         and gemini_retry_due > 0
-        and gemini_retry_due <= draft_today_pending
+        and gemini_retry_due <= draft_retry_ready_pending
+        and not gemini_pending_outside_today
     )
     if gemini_status in {"warning", "error"} and not (gemini_wait_already_counted or gemini_retry_already_counted):
         add_issue(gemini_status, "gemini_queue", payload.get("gemini_queue_message"))
@@ -2981,7 +2988,10 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
     if cooldown_until:
         status = "warning"
-        message = f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until)}까지"
+        message = (
+            f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until)}까지"
+            f"{_gemini_queue_count_detail(pending_total, retry_due)}"
+        )
     elif retry_due >= _gemini_retry_due_warning_count():
         status = "warning"
         message = f"Gemini 자동 재처리 대기 원문 {retry_due}건"
@@ -3027,6 +3037,15 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_cooldown_reason": _gemini_public_status_text(cooldown_reason) if cooldown_reason else None,
         "gemini_queue_message": message,
     }
+
+
+def _gemini_queue_count_detail(pending_total: int, retry_due: int) -> str:
+    details: list[str] = []
+    if pending_total > 0:
+        details.append(f"전체 대기 {pending_total}건")
+    if retry_due > 0:
+        details.append(f"처리 재개 대기 {retry_due}건")
+    return f" · {', '.join(details)}" if details else ""
 
 
 def _source_collection_health_payload(store: Store) -> dict[str, object]:

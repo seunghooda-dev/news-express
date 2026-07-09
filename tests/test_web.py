@@ -3319,6 +3319,31 @@ def test_service_health_summary_keeps_retry_due_when_it_exceeds_today_pending():
     ]
 
 
+def test_service_health_summary_keeps_gemini_wait_when_queue_exceeds_today_pending():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "draft_conversion_coverage_status": "warning",
+            "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 10건이 남아 있습니다.",
+            "draft_conversion_today_pending": 10,
+            "draft_conversion_retry_ready_pending": 10,
+            "gemini_queue_status": "warning",
+            "gemini_queue_message": "Gemini 처리 재개 대기: 2026.07.09 16:29까지 · 전체 대기 14건, 처리 재개 대기 10건",
+            "gemini_cooldown_active": True,
+            "gemini_pending_total": 14,
+            "gemini_retry_due": 10,
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "오늘 수집 원문 중 초안 미변환 10건이 남아 있습니다. 외 1건"
+    assert [issue["component"] for issue in summary["service_status_issues"]] == [
+        "draft_conversion_coverage",
+        "gemini_queue",
+    ]
+
+
 def test_healthz_reports_collection_check_coverage(monkeypatch):
     db_path = Path(f"data/.test_healthz_collection_check_coverage_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -3880,7 +3905,7 @@ def test_healthz_reports_effective_gemini_retry_time_during_wait(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     store = Store(db_path)
     store.init_db()
-    retry_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    retry_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     cooldown_until = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     release_id = store.add_press_release(
         PressRelease(
@@ -3912,6 +3937,9 @@ def test_healthz_reports_effective_gemini_retry_time_during_wait(monkeypatch):
     assert payload["gemini_next_retry_at"] == retry_at
     assert payload["gemini_effective_next_retry_at"] == cooldown_until
     assert payload["gemini_queue_status"] == "warning"
+    assert payload["gemini_queue_message"].startswith("Gemini 처리 재개 대기:")
+    assert "전체 대기 1건" in payload["gemini_queue_message"]
+    assert "처리 재개 대기 1건" in payload["gemini_queue_message"]
 
 
 def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):
