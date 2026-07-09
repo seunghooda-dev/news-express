@@ -398,6 +398,30 @@ def test_auto_maintenance_drains_pending_queue(monkeypatch):
     assert snapshot["queue_retry_due_after"] == 0
 
 
+def test_auto_collector_runs_maintenance_immediately_when_worker_starts(monkeypatch):
+    db_path = Path(f"data/.test_auto_immediate_maintenance_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+    calls: list[bool] = []
+
+    monkeypatch.setattr(collector, "_startup_catchup_needed", lambda: False)
+
+    def fake_maintenance(*, force: bool = False) -> None:
+        calls.append(force)
+        collector._stop_event.set()
+
+    monkeypatch.setattr(collector, "_run_maintenance_if_due", fake_maintenance)
+    monkeypatch.setattr(
+        "news_summary.scheduler._next_hourly_run_at",
+        lambda now=None: datetime(2026, 7, 6, 1, 0, tzinfo=timezone.utc),
+    )
+
+    collector._loop()
+
+    assert calls == [True]
+
+
 def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):
     db_path = Path(f"data/.test_auto_backup_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_auto_backup_{uuid4().hex}").resolve()

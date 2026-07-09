@@ -355,6 +355,8 @@ class AutoCollector:
             self._set_next_run_at(datetime.now(timezone.utc), message="누락 자동 수집 보정 중")
             self.run_once()
 
+        self._run_maintenance_if_due(force=True)
+
         while not self._stop_event.is_set():
             if not self.snapshot().enabled:
                 break
