@@ -88,6 +88,14 @@
             {% for reason in item.reason_labels %}
               <span class="badge badge-warning">{{ reason }}</span>
             {% endfor %}
+            {% if item.fallback_count %}
+              <span class="badge badge-neutral">대체 URL {{ item.fallback_count }}개</span>
+            {% endif %}
+            {% if item.discovered_count %}
+              <span class="badge badge-neutral">후보 URL {{ item.discovered_count }}개</span>
+            {% elif not item.fallback_count %}
+              <span class="badge badge-warning">경로 보강 필요</span>
+            {% endif %}
             {% if item.summary_text %}
               <br>
               {{ item.summary_text }}
@@ -96,6 +104,7 @@
             <a href="{{ url_for('source_detail', source_id=item.source_id) }}">기관 화면</a>
             {% if item.missing_drafts %} · <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">미변환</a>{% endif %}
             {% if item.date_issues %} · <a href="{{ url_for('press_releases', draft='date_issue', source=item.source_id) }}">게시일</a>{% endif %}
+            {% if item.fallback_count or item.discovered_count %} · <a href="{{ url_for('source_detail', source_id=item.source_id) }}#source-routes">경로</a>{% endif %}
             · <a href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ item.source_id) }}">로그</a>
           </li>
         {% endfor %}

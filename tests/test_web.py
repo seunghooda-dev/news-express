@@ -3708,9 +3708,29 @@ def test_operations_page_shows_attention_source_queue(monkeypatch):
             model="gemini-3.5-flash:gemini",
         )
     )
+    store.set_app_metadata(
+        "auto_url_discovery_snapshot",
+        json.dumps(
+            {
+                "updated_at": "2026-07-10T15:10:00+09:00",
+                "discoveries": [
+                    {
+                        "source_id": "alpha",
+                        "source_name": "전남광주통합특별시 테스트군청 보도자료",
+                        "urls": [
+                            "https://example.com/alpha/candidate-1",
+                            "https://example.com/alpha/candidate-2",
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
 
     from news_summary import web as web_module
 
+    original_load_sources = web_module.load_sources
     monkeypatch.setattr(
         web_module,
         "_source_summaries",
@@ -3757,6 +3777,20 @@ def test_operations_page_shows_attention_source_queue(monkeypatch):
             },
         ],
     )
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [
+            Source(
+                id="alpha",
+                name="전남광주통합특별시 테스트군청 보도자료",
+                region="전남 테스트",
+                type="html",
+                fallback_urls=["https://example.com/alpha/fallback"],
+            ),
+            *[source for source in original_load_sources(config_path) if source.id != "alpha"],
+        ],
+    )
 
     app = web_module.create_app()
     app.testing = True
@@ -3767,10 +3801,13 @@ def test_operations_page_shows_attention_source_queue(monkeypatch):
     assert "연속 실패 4회" in html
     assert "미변환 1건" in html
     assert "게시일 1건" in html
+    assert "대체 URL 1개" in html
+    assert "후보 URL 2개" in html
     assert "4회 연속 실패했습니다. 선택자 불일치" in html
     assert 'href="/sources/alpha"' in html
     assert 'href="/press-releases?draft=missing&amp;source=alpha"' in html
     assert 'href="/press-releases?draft=date_issue&amp;source=alpha"' in html
+    assert 'href="/sources/alpha#source-routes"' in html
     assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Dalpha"' in html
 
 

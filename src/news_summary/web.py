@@ -3067,6 +3067,13 @@ def _fallback_url_report(config_path: Path) -> dict[str, object]:
 
 def _operations_attention_source_report(store: Store, config_path: Path, limit: int = 6) -> dict[str, object]:
     summaries = _source_summaries(store, config_path)
+    source_map = {source.id: source for source in load_sources(config_path)}
+    discovery_report = _url_discovery_report(store)
+    discovered_counts = {
+        str(item.get("source_id") or ""): len(item.get("urls") or [])
+        for item in discovery_report.get("discoveries") or []
+        if str(item.get("source_id") or "").strip()
+    }
     with store.connect() as conn:
         missing_rows = conn.execute(
             """
@@ -3103,6 +3110,8 @@ def _operations_attention_source_report(store: Store, config_path: Path, limit: 
         status_level = str(summary.get("status_level") or "ok")
         status_label = str(summary.get("status_label") or "정상")
         issue_label = str(summary.get("issue") or "").strip()
+        fallback_count = len((source_map.get(source_id).fallback_urls if source_map.get(source_id) else []) or [])
+        discovered_count = int(discovered_counts.get(source_id) or 0)
         reason_labels: list[str] = []
         score = 0
 
@@ -3138,6 +3147,8 @@ def _operations_attention_source_report(store: Store, config_path: Path, limit: 
                 "missing_drafts": missing_drafts,
                 "date_issues": date_issues,
                 "consecutive_failures": consecutive_failures,
+                "fallback_count": fallback_count,
+                "discovered_count": discovered_count,
                 "score": score,
             }
         )
