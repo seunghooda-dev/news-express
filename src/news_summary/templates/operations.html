@@ -718,15 +718,39 @@
       <h2>DB 백업</h2>
       <span class="badge {% if db_health.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">{{ db_health.status_label }}</span>
     </div>
+    {% set latest_backup = backup_files[0] if backup_files else None %}
     <p class="meta">{{ db_health.database_kind }} · 응답 {{ db_health.latency_ms if db_health.latency_ms is not none else '미상' }}ms · 백업 {{ db_health.backup_count }}개</p>
     <p class="meta">최근 백업 {{ db_health.latest_backup.modified_at|date_label if db_health.latest_backup else '없음' }}</p>
     <p class="meta">{{ db_health.note }}</p>
     <p class="meta">자동 검증 {{ backup_verify_report.status_label }} · {{ backup_verify_report.message }}</p>
+    {% if backup_verify_report.backup_name %}
+      <p class="meta">검증 대상 {{ backup_verify_report.backup_name }}</p>
+    {% endif %}
+    {% if backup_verify_report.checked_sqlite or backup_verify_report.checked_database_export %}
+      <p class="gemini-models">
+        검증 항목:
+        {% if backup_verify_report.checked_sqlite %}
+          <span>SQLite 무결성</span>
+        {% endif %}
+        {% if backup_verify_report.checked_database_export %}
+          <span>PostgreSQL 덤프 구조</span>
+        {% endif %}
+      </p>
+    {% endif %}
     <p class="meta">현재 DB: {{ db_path }}</p>
     <p class="meta">백업 폴더: {{ backup_dir }}</p>
     <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">
       <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>지금 백업 생성</button>
     </form>
+    {% if latest_backup and operations_write_unlocked %}
+      <div class="inline-actions">
+        <a class="source-link" href="{{ url_for('download_backup', filename=latest_backup.name) }}">최신 백업 다운로드</a>
+        <form method="post" action="{{ url_for('restore_backup_route') }}">
+          <input type="hidden" name="backup_name" value="{{ latest_backup.name }}">
+          <button class="secondary" type="submit" name="action" value="preview">최신 백업 복구 대상 확인</button>
+        </form>
+      </div>
+    {% endif %}
   </article>
 
   <article class="ops-card">

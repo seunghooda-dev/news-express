@@ -5722,6 +5722,13 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert len(backups) == 1
 
     backup_name = backups[0].name
+    operations_html = client.get("/operations").data.decode("utf-8")
+    assert f"검증 대상 {backup_name}" in operations_html
+    assert "SQLite 무결성" in operations_html
+    assert "최신 백업 다운로드" in operations_html
+    assert "최신 백업 복구 대상 확인" in operations_html
+    assert f'value="{backup_name}"' in operations_html
+
     preview_response = client.post(
         "/operations/restore",
         data={"backup_name": backup_name, "action": "preview"},
