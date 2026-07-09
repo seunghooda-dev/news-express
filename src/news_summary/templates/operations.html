@@ -120,7 +120,13 @@
       <p class="gemini-models">
         실패 상위 기관:
         {% for item in operations_health.top_failure_sources %}
-          <span>{{ item.source_name }} {{ item.count }}건 · {{ item.stage }}</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }} {{ item.count }}건 · {{ item.stage }}</a>
+            {% else %}
+              {{ item.source_name }} {{ item.count }}건 · {{ item.stage }}
+            {% endif %}
+          </span>
         {% endfor %}
       </p>
     {% endif %}
@@ -147,7 +153,13 @@
     {% if recovery_candidate_report.candidates %}
       <p class="gemini-models">
         {% for item in recovery_candidate_report.candidates[:5] %}
-          <span>{{ source_display_label(item.source_name) }} · {{ item.reason_label }}</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }} · {{ item.reason_label }}</a>
+            {% else %}
+              {{ source_display_label(item.source_name) }} · {{ item.reason_label }}
+            {% endif %}
+          </span>
         {% endfor %}
       </p>
     {% endif %}
@@ -273,7 +285,13 @@
       <p class="gemini-models">
         <span>미변환 기관</span>
         {% for item in draft_conversion_coverage_report.pending_sources %}
-          <span>{{ source_display_label(item.source_name) }} {{ item.count }}건</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('press_releases', draft='missing', date=draft_conversion_coverage_report.date, source=item.source_id) }}">{{ source_display_label(item.source_name) }} {{ item.count }}건</a>
+            {% else %}
+              {{ source_display_label(item.source_name) }} {{ item.count }}건
+            {% endif %}
+          </span>
         {% endfor %}
         {% set visible_pending_source_count = draft_conversion_coverage_report.pending_sources|length %}
         {% set pending_source_total = draft_conversion_coverage_report.pending_source_total|default(visible_pending_source_count) %}
@@ -363,7 +381,13 @@
       <p class="gemini-models">
         기관별:
         {% for item in pending_queue.by_source %}
-          <span>{{ source_display_label(item.source_name) }} {{ item.count }}건</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">{{ source_display_label(item.source_name) }} {{ item.count }}건</a>
+            {% else %}
+              {{ source_display_label(item.source_name) }} {{ item.count }}건
+            {% endif %}
+          </span>
         {% endfor %}
       </p>
     {% else %}
@@ -427,9 +451,28 @@
       <p class="gemini-models">
         기관별:
         {% for item in date_issue_report.by_source %}
-          <span>{{ item.source_name }} {{ item.count }}건</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }} {{ item.count }}건</a>
+            {% else %}
+              {{ item.source_name }} {{ item.count }}건
+            {% endif %}
+          </span>
         {% endfor %}
       </p>
+      {% if date_issue_report.samples %}
+        <ul class="ops-mini-list">
+          {% for item in date_issue_report.samples %}
+            <li>
+              <a href="{{ url_for('press_release_detail', release_id=item.id) }}">
+                {{ item.source_name }} · {{ item.title }}
+              </a>
+              <br>
+              {{ item.warning }} · {{ item.published_at }}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
     {% else %}
       <p class="meta">최근 원문 게시일 파싱이 정상 범위입니다.</p>
     {% endif %}

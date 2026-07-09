@@ -68,7 +68,13 @@
     <p class="gemini-models">
       기관별:
       {% for item in pending_queue.by_source %}
-          <span>{{ source_display_label(item.source_name) }} {{ item.count }}건</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">{{ source_display_label(item.source_name) }} {{ item.count }}건</a>
+            {% else %}
+              {{ source_display_label(item.source_name) }} {{ item.count }}건
+            {% endif %}
+          </span>
       {% endfor %}
     </p>
   {% else %}

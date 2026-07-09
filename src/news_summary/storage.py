@@ -1279,11 +1279,11 @@ class Store:
             ).fetchall()
             by_source = conn.execute(
                 """
-                SELECT pr.source_name, COUNT(*) AS count
+                SELECT pr.source_id, pr.source_name, COUNT(*) AS count
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE ad.id IS NULL
-                GROUP BY pr.source_name
+                GROUP BY pr.source_id, pr.source_name
                 ORDER BY count DESC, pr.source_name ASC
                 LIMIT ?
                 """,
@@ -1318,7 +1318,11 @@ class Store:
                 for row in by_date
             ],
             "by_source": [
-                {"source_name": str(row["source_name"]), "count": int(row["count"])}
+                {
+                    "source_id": str(row["source_id"]),
+                    "source_name": str(row["source_name"]),
+                    "count": int(row["count"]),
+                }
                 for row in by_source
             ],
             "latest_published_at": str(latest["published_at"]) if latest else None,

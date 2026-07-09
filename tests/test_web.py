@@ -2225,6 +2225,8 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     assert "Gemini Lite" in html
     assert "Gemini Lite" in releases_html
     assert "진도군 농업기술센터 보도자료" not in releases_html
+    assert 'href="/press-releases?draft=missing&amp;source=jindo-county"' in html
+    assert 'href="/press-releases?source=jindo-county"' in html
 
 
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
@@ -2549,6 +2551,8 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "Gemini 대기 원문" in html
     assert "다음 처리" in html
     assert "테스트 기관 1건" in html
+    assert 'href="/sources/sample"' in html
+    assert 'href="/press-releases?draft=missing&amp;source=sample"' in html
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
     assert "https://sample.trycloudflare.com" in html
@@ -3727,7 +3731,7 @@ def test_healthz_reports_draft_conversion_coverage(monkeypatch):
     assert payload["draft_conversion_effective_next_retry_at"] is None
     assert payload["draft_conversion_drafted_percent"] == 50
     assert payload["draft_conversion_pending_sources"] == [
-        {"source_name": "순천시청 보도자료", "count": 1}
+        {"source_id": "suncheon", "source_name": "순천시청 보도자료", "count": 1}
     ]
     assert payload["draft_conversion_pending_source_total"] == 1
     assert payload["service_status_level"] in {"warning", "error"}
@@ -4586,7 +4590,7 @@ def test_draft_conversion_coverage_report_flags_today_pending_releases(monkeypat
     assert report["retry_scheduled_pending"] == 0
     assert report["next_retry_at"] is None
     assert report["drafted_percent"] == 50
-    assert report["pending_sources"] == [{"source_name": "순천시청 보도자료", "count": 1}]
+    assert report["pending_sources"] == [{"source_id": "suncheon", "source_name": "순천시청 보도자료", "count": 1}]
     assert "미변환 1건" in report["message"]
 
 
@@ -4857,7 +4861,7 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
             "retry_scheduled_pending": 0,
             "next_retry_at": None,
             "drafted_percent": 75,
-            "pending_sources": [{"source_name": "순천시청 보도자료", "count": 1}],
+            "pending_sources": [{"source_id": "suncheon-city", "source_name": "순천시청 보도자료", "count": 1}],
             "latest_pending_at": "2026-07-06 11:00",
             "oldest_pending_at": "2026-07-06 11:00",
             "message": "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다.",
@@ -4874,6 +4878,7 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
     assert "예약 대기 0건" not in html
     assert "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다." in html
     assert "순천시청 보도자료 1건" in html
+    assert 'href="/press-releases?draft=missing&amp;date=2026-07-06&amp;source=suncheon-city"' in html
 
 
 def test_operations_page_shows_hidden_pending_source_count(monkeypatch):
@@ -4899,7 +4904,7 @@ def test_operations_page_shows_hidden_pending_source_count(monkeypatch):
             "effective_next_retry_at": None,
             "drafted_percent": 42,
             "pending_sources": [
-                {"source_name": f"기관{i} 보도자료", "count": 1}
+                {"source_id": f"source-{i}", "source_name": f"기관{i} 보도자료", "count": 1}
                 for i in range(5)
             ],
             "pending_source_total": 7,
@@ -4915,6 +4920,7 @@ def test_operations_page_shows_hidden_pending_source_count(monkeypatch):
     assert "미변환 기관" in html
     assert "기관0 보도자료 1건" in html
     assert "기관4 보도자료 1건" in html
+    assert 'href="/press-releases?draft=missing&amp;date=2026-07-06&amp;source=source-0"' in html
     assert "외 2곳" in html
 
 
@@ -5031,6 +5037,7 @@ def test_operations_page_shows_recovery_candidate_card(monkeypatch):
     assert "자동 복구 예정" in html
     assert "다음 자동 유지보수에서 1곳을 우선 재검증합니다." in html
     assert "테스트 기관 · 이상치 집중 재수집" in html
+    assert 'href="/sources/sample-source"' in html
 
 
 def test_operations_page_creates_and_restores_backup(monkeypatch):

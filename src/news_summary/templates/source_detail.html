@@ -7,6 +7,7 @@
   </div>
   <div class="section-actions">
     <a class="source-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}">검수 대기 보기</a>
+    <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
     <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
   </div>
 </section>
@@ -93,7 +94,10 @@
   <div>
     <div class="section-head compact">
       <h1>최근 원문</h1>
-      <a class="source-link" href="{{ url_for('press_releases') }}">원문 전체</a>
+      <div class="section-actions">
+        <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
+        <a class="source-link" href="{{ url_for('press_releases', source=source.id) }}">원문 전체</a>
+      </div>
     </div>
     <div class="list">
       {% for item in recent_releases %}

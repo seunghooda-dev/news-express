@@ -2239,12 +2239,12 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
             ).fetchone()
             by_source = conn.execute(
                 f"""
-                SELECT pr.source_name, COUNT(*) AS count
+                SELECT pr.source_id, pr.source_name, COUNT(*) AS count
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE {date_expr} = ?
                   AND ad.id IS NULL
-                GROUP BY pr.source_name
+                GROUP BY pr.source_id, pr.source_name
                 ORDER BY count DESC, pr.source_name ASC
                 LIMIT 5
                 """,
@@ -2252,7 +2252,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
             ).fetchall()
             pending_source_total_row = conn.execute(
                 f"""
-                SELECT COUNT(DISTINCT pr.source_name) AS count
+                SELECT COUNT(DISTINCT pr.source_id) AS count
                 FROM press_releases pr
                 LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
                 WHERE {date_expr} = ?
@@ -2317,7 +2317,11 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     retry_ready_label = "처리 재개 대기" if cooldown_until else "자동 처리 대기"
     drafted_percent = round((today_drafted / today_releases) * 100) if today_releases else 0
     pending_sources = [
-        {"source_name": str(row["source_name"]), "count": int(row["count"])}
+        {
+            "source_id": str(row["source_id"]),
+            "source_name": str(row["source_name"]),
+            "count": int(row["count"]),
+        }
         for row in by_source
     ]
     pending_source_total = int(pending_source_total_row["count"] or 0) if pending_source_total_row else 0
@@ -2468,7 +2472,7 @@ def _date_issue_report(store: Store) -> dict[str, object]:
     with store.connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, source_name, title, published_at
+            SELECT id, source_id, source_name, title, published_at
             FROM press_releases
             ORDER BY id DESC
             LIMIT 1000
@@ -2476,25 +2480,38 @@ def _date_issue_report(store: Store) -> dict[str, object]:
         ).fetchall()
     issues = []
     by_source: Counter[str] = Counter()
+    source_names: dict[str, str] = {}
     for row in rows:
-        published_at = str(row["published_at"] or "").strip()
-        if not published_at or _parse_date(published_at) is None:
+        warning = _press_release_date_warning(row)
+        if warning:
+            source_id = str(row["source_id"] or "")
             source_name = source_display_label(row["source_name"])
-            by_source[source_name] += 1
+            source_key = source_id or source_name
+            by_source[source_key] += 1
+            source_names[source_key] = source_name
             if len(issues) < 5:
                 issues.append(
                     {
                         "id": row["id"],
+                        "source_id": source_id,
                         "source_name": source_name,
                         "title": row["title"],
-                        "published_at": published_at or "게시일 없음",
+                        "published_at": str(row["published_at"] or "").strip() or "게시일 없음",
+                        "warning": warning,
                     }
                 )
     return {
         "status_label": "정상" if not issues else "확인 필요",
         "status_level": "ok" if not issues else "warning",
         "issue_count": sum(by_source.values()),
-        "by_source": [{"source_name": name, "count": count} for name, count in by_source.most_common(5)],
+        "by_source": [
+            {
+                "source_id": source_key if source_key != source_names.get(source_key, "") else "",
+                "source_name": source_names.get(source_key, source_key),
+                "count": count,
+            }
+            for source_key, count in by_source.most_common(5)
+        ],
         "samples": issues,
     }
 
@@ -5133,6 +5150,17 @@ def _contains_any(draft, tokens: tuple[str, ...]) -> bool:
 
 def _date_warning(draft) -> str:
     raw = str(_row_value(draft, "published_at") or "").strip()
+    if not raw:
+        return "게시일 없음"
+    if _parse_date(raw) is None:
+        return "게시일 파싱 실패"
+    if not re.match(r"^\s*20\d{2}[./-]\d{1,2}[./-]\d{1,2}", raw):
+        return "게시일 앞 문구 확인"
+    return ""
+
+
+def _press_release_date_warning(release) -> str:
+    raw = str(_row_value(release, "published_at") or "").strip()
     if not raw:
         return "게시일 없음"
     if _parse_date(raw) is None:
