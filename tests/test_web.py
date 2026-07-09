@@ -3543,6 +3543,21 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     store = Store(db_path)
     store.init_db()
     due_at = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    store.set_app_metadata(
+        "auto_recovery_status_snapshot",
+        json.dumps(
+            {
+                "updated_at": "2026-07-09T00:30:00+00:00",
+                "queue_pending_before": 7,
+                "queue_drain_messages": [
+                    "오래된 메시지",
+                    "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 한도 25건",
+                    "초안 생성 완료 2건",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
     for index in range(2):
         release_id = store.add_press_release(
             PressRelease(
@@ -3577,6 +3592,13 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_retry_due"] == 2
     assert payload["gemini_next_retry_at"] == due_at
     assert payload["gemini_oldest_first_failed_at"]
+    assert payload["gemini_last_queue_drain_at"] == "2026-07-09T00:30:00+00:00"
+    assert payload["gemini_last_queue_pending_before"] == 7
+    assert payload["gemini_last_queue_drain_messages"] == [
+        "오래된 메시지",
+        "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 한도 25건",
+        "초안 생성 완료 2건",
+    ]
     assert payload["gemini_queue_message"] == "Gemini 재시도 가능 실패 큐 2건"
     assert payload["gemini_cooldown_active"] is False
 

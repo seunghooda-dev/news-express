@@ -31,6 +31,7 @@ from .scheduler import (
     AUTO_DAILY_REPORT_KEY,
     AUTO_DEDUPLICATE_STATUS_KEY,
     AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+    AUTO_RECOVERY_STATUS_KEY,
     AUTO_SERVER_HEALTH_STATUS_KEY,
     AUTO_URL_DISCOVERY_STATUS_KEY,
     _source_recovery_candidates,
@@ -2380,6 +2381,24 @@ def _deduplicate_report(store: Store) -> dict[str, object]:
     )
 
 
+def _auto_queue_drain_report(store: Store) -> dict[str, object]:
+    report = _metadata_json_report(
+        store,
+        AUTO_RECOVERY_STATUS_KEY,
+        {
+            "updated_at": None,
+            "queue_pending_before": None,
+            "queue_drain_messages": [],
+        },
+    )
+    messages = report.get("queue_drain_messages")
+    return {
+        "updated_at": report.get("updated_at"),
+        "queue_pending_before": report.get("queue_pending_before"),
+        "queue_drain_messages": messages if isinstance(messages, list) else [],
+    }
+
+
 def _metadata_json_report(store: Store, key: str, default: dict[str, object]) -> dict[str, object]:
     raw_value = store.get_app_metadata(key)
     if not raw_value:
@@ -2692,6 +2711,9 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
             "gemini_pending_total": None,
             "gemini_failure_total": None,
             "gemini_retry_due": None,
+            "gemini_last_queue_drain_at": None,
+            "gemini_last_queue_pending_before": None,
+            "gemini_last_queue_drain_messages": [],
             "gemini_cooldown_active": None,
             "gemini_cooldown_until": None,
             "gemini_cooldown_reason": None,
@@ -2703,6 +2725,8 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     retry_due = int(draft_failure_summary.get("due") or 0)
     next_retry_at = str(draft_failure_summary.get("next_retry_at") or "")
     oldest_first_failed_at = str(draft_failure_summary.get("oldest_first_failed_at") or "")
+    queue_drain_report = _auto_queue_drain_report(store)
+    queue_drain_messages = list(queue_drain_report.get("queue_drain_messages") or [])
     cooldown_until = gemini_cooldown_until(store)
     cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
     if cooldown_until:
@@ -2727,6 +2751,9 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_retry_due": retry_due,
         "gemini_next_retry_at": next_retry_at or None,
         "gemini_oldest_first_failed_at": oldest_first_failed_at or None,
+        "gemini_last_queue_drain_at": queue_drain_report.get("updated_at"),
+        "gemini_last_queue_pending_before": queue_drain_report.get("queue_pending_before"),
+        "gemini_last_queue_drain_messages": queue_drain_messages[-5:],
         "gemini_cooldown_active": bool(cooldown_until),
         "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
         "gemini_cooldown_reason": cooldown_reason,
