@@ -2816,6 +2816,15 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     elif pending_total >= 100:
         status = "warning"
         message = f"Gemini 초안 대기 원문 {pending_total}건"
+    elif retry_due > 0:
+        status = "ok"
+        message = f"Gemini 재처리 가능 원문 {retry_due}건"
+    elif failure_total > 0:
+        status = "ok"
+        message = f"Gemini 재처리 대기 원문 {failure_total}건"
+    elif pending_total > 0:
+        status = "ok"
+        message = f"Gemini 초안 대기 원문 {pending_total}건"
     else:
         status = "ok"
         message = "Gemini 초안 대기열 정상 범위"

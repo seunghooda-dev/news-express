@@ -136,7 +136,7 @@ def test_draft_pending_releases_records_generation_failure_queue(monkeypatch):
     assert summary["next_retry_at"]
     assert summary["oldest_first_failed_at"]
     assert summary["by_kind"] == [{"kind": "generation_error", "count": 1}]
-    assert "Gemini 실패 큐 재시도 대기 중" in second_messages[0]
+    assert "Gemini 재처리 대기 중" in second_messages[0]
     assert len(store.pending_press_releases(5)) == 1
 
 

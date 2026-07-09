@@ -3634,6 +3634,47 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_cooldown_active"] is False
 
 
+def test_healthz_reports_small_gemini_queue_without_warning(monkeypatch):
+    db_path = Path(f"data/.test_healthz_small_gemini_queue_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_RETRY_DUE_WARNING_COUNT", "2")
+    store = Store(db_path)
+    store.init_db()
+    due_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="소량 재처리 가능 원문",
+            url="https://example.com/healthz-small-retry",
+            content="Gemini 헬스 체크 소량 대기열 테스트 원문입니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    assert release_id is not None
+    store.record_draft_generation_failure(
+        release_id,
+        "quota",
+        "Gemini 처리 재개 대기",
+        "gemini-3.5-flash",
+        due_at,
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["ok"] is True
+    assert payload["gemini_queue_status"] == "ok"
+    assert payload["gemini_pending_total"] == 1
+    assert payload["gemini_failure_total"] == 1
+    assert payload["gemini_retry_due"] == 1
+    assert payload["gemini_queue_message"] == "Gemini 재처리 가능 원문 1건"
+
+
 def test_healthz_reports_gemini_cooldown_window(monkeypatch):
     db_path = Path(f"data/.test_healthz_gemini_cooldown_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

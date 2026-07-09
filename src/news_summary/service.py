@@ -748,7 +748,7 @@ def draft_pending_releases(store: Store, limit: int = 5, require_gemini: bool = 
         failure_total = int(store.draft_generation_failure_summary(limit=1).get("total") or 0)
         if pending_total and failure_total:
             logger.info("draft skipped pending releases waiting for retry pending=%s failures=%s", pending_total, failure_total)
-            return [f"Gemini 실패 큐 재시도 대기 중입니다. 대기 원문 {pending_total}건, 실패 큐 {failure_total}건"]
+            return [f"Gemini 재처리 대기 중입니다. 대기 원문 {pending_total}건, 재처리 대기 원문 {failure_total}건"]
         logger.info("draft skipped no pending releases")
         return ["초안을 만들 새 원문이 없습니다."]
 
