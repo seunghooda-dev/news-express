@@ -42,6 +42,7 @@ STARTUP_CATCHUP_ENV = "NEWS_SUMMARY_STARTUP_CATCHUP"
 AUTO_QUEUE_DRAIN_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN"
 AUTO_QUEUE_DRAIN_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS"
 AUTO_QUEUE_DRAIN_LIMIT_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT"
+AUTO_QUEUE_DRAIN_READY_RECHECK_ENV = "NEWS_SUMMARY_AUTO_QUEUE_DRAIN_READY_RECHECK_SECONDS"
 AUTO_RECOVERY_INTERVAL_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS"
 AUTO_RECOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_RECOVERY_LIMIT"
 AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_ENV = "NEWS_SUMMARY_AUTO_NETWORK_FAILURE_RECHECK_COOLDOWN_SECONDS"
@@ -475,12 +476,26 @@ class AutoCollector:
     def _next_maintenance_after(self, now: datetime) -> datetime:
         interval = min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds())
         next_at = now + timedelta(seconds=interval)
-        cooldown_until = gemini_cooldown_until(self.store)
-        if cooldown_until and env_bool(AUTO_QUEUE_DRAIN_ENV, True):
-            cooldown_at = cooldown_until.astimezone(timezone.utc)
-            if now < cooldown_at < next_at:
-                return cooldown_at
+        if env_bool(AUTO_QUEUE_DRAIN_ENV, True):
+            cooldown_until = gemini_cooldown_until(self.store)
+            if cooldown_until:
+                cooldown_at = cooldown_until.astimezone(timezone.utc)
+                if now < cooldown_at < next_at:
+                    return cooldown_at
+            ready_recheck_at = self._queue_ready_recheck_at(now)
+            if ready_recheck_at and ready_recheck_at < next_at:
+                next_at = ready_recheck_at
         return next_at
+
+    def _queue_ready_recheck_at(self, now: datetime) -> datetime | None:
+        try:
+            retry_due = int(self.store.draft_generation_failure_summary(limit=1).get("due") or 0)
+        except Exception as exc:  # noqa: BLE001 - scheduling should stay conservative if diagnostics fail.
+            logger.warning("auto queue retry due check failed error=%s", exc)
+            return None
+        if retry_due <= 0:
+            return None
+        return now + timedelta(seconds=_auto_queue_drain_ready_recheck_seconds())
 
     def _execute_maintenance_once(self, now: datetime) -> None:
         messages: list[str] = []
@@ -824,6 +839,10 @@ def _now() -> str:
 
 def _auto_queue_drain_interval_seconds() -> int:
     return env_int(AUTO_QUEUE_DRAIN_INTERVAL_ENV, 900, minimum=60)
+
+
+def _auto_queue_drain_ready_recheck_seconds() -> int:
+    return env_int(AUTO_QUEUE_DRAIN_READY_RECHECK_ENV, 300, minimum=60)
 
 
 def _auto_recovery_interval_seconds() -> int:

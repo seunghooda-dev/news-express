@@ -3617,7 +3617,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_next_retry_at"] == due_at
     assert payload["gemini_oldest_first_failed_at"]
     assert payload["gemini_last_queue_drain_at"] == "2026-07-09T00:30:00+00:00"
-    assert payload["gemini_next_queue_drain_at"] == "2026-07-09T00:45:00+00:00"
+    assert payload["gemini_next_queue_drain_at"] == "2026-07-09T00:35:00+00:00"
     assert payload["gemini_last_queue_pending_before"] == 7
     assert payload["gemini_last_queue_pending_after"] == 5
     assert payload["gemini_last_queue_processed_count"] == 2

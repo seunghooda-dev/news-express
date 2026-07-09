@@ -36,6 +36,7 @@ from .scheduler import (
     AUTO_SERVER_HEALTH_STATUS_KEY,
     AUTO_URL_DISCOVERY_STATUS_KEY,
     _auto_queue_drain_interval_seconds,
+    _auto_queue_drain_ready_recheck_seconds,
     _source_recovery_candidates,
 )
 from .service import (
@@ -2417,7 +2418,11 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
     else:
         messages = []
     updated_at = report.get("updated_at")
-    next_run_at = _queue_drain_next_run_at(updated_at, gemini_cooldown_until(store))
+    next_run_at = _queue_drain_next_run_at(
+        updated_at,
+        gemini_cooldown_until(store),
+        _draft_retry_due_count(store),
+    )
     return {
         "updated_at": updated_at,
         "next_run_at": next_run_at,
@@ -2432,7 +2437,11 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
     }
 
 
-def _queue_drain_next_run_at(updated_at: object, cooldown_until: datetime | None = None) -> str | None:
+def _queue_drain_next_run_at(
+    updated_at: object,
+    cooldown_until: datetime | None = None,
+    retry_due: int = 0,
+) -> str | None:
     parsed = _parse_datetime(updated_at)
     if not parsed:
         return None
@@ -2442,7 +2451,19 @@ def _queue_drain_next_run_at(updated_at: object, cooldown_until: datetime | None
         cooldown_at = cooldown_until.astimezone(timezone.utc)
         if parsed_utc < cooldown_at < next_run_at:
             next_run_at = cooldown_at
+    elif retry_due > 0:
+        ready_recheck_at = parsed_utc + timedelta(seconds=_auto_queue_drain_ready_recheck_seconds())
+        if ready_recheck_at < next_run_at:
+            next_run_at = ready_recheck_at
     return next_run_at.isoformat()
+
+
+def _draft_retry_due_count(store: Store) -> int:
+    try:
+        return int(store.draft_generation_failure_summary(limit=1).get("due") or 0)
+    except Exception as exc:  # noqa: BLE001 - health view should stay available if diagnostics fail.
+        logger.warning("draft retry due count failed error=%s", exc)
+        return 0
 
 
 def _metadata_json_report(store: Store, key: str, default: dict[str, object]) -> dict[str, object]:

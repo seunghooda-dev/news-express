@@ -460,6 +460,45 @@ def test_auto_maintenance_schedules_next_run_at_gemini_resume_time(monkeypatch):
     assert collector._maintenance_poll_seconds() <= 120
 
 
+def test_auto_maintenance_schedules_retry_due_queue_soon(monkeypatch):
+    db_path = Path(f"data/.test_auto_maintenance_retry_due_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="재처리 가능 원문",
+            url="https://example.com/retry-ready",
+            content="재처리 가능한 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+    assert release_id is not None
+    store.record_draft_generation_failure(
+        release_id,
+        "generation_error",
+        "임시 실패",
+        "gemini-3.5-flash",
+        (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+    )
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS", "900")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_READY_RECHECK_SECONDS", "300")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS", "900")
+    monkeypatch.setattr(collector, "_execute_maintenance_once", lambda now: None)
+
+    before = datetime.now(timezone.utc)
+    collector._run_maintenance_if_due(force=True)
+
+    assert collector._next_maintenance_at is not None
+    seconds_until_next = (collector._next_maintenance_at - before).total_seconds()
+    assert 295 <= seconds_until_next <= 305
+
+
 def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):
     db_path = Path(f"data/.test_auto_backup_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_auto_backup_{uuid4().hex}").resolve()
