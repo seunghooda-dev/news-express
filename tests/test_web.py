@@ -3550,6 +3550,7 @@ def test_healthz_reports_draft_conversion_coverage(monkeypatch):
     assert payload["draft_conversion_pending_sources"] == [
         {"source_name": "순천시청 보도자료", "count": 1}
     ]
+    assert payload["draft_conversion_pending_source_total"] == 1
     assert payload["service_status_level"] in {"warning", "error"}
     assert any(
         issue["component"] == "draft_conversion_coverage"
@@ -4392,6 +4393,7 @@ def test_draft_conversion_coverage_report_splits_ready_and_scheduled_pending(mon
     assert report["retry_ready_pending"] == 1
     assert report["retry_ready_label"] == "자동 처리 대기"
     assert report["retry_scheduled_pending"] == 1
+    assert report["pending_source_total"] == 2
     assert report["next_retry_at"] == "2026-07-06T06:30:00+00:00"
     assert report["effective_next_retry_at"] == "2026-07-06T06:30:00+00:00"
     assert "자동 처리 대기 1건" in report["message"]
@@ -4588,6 +4590,48 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
     assert "예약 대기 0건" not in html
     assert "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다." in html
     assert "순천시청 보도자료 1건" in html
+
+
+def test_operations_page_shows_hidden_pending_source_count(monkeypatch):
+    db_path = Path(f"data/.test_operations_pending_source_total_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_draft_conversion_coverage_report",
+        lambda store: {
+            "status_level": "warning",
+            "status_label": "미변환",
+            "date": "2026-07-06",
+            "today_releases": 12,
+            "today_drafted": 5,
+            "today_pending": 7,
+            "retry_ready_pending": 7,
+            "retry_ready_label": "자동 처리 대기",
+            "retry_scheduled_pending": 0,
+            "next_retry_at": None,
+            "effective_next_retry_at": None,
+            "drafted_percent": 42,
+            "pending_sources": [
+                {"source_name": f"기관{i} 보도자료", "count": 1}
+                for i in range(5)
+            ],
+            "pending_source_total": 7,
+            "latest_pending_at": None,
+            "oldest_pending_at": None,
+            "message": "오늘 수집 원문 중 초안 미변환 7건이 남아 있습니다.",
+        },
+    )
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "미변환 기관" in html
+    assert "기관0 보도자료 1건" in html
+    assert "기관4 보도자료 1건" in html
+    assert "외 2곳" in html
 
 
 def test_operations_page_hides_zero_ready_retry_counts(monkeypatch):

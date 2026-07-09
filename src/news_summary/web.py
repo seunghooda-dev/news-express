@@ -2173,6 +2173,16 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
                 """,
                 (today,),
             ).fetchall()
+            pending_source_total_row = conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT pr.source_name) AS count
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE {date_expr} = ?
+                  AND ad.id IS NULL
+                """,
+                (today,),
+            ).fetchone()
             latest_pending = conn.execute(
                 f"""
                 SELECT pr.published_at, pr.collected_at
@@ -2213,6 +2223,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
             "effective_next_retry_at": None,
             "drafted_percent": 0,
             "pending_sources": [],
+            "pending_source_total": 0,
             "latest_pending_at": None,
             "oldest_pending_at": None,
             "message": f"오늘 초안 변환 현황을 읽지 못했습니다: {type(exc).__name__}",
@@ -2232,6 +2243,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         {"source_name": str(row["source_name"]), "count": int(row["count"])}
         for row in by_source
     ]
+    pending_source_total = int(pending_source_total_row["count"] or 0) if pending_source_total_row else 0
 
     if today_releases <= 0:
         status_level = "ok"
@@ -2278,6 +2290,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         "effective_next_retry_at": effective_next_retry_at or None,
         "drafted_percent": drafted_percent,
         "pending_sources": pending_sources,
+        "pending_source_total": pending_source_total,
         "latest_pending_at": pending_time(latest_pending),
         "oldest_pending_at": pending_time(oldest_pending),
         "message": message,
@@ -2301,6 +2314,7 @@ def _draft_conversion_coverage_health_payload(store: Store) -> dict[str, object]
         "draft_conversion_drafted_percent": int(report.get("drafted_percent") or 0),
         "draft_conversion_latest_pending_at": report.get("latest_pending_at"),
         "draft_conversion_oldest_pending_at": report.get("oldest_pending_at"),
+        "draft_conversion_pending_source_total": int(report.get("pending_source_total") or 0),
         "draft_conversion_pending_sources": pending_sources[:5],
         "draft_conversion_coverage_message": report.get("message"),
     }

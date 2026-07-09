@@ -263,9 +263,16 @@
     {% endif %}
     {% if draft_conversion_coverage_report.pending_sources %}
       <p class="gemini-models">
+        <span>미변환 기관</span>
         {% for item in draft_conversion_coverage_report.pending_sources %}
           <span>{{ source_display_label(item.source_name) }} {{ item.count }}건</span>
         {% endfor %}
+        {% set visible_pending_source_count = draft_conversion_coverage_report.pending_sources|length %}
+        {% set pending_source_total = draft_conversion_coverage_report.pending_source_total|default(visible_pending_source_count) %}
+        {% set hidden_pending_source_count = pending_source_total - visible_pending_source_count %}
+        {% if hidden_pending_source_count > 0 %}
+          <span>외 {{ hidden_pending_source_count }}곳</span>
+        {% endif %}
       </p>
     {% endif %}
   </article>
