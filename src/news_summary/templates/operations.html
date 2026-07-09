@@ -313,6 +313,14 @@
     </div>
     {% if pending_queue.total %}
       <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
+      {% if queue_drain_report.updated_at %}
+        <p class="meta">
+          마지막 자동 소진 {{ queue_drain_report.updated_at|date_label }} ·
+          전 {{ queue_drain_report.queue_pending_before if queue_drain_report.queue_pending_before is not none else '-' }}건 /
+          후 {{ queue_drain_report.queue_pending_after if queue_drain_report.queue_pending_after is not none else '-' }}건 /
+          처리 {{ queue_drain_report.queue_processed_count if queue_drain_report.queue_processed_count is not none else '-' }}건
+        </p>
+      {% endif %}
       <p class="gemini-models">
         날짜별:
         {% for item in pending_queue.by_date %}

@@ -2385,6 +2385,19 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
         "gemini-3.5-flash",
         (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
     )
+    store.set_app_metadata(
+        "auto_recovery_status_snapshot",
+        json.dumps(
+            {
+                "updated_at": "2026-07-09T09:00:00+09:00",
+                "queue_pending_before": 8,
+                "queue_pending_after": 5,
+                "queue_processed_count": 3,
+                "queue_drain_messages": ["Gemini 미변환 큐 자동 소진"],
+            },
+            ensure_ascii=False,
+        ),
+    )
 
     from news_summary import web as web_module
 
@@ -2442,6 +2455,10 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "중복 원문 정리" in html
     assert "URL 후보 탐색" in html
     assert "Gemini 미변환 큐" in html
+    assert "마지막 자동 소진" in html
+    assert "전 8건" in html
+    assert "후 5건" in html
+    assert "처리 3건" in html
     assert "Gemini 실패 큐" in html
     assert "generation_error 1건" in html
     assert "최근 보류 원문" in html
@@ -3549,6 +3566,12 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
             {
                 "updated_at": "2026-07-09T00:30:00+00:00",
                 "queue_pending_before": 7,
+                "queue_pending_after": 5,
+                "queue_processed_count": 2,
+                "queue_failure_before": 4,
+                "queue_failure_after": 3,
+                "queue_retry_due_before": 4,
+                "queue_retry_due_after": 3,
                 "queue_drain_messages": [
                     "오래된 메시지",
                     "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 한도 25건",
@@ -3594,6 +3617,12 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_oldest_first_failed_at"]
     assert payload["gemini_last_queue_drain_at"] == "2026-07-09T00:30:00+00:00"
     assert payload["gemini_last_queue_pending_before"] == 7
+    assert payload["gemini_last_queue_pending_after"] == 5
+    assert payload["gemini_last_queue_processed_count"] == 2
+    assert payload["gemini_last_queue_failure_before"] == 4
+    assert payload["gemini_last_queue_failure_after"] == 3
+    assert payload["gemini_last_queue_retry_due_before"] == 4
+    assert payload["gemini_last_queue_retry_due_after"] == 3
     assert payload["gemini_last_queue_drain_messages"] == [
         "오래된 메시지",
         "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 한도 25건",

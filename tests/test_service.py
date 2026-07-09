@@ -14,6 +14,7 @@ from news_summary.scheduler import (
     DEFAULT_AUTO_COLLECT_LIMIT,
     AUTO_DAILY_REPORT_KEY,
     AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+    AUTO_RECOVERY_STATUS_KEY,
     AutoCollector,
     build_auto_collector_from_env,
     _collection_anomaly_snapshot,
@@ -387,6 +388,14 @@ def test_auto_maintenance_drains_pending_queue(monkeypatch):
 
     assert any("Gemini 미변환 큐 자동 소진" in message for message in messages)
     assert store.pending_press_release_summary()["total"] == 0
+    snapshot = json.loads(store.get_app_metadata(AUTO_RECOVERY_STATUS_KEY) or "{}")
+    assert snapshot["queue_pending_before"] == 1
+    assert snapshot["queue_pending_after"] == 0
+    assert snapshot["queue_processed_count"] == 1
+    assert snapshot["queue_failure_before"] == 0
+    assert snapshot["queue_failure_after"] == 0
+    assert snapshot["queue_retry_due_before"] == 0
+    assert snapshot["queue_retry_due_after"] == 0
 
 
 def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):

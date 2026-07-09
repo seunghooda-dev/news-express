@@ -734,20 +734,32 @@ class AutoCollector:
         pending_total = int(self.store.pending_press_release_summary(limit=1).get("total") or 0)
         if pending_total <= 0:
             return []
+        failure_before = self.store.draft_generation_failure_summary(limit=1)
         logger.info("auto queue drain started pending=%s limit=%s", pending_total, limit)
         messages = draft_pending_releases(self.store, limit=limit, require_gemini=self.require_gemini)
+        pending_after = int(self.store.pending_press_release_summary(limit=1).get("total") or 0)
+        failure_after = self.store.draft_generation_failure_summary(limit=1)
+        processed_count = max(0, pending_total - pending_after)
         self.store.set_app_metadata(
             AUTO_RECOVERY_STATUS_KEY,
             json.dumps(
                 {
                     "updated_at": _now(),
                     "queue_pending_before": pending_total,
+                    "queue_pending_after": pending_after,
+                    "queue_processed_count": processed_count,
+                    "queue_failure_before": int(failure_before.get("total") or 0),
+                    "queue_failure_after": int(failure_after.get("total") or 0),
+                    "queue_retry_due_before": int(failure_before.get("due") or 0),
+                    "queue_retry_due_after": int(failure_after.get("due") or 0),
                     "queue_drain_messages": messages[-10:],
                 },
                 ensure_ascii=False,
             ),
         )
-        return [f"Gemini 미변환 큐 자동 소진: 대기 {pending_total}건, 처리 한도 {limit}건"] + messages
+        return [
+            f"Gemini 미변환 큐 자동 소진: 대기 {pending_total}건, 처리 {processed_count}건, 남음 {pending_after}건"
+        ] + messages
 
     def _persist_daily_report_snapshot(self, messages: list[str], now: datetime) -> None:
         report = _daily_report_snapshot(self.store, now=now, messages=messages)
