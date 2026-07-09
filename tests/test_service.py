@@ -140,6 +140,56 @@ def test_draft_pending_releases_records_generation_failure_queue(monkeypatch):
     assert len(store.pending_press_releases(5)) == 1
 
 
+def test_draft_generation_failure_summary_ignores_items_that_already_have_drafts():
+    db_path = Path(f"data/.test_draft_failure_summary_drafted_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    ready_id = store.add_press_release(
+        PressRelease(
+            source_id="ready",
+            source_name="재처리 기관",
+            region="전남",
+            title="재처리 대상 원문",
+            url="https://example.com/ready-summary",
+            content="아직 초안이 없어 재처리 집계에 포함되어야 합니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    drafted_id = store.add_press_release(
+        PressRelease(
+            source_id="drafted",
+            source_name="초안 완료 기관",
+            region="전남",
+            title="초안 완료 원문",
+            url="https://example.com/drafted-summary",
+            content="초안이 있으므로 오래된 실패 기록이 있어도 집계에서 제외되어야 합니다.",
+            published_at="2026-07-09 10:00",
+        )
+    )
+    assert ready_id is not None
+    assert drafted_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_id,
+            title="초안 완료 원문",
+            body="초안 본문",
+            review_note="검수 메모",
+            model="gemini-3.5-flash",
+        )
+    )
+    due_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    store.record_draft_generation_failure(ready_id, "quota", "재처리 대기", "gemini-3.5-flash", due_at)
+    store.record_draft_generation_failure(drafted_id, "quota", "오래된 실패 기록", "gemini-3.5-flash", due_at)
+
+    summary = store.draft_generation_failure_summary()
+    ready_rows = store.pending_press_releases_ready_for_retry(10)
+
+    assert summary["total"] == 1
+    assert summary["due"] == 1
+    assert summary["latest"][0]["press_release_id"] == ready_id
+    assert [int(row["id"]) for row in ready_rows] == [ready_id]
+
+
 def test_gemini_cooldown_message_uses_korean_time_label():
     cooldown_until = datetime(2026, 7, 1, 21, 39, tzinfo=timezone.utc)
 

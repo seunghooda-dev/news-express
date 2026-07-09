@@ -1074,39 +1074,49 @@ class Store:
             total = conn.execute(
                 """
                 SELECT COUNT(*) AS count
-                FROM draft_generation_failures
-                WHERE resolved_at IS NULL
+                FROM draft_generation_failures dgf
+                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
+                WHERE dgf.resolved_at IS NULL
+                  AND ad.id IS NULL
                 """
             ).fetchone()["count"]
             due = conn.execute(
                 """
                 SELECT COUNT(*) AS count
-                FROM draft_generation_failures
-                WHERE resolved_at IS NULL
-                  AND next_retry_at <= ?
+                FROM draft_generation_failures dgf
+                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
+                WHERE dgf.resolved_at IS NULL
+                  AND ad.id IS NULL
+                  AND dgf.next_retry_at <= ?
                 """,
                 (now,),
             ).fetchone()["count"]
             next_retry_row = conn.execute(
                 """
-                SELECT MIN(next_retry_at) AS next_retry_at
-                FROM draft_generation_failures
-                WHERE resolved_at IS NULL
+                SELECT MIN(dgf.next_retry_at) AS next_retry_at
+                FROM draft_generation_failures dgf
+                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
+                WHERE dgf.resolved_at IS NULL
+                  AND ad.id IS NULL
                 """
             ).fetchone()
             oldest_failure_row = conn.execute(
                 """
-                SELECT MIN(first_failed_at) AS first_failed_at
-                FROM draft_generation_failures
-                WHERE resolved_at IS NULL
+                SELECT MIN(dgf.first_failed_at) AS first_failed_at
+                FROM draft_generation_failures dgf
+                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
+                WHERE dgf.resolved_at IS NULL
+                  AND ad.id IS NULL
                 """
             ).fetchone()
             by_kind = conn.execute(
                 """
-                SELECT failure_kind, COUNT(*) AS count
-                FROM draft_generation_failures
-                WHERE resolved_at IS NULL
-                GROUP BY failure_kind
+                SELECT dgf.failure_kind, COUNT(*) AS count
+                FROM draft_generation_failures dgf
+                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
+                WHERE dgf.resolved_at IS NULL
+                  AND ad.id IS NULL
+                GROUP BY dgf.failure_kind
                 ORDER BY count DESC, failure_kind ASC
                 LIMIT ?
                 """,
@@ -1117,7 +1127,9 @@ class Store:
                 SELECT dgf.*, pr.title, pr.source_name
                 FROM draft_generation_failures dgf
                 JOIN press_releases pr ON pr.id = dgf.press_release_id
+                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
                 WHERE dgf.resolved_at IS NULL
+                  AND ad.id IS NULL
                 ORDER BY dgf.last_failed_at DESC, dgf.id DESC
                 LIMIT ?
                 """,
