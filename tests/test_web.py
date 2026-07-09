@@ -2464,7 +2464,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "generation_error 1건" in html
     assert "최근 재처리 원문" in html
     assert "Gemini 대기 원문" in html
-    assert "다음 재시도" in html
+    assert "다음 처리" in html
     assert "테스트 기관 1건" in html
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
@@ -3633,6 +3633,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_failure_total"] == 2
     assert payload["gemini_retry_due"] == 2
     assert payload["gemini_next_retry_at"] == due_at
+    assert payload["gemini_effective_next_retry_at"] == due_at
     assert payload["gemini_oldest_first_failed_at"]
     assert payload["gemini_last_queue_drain_at"] == "2026-07-09T00:30:00+00:00"
     assert payload["gemini_next_queue_drain_at"] == "2026-07-09T00:35:00+00:00"
@@ -3753,9 +3754,49 @@ def test_healthz_reports_gemini_cooldown_window(monkeypatch):
     assert payload["gemini_cooldown_active"] is True
     assert payload["gemini_cooldown_until"] == cooldown_until
     assert payload["gemini_cooldown_reason"] == "자동 초안 생성 재개 대기"
+    assert payload["gemini_effective_next_retry_at"] is None
     assert payload["gemini_queue_message"].startswith("Gemini 처리 재개 대기:")
     assert payload["gemini_queue_message"].endswith("까지")
     assert payload["gemini_next_queue_drain_at"] == cooldown_until
+
+
+def test_healthz_reports_effective_gemini_retry_time_during_wait(monkeypatch):
+    db_path = Path(f"data/.test_healthz_effective_gemini_retry_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    retry_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    cooldown_until = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="재개 대기 중 재처리 원문",
+            url="https://example.com/effective-gemini-retry",
+            content="Gemini 재개 대기 시각 계산용 원문입니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    assert release_id is not None
+    store.record_draft_generation_failure(
+        release_id,
+        "quota",
+        "Gemini 처리 재개 대기",
+        "gemini-3.5-flash",
+        retry_at,
+    )
+    store.set_app_metadata("gemini_cooldown_until", cooldown_until)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["gemini_next_retry_at"] == retry_at
+    assert payload["gemini_effective_next_retry_at"] == cooldown_until
+    assert payload["gemini_queue_status"] == "warning"
 
 
 def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):

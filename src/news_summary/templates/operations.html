@@ -344,7 +344,10 @@
       <h2>Gemini 재처리 대기열</h2>
       <span class="badge {% if draft_failure_summary.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ draft_failure_summary.total }}건</span>
     </div>
-    <p class="meta">지금 재시도 가능 {{ draft_failure_summary.due }}건</p>
+    <p class="meta">
+      {{ draft_failure_summary.retry_due_label|default('지금 처리 가능') }} {{ draft_failure_summary.due }}건
+      {% if draft_failure_summary.effective_next_retry_at %} · 다음 처리 {{ draft_failure_summary.effective_next_retry_at|date_label }}{% endif %}
+    </p>
     {% if draft_failure_summary.by_kind %}
       <p class="gemini-models">
         원인:
@@ -361,7 +364,7 @@
                 {{ source_display_label(item.source_name) }} · {{ item.title }}
               </a>
               <br>
-              시도 {{ item.attempts }}회 · 다음 재시도 {{ item.next_retry_at|date_label }}
+              시도 {{ item.attempts }}회 · 다음 처리 {{ item.effective_next_retry_at|default(item.next_retry_at)|date_label }}
             </li>
           {% endfor %}
         </ul>

@@ -452,7 +452,7 @@ def create_app() -> Flask:
                 admin_password_source = _configured_admin_password_source(store)
                 admin_password_configured = bool(admin_password_source)
                 pending_queue = store.pending_press_release_summary()
-                draft_failure_summary = store.draft_generation_failure_summary()
+                draft_failure_summary = _draft_failure_display_summary(store, store.draft_generation_failure_summary())
                 context = {
                     "auto_collector_status": auto_status,
                     "pending_queue": pending_queue,
@@ -2478,6 +2478,30 @@ def _effective_next_draft_retry_at(next_retry_at: object, cooldown_until: dateti
     return effective.isoformat() if effective else None
 
 
+def _draft_failure_display_summary(store: Store, summary: dict[str, object]) -> dict[str, object]:
+    result = dict(summary)
+    total = int(result.get("total") or 0)
+    cooldown_until = gemini_cooldown_until(store)
+    result["retry_due_label"] = "처리 가능 대기" if cooldown_until else "지금 처리 가능"
+    result["effective_next_retry_at"] = (
+        _effective_next_draft_retry_at(result.get("next_retry_at"), cooldown_until)
+        if total > 0
+        else None
+    )
+    latest_items = []
+    for item in result.get("latest") or []:
+        if not isinstance(item, dict):
+            continue
+        display_item = dict(item)
+        display_item["effective_next_retry_at"] = _effective_next_draft_retry_at(
+            display_item.get("next_retry_at"),
+            cooldown_until,
+        )
+        latest_items.append(display_item)
+    result["latest"] = latest_items
+    return result
+
+
 def _draft_retry_due_count(store: Store) -> int:
     try:
         return int(store.draft_generation_failure_summary(limit=1).get("due") or 0)
@@ -2799,6 +2823,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
             "gemini_pending_total": None,
             "gemini_failure_total": None,
             "gemini_retry_due": None,
+            "gemini_effective_next_retry_at": None,
             "gemini_last_queue_drain_at": None,
             "gemini_next_queue_drain_at": None,
             "gemini_last_queue_pending_before": None,
@@ -2823,6 +2848,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     queue_drain_report = _auto_queue_drain_report(store)
     queue_drain_messages = [_gemini_public_status_text(message) for message in queue_drain_report.get("queue_drain_messages") or []]
     cooldown_until = gemini_cooldown_until(store)
+    effective_next_retry_at = _effective_next_draft_retry_at(next_retry_at, cooldown_until) if failure_total > 0 else None
     cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
     if cooldown_until:
         status = "warning"
@@ -2854,6 +2880,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_failure_total": failure_total,
         "gemini_retry_due": retry_due,
         "gemini_next_retry_at": next_retry_at or None,
+        "gemini_effective_next_retry_at": effective_next_retry_at,
         "gemini_oldest_first_failed_at": oldest_first_failed_at or None,
         "gemini_last_queue_drain_at": queue_drain_report.get("updated_at"),
         "gemini_next_queue_drain_at": queue_drain_report.get("next_run_at"),
