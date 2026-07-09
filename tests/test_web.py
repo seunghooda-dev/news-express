@@ -4585,9 +4585,45 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
     assert "3/4" in html
     assert "변환율 75%" in html
     assert "즉시 처리 가능 1건" in html
-    assert "예약 대기 0건" in html
+    assert "예약 대기 0건" not in html
     assert "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다." in html
     assert "순천시청 보도자료 1건" in html
+
+
+def test_operations_page_hides_zero_ready_retry_counts(monkeypatch):
+    db_path = Path(f"data/.test_operations_draft_conversion_scheduled_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_draft_conversion_coverage_report",
+        lambda store: {
+            "status_level": "warning",
+            "status_label": "미변환",
+            "date": "2026-07-06",
+            "today_releases": 4,
+            "today_drafted": 3,
+            "today_pending": 1,
+            "retry_ready_pending": 0,
+            "retry_scheduled_pending": 1,
+            "next_retry_at": "2026-07-06T06:30:00+00:00",
+            "effective_next_retry_at": "2026-07-06T06:30:00+00:00",
+            "drafted_percent": 75,
+            "pending_sources": [],
+            "latest_pending_at": None,
+            "oldest_pending_at": None,
+            "message": "오늘 수집 원문 중 초안 미변환 1건이 남아 있습니다.",
+        },
+    )
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "즉시 처리 가능 0건" not in html
+    assert "예약 대기 1건" in html
+    assert "다음 처리 2026.07.06 15:30" in html
 
 
 def test_recovery_candidate_report_lists_sources_due_for_recheck(monkeypatch):
