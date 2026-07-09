@@ -948,6 +948,70 @@ def test_drafts_page_filters_assets_and_models(monkeypatch):
     assert 'href="/drafts?status=needs_review"' in combined_page
 
 
+def test_drafts_page_shows_active_filter_chips(monkeypatch):
+    db_path = Path(f"data/.test_drafts_active_filter_chips_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="모집 공고가 있는 사진 기사",
+            url="https://example.com/drafts-active-filters",
+            content="진도군은 모집 공고를 안내했다.",
+            published_at="2026-07-10",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/drafts-active.jpg",
+                    title="현장 사진",
+                    filename="drafts-active.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="진도군 모집 기사",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.1-flash-lite:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get(
+        "/drafts?status=needs_review&review=application&asset=with&model=lite&source=jindo-county&q=모집"
+    ).data.decode("utf-8")
+
+    assert 'aria-label="적용 중인 필터"' in html
+    assert "진도군청 보도자료" in html
+    assert "신청·모집" in html
+    assert "사진 포함" in html
+    assert "Gemini Lite" in html
+    assert "검색: 모집" in html
+    assert (
+        'href="/drafts?status=needs_review&amp;review=application&amp;asset=with&amp;model=lite&amp;q=%EB%AA%A8%EC%A7%91"'
+        in html
+    )
+    assert (
+        'href="/drafts?status=needs_review&amp;review=application&amp;asset=with&amp;model=lite&amp;source=jindo-county"'
+        in html
+    )
+
+
 def test_press_releases_page_uses_load_more_pagination(monkeypatch):
     db_path = Path(f"data/.test_releases_load_more_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -1147,6 +1211,70 @@ def test_press_releases_page_filters_models(monkeypatch):
     assert "Flash 원문" in flash_page
     assert "Lite 원문" not in flash_page
     assert "초안 없는 원문" not in flash_page
+
+
+def test_press_releases_page_shows_active_filter_chips(monkeypatch):
+    db_path = Path(f"data/.test_releases_active_filter_chips_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="보도 사진이 포함된 원문",
+            url="https://example.com/releases-active-filters",
+            content="진도군은 보도자료를 배포했다.",
+            published_at="2026-07-10",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/releases-active.jpg",
+                    title="원문 사진",
+                    filename="releases-active.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="진도군 보도 기사",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get(
+        "/press-releases?draft=drafted&asset=with&model=flash&source=jindo-county&q=보도"
+    ).data.decode("utf-8")
+
+    assert 'aria-label="적용 중인 필터"' in html
+    assert "진도군청 보도자료" in html
+    assert "초안 있음" in html
+    assert "첨부 포함" in html
+    assert "Gemini Flash" in html
+    assert "검색: 보도" in html
+    assert (
+        'href="/press-releases?draft=drafted&amp;asset=with&amp;model=flash&amp;q=%EB%B3%B4%EB%8F%84"'
+        in html
+    )
+    assert (
+        'href="/press-releases?draft=drafted&amp;asset=with&amp;model=flash&amp;source=jindo-county"'
+        in html
+    )
 
 
 def test_press_releases_page_filters_date_issues(monkeypatch):

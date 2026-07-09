@@ -705,7 +705,7 @@ def create_app() -> Flask:
         has_more = display_limit < MAX_LIST_LIMIT and len(draft_rows) > display_limit
         draft_rows = draft_rows[:display_limit]
         draft_thumbnails = _draft_thumbnail_map(store, draft_rows)
-        region_filter_hidden = _clean_query_args(
+        draft_filter_args = _clean_query_args(
             status=status,
             date=target_date.isoformat() if target_date else "",
             review=review_filter,
@@ -714,6 +714,7 @@ def create_app() -> Flask:
             source=source_filter,
             q=query,
         )
+        region_filter_hidden = dict(draft_filter_args)
         return render_template(
             "drafts.html",
             drafts=draft_rows,
@@ -729,6 +730,16 @@ def create_app() -> Flask:
             source_options=load_sources(config_path),
             region_options=_region_options(config_path),
             selected_regions=selected_regions,
+            active_filter_chips=_draft_active_filter_chips(
+                draft_filter_args,
+                target_date=target_date,
+                review_filter=review_filter,
+                asset_filter=asset_filter,
+                model_filter=model_filter,
+                source_filter=source_filter,
+                query=query,
+                config_path=config_path,
+            ),
             region_filter_hidden=region_filter_hidden,
             region_reset_url=url_for("drafts", **region_filter_hidden),
             page_title=_drafts_page_title(
@@ -783,7 +794,7 @@ def create_app() -> Flask:
         has_more = display_limit < MAX_LIST_LIMIT and len(releases) > display_limit
         releases = releases[:display_limit]
         releases = [_press_release_listing_item(row) for row in releases]
-        region_filter_hidden = _clean_query_args(
+        release_filter_args = _clean_query_args(
             draft=draft_filter,
             asset=asset_filter,
             model=model_filter,
@@ -791,6 +802,7 @@ def create_app() -> Flask:
             source=source_filter,
             q=query,
         )
+        region_filter_hidden = dict(release_filter_args)
         return render_template(
             "press_releases.html",
             press_releases=releases,
@@ -803,6 +815,16 @@ def create_app() -> Flask:
             source_options=load_sources(config_path),
             region_options=_region_options(config_path),
             selected_regions=selected_regions,
+            active_filter_chips=_press_release_active_filter_chips(
+                release_filter_args,
+                draft_filter=draft_filter,
+                asset_filter=asset_filter,
+                model_filter=model_filter,
+                target_date=target_date,
+                source_filter=source_filter,
+                query=query,
+                config_path=config_path,
+            ),
             region_filter_hidden=region_filter_hidden,
             region_reset_url=url_for("press_releases", **region_filter_hidden),
             page_title=_press_releases_page_title(
@@ -4675,6 +4697,159 @@ def _expanded_region_match_values(region: str) -> list[str]:
 
 def _clean_query_args(**values: object) -> dict[str, object]:
     return {key: value for key, value in values.items() if value not in (None, "")}
+
+
+def _without_query_args(values: dict[str, object], *keys: str) -> dict[str, object]:
+    filtered = dict(values)
+    for key in keys:
+        filtered.pop(key, None)
+    return filtered
+
+
+def _model_filter_label(model_filter: str) -> str:
+    labels = {
+        "flash": "Gemini Flash",
+        "lite": "Gemini Lite",
+        "rule": "규칙 기반",
+    }
+    return labels.get(model_filter, "모델 필터")
+
+
+def _draft_review_filter_label(review_filter: str) -> str:
+    labels = {
+        "today": "오늘 기사",
+        "attention": "주의 필요",
+        "date_issue": "게시일 확인",
+        "application": "신청·모집",
+        "event": "행사·교육",
+        "support": "지원·예산",
+    }
+    return labels.get(review_filter, "필터")
+
+
+def _press_release_draft_filter_label(draft_filter: str) -> str:
+    labels = {
+        "missing": "초안 없음",
+        "drafted": "초안 있음",
+        "date_issue": "게시일 확인",
+    }
+    return labels.get(draft_filter, "필터")
+
+
+def _draft_active_filter_chips(
+    base_args: dict[str, object],
+    *,
+    target_date: date | None,
+    review_filter: str,
+    asset_filter: str,
+    model_filter: str,
+    source_filter: str,
+    query: str,
+    config_path: Path,
+) -> list[dict[str, str]]:
+    chips: list[dict[str, str]] = []
+    if source_filter:
+        source = _source_by_id(config_path, source_filter)
+        chips.append(
+            {
+                "label": source_display_label(source.name if source else source_filter),
+                "remove_url": url_for("drafts", **_without_query_args(base_args, "source")),
+            }
+        )
+    if target_date:
+        chips.append(
+            {
+                "label": _date_group_label(target_date, datetime.now(LOCAL_TZ).date()),
+                "remove_url": url_for("drafts", **_without_query_args(base_args, "date")),
+            }
+        )
+    if review_filter:
+        chips.append(
+            {
+                "label": _draft_review_filter_label(review_filter),
+                "remove_url": url_for("drafts", **_without_query_args(base_args, "review")),
+            }
+        )
+    if asset_filter == "with":
+        chips.append(
+            {
+                "label": "사진 포함",
+                "remove_url": url_for("drafts", **_without_query_args(base_args, "asset")),
+            }
+        )
+    if model_filter:
+        chips.append(
+            {
+                "label": _model_filter_label(model_filter),
+                "remove_url": url_for("drafts", **_without_query_args(base_args, "model")),
+            }
+        )
+    if query:
+        chips.append(
+            {
+                "label": f"검색: {query}",
+                "remove_url": url_for("drafts", **_without_query_args(base_args, "q")),
+            }
+        )
+    return chips
+
+
+def _press_release_active_filter_chips(
+    base_args: dict[str, object],
+    *,
+    draft_filter: str,
+    asset_filter: str,
+    model_filter: str,
+    target_date: date | None,
+    source_filter: str,
+    query: str,
+    config_path: Path,
+) -> list[dict[str, str]]:
+    chips: list[dict[str, str]] = []
+    if source_filter:
+        source = _source_by_id(config_path, source_filter)
+        chips.append(
+            {
+                "label": source_display_label(source.name if source else source_filter),
+                "remove_url": url_for("press_releases", **_without_query_args(base_args, "source")),
+            }
+        )
+    if target_date:
+        chips.append(
+            {
+                "label": _date_group_label(target_date, datetime.now(LOCAL_TZ).date()),
+                "remove_url": url_for("press_releases", **_without_query_args(base_args, "date")),
+            }
+        )
+    if draft_filter:
+        chips.append(
+            {
+                "label": _press_release_draft_filter_label(draft_filter),
+                "remove_url": url_for("press_releases", **_without_query_args(base_args, "draft")),
+            }
+        )
+    if asset_filter == "with":
+        chips.append(
+            {
+                "label": "첨부 포함",
+                "remove_url": url_for("press_releases", **_without_query_args(base_args, "asset")),
+            }
+        )
+    if model_filter:
+        chips.append(
+            {
+                "label": _model_filter_label(model_filter),
+                "remove_url": url_for("press_releases", **_without_query_args(base_args, "model")),
+            }
+        )
+    if query:
+        chips.append(
+            {
+                "label": f"검색: {query}",
+                "remove_url": url_for("press_releases", **_without_query_args(base_args, "q")),
+            }
+        )
+    return chips
 
 
 def _filter_drafts_by_review(drafts, review_filter: str, duplicate_titles: set[str]):

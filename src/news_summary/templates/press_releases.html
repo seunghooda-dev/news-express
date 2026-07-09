@@ -53,6 +53,17 @@
   {% endif %}
 </form>
 
+{% if active_filter_chips %}
+  <section class="active-filters" aria-label="적용 중인 필터">
+    {% for item in active_filter_chips %}
+      <a class="filter-chip" href="{{ item.remove_url }}">
+        <span>{{ item.label }}</span>
+        <span aria-hidden="true">×</span>
+      </a>
+    {% endfor %}
+  </section>
+{% endif %}
+
 <section class="list">
   {% for item in press_releases %}
     <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ url_for('press_release_detail', release_id=item.id) }}{% endif %}">

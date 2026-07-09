@@ -61,6 +61,17 @@
   {% endif %}
 </form>
 
+{% if active_filter_chips %}
+  <section class="active-filters" aria-label="적용 중인 필터">
+    {% for item in active_filter_chips %}
+      <a class="filter-chip" href="{{ item.remove_url }}">
+        <span>{{ item.label }}</span>
+        <span aria-hidden="true">×</span>
+      </a>
+    {% endfor %}
+  </section>
+{% endif %}
+
 <section class="list">
   {% for draft in drafts %}
     {% set thumbnail = draft_thumbnails.get(draft.press_release_id) %}
