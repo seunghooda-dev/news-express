@@ -3639,9 +3639,22 @@ def test_healthz_reports_gemini_cooldown_window(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     store = Store(db_path)
     store.init_db()
-    cooldown_until = (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat()
+    cooldown_until = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     store.set_app_metadata("gemini_cooldown_until", cooldown_until)
     store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 재개 대기")
+    store.set_app_metadata(
+        "auto_queue_drain_status_snapshot",
+        json.dumps(
+            {
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "queue_pending_before": 5,
+                "queue_pending_after": 5,
+                "queue_processed_count": 0,
+                "queue_drain_messages": [],
+            },
+            ensure_ascii=False,
+        ),
+    )
 
     from news_summary.web import create_app
 
@@ -3656,6 +3669,7 @@ def test_healthz_reports_gemini_cooldown_window(monkeypatch):
     assert payload["gemini_cooldown_reason"] == "자동 초안 생성 재개 대기"
     assert payload["gemini_queue_message"].startswith("Gemini 처리 재개 대기:")
     assert payload["gemini_queue_message"].endswith("까지")
+    assert payload["gemini_next_queue_drain_at"] == cooldown_until
 
 
 def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):

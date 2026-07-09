@@ -440,6 +440,26 @@ def test_auto_maintenance_failure_is_recorded_without_raising(monkeypatch):
     assert snapshot.progress_message == "자동 유지보수 재시도 대기 중"
 
 
+def test_auto_maintenance_schedules_next_run_at_gemini_resume_time(monkeypatch):
+    db_path = Path(f"data/.test_auto_maintenance_resume_time_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    resume_at = datetime.now(timezone.utc) + timedelta(minutes=2)
+    store.set_app_metadata("gemini_cooldown_until", resume_at.isoformat())
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS", "900")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_INTERVAL_SECONDS", "900")
+    monkeypatch.setattr(collector, "_execute_maintenance_once", lambda now: None)
+
+    collector._run_maintenance_if_due(force=True)
+
+    assert collector._next_maintenance_at is not None
+    assert abs((collector._next_maintenance_at - resume_at).total_seconds()) < 2
+    assert collector._maintenance_poll_seconds() <= 120
+
+
 def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):
     db_path = Path(f"data/.test_auto_backup_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_auto_backup_{uuid4().hex}").resolve()

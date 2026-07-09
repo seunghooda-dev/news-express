@@ -22,6 +22,7 @@ from .service import (
     collection_retention_cutoff_date,
     draft_pending_releases,
     filter_releases_by_retention,
+    gemini_cooldown_until,
     is_transient_site_failure,
     is_collection_business_day,
     prune_decorative_press_release_assets,
@@ -443,14 +444,18 @@ class AutoCollector:
         )
 
     def _maintenance_poll_seconds(self) -> int:
-        return max(60, min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds(), 600))
+        base_seconds = max(60, min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds(), 600))
+        if self._next_maintenance_at:
+            remaining = int((self._next_maintenance_at - datetime.now(timezone.utc)).total_seconds())
+            if remaining > 0:
+                return max(1, min(base_seconds, remaining))
+        return base_seconds
 
     def _run_maintenance_if_due(self, force: bool = False) -> None:
         now = datetime.now(timezone.utc)
         if self._next_maintenance_at and not force and now < self._next_maintenance_at:
             return
-        interval = min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds())
-        self._next_maintenance_at = now + timedelta(seconds=interval)
+        self._next_maintenance_at = self._next_maintenance_after(now)
         if not self._run_lock.acquire(blocking=False):
             logger.info("auto maintenance skipped collector busy")
             return
@@ -466,6 +471,16 @@ class AutoCollector:
                 self._persist_status_snapshot()
         finally:
             self._run_lock.release()
+
+    def _next_maintenance_after(self, now: datetime) -> datetime:
+        interval = min(_auto_queue_drain_interval_seconds(), _auto_recovery_interval_seconds())
+        next_at = now + timedelta(seconds=interval)
+        cooldown_until = gemini_cooldown_until(self.store)
+        if cooldown_until and env_bool(AUTO_QUEUE_DRAIN_ENV, True):
+            cooldown_at = cooldown_until.astimezone(timezone.utc)
+            if now < cooldown_at < next_at:
+                return cooldown_at
+        return next_at
 
     def _execute_maintenance_once(self, now: datetime) -> None:
         messages: list[str] = []

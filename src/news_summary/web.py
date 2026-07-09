@@ -2417,7 +2417,7 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
     else:
         messages = []
     updated_at = report.get("updated_at")
-    next_run_at = _queue_drain_next_run_at(updated_at)
+    next_run_at = _queue_drain_next_run_at(updated_at, gemini_cooldown_until(store))
     return {
         "updated_at": updated_at,
         "next_run_at": next_run_at,
@@ -2432,11 +2432,16 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
     }
 
 
-def _queue_drain_next_run_at(updated_at: object) -> str | None:
+def _queue_drain_next_run_at(updated_at: object, cooldown_until: datetime | None = None) -> str | None:
     parsed = _parse_datetime(updated_at)
     if not parsed:
         return None
-    next_run_at = parsed.astimezone(timezone.utc) + timedelta(seconds=_auto_queue_drain_interval_seconds())
+    parsed_utc = parsed.astimezone(timezone.utc)
+    next_run_at = parsed_utc + timedelta(seconds=_auto_queue_drain_interval_seconds())
+    if cooldown_until:
+        cooldown_at = cooldown_until.astimezone(timezone.utc)
+        if parsed_utc < cooldown_at < next_run_at:
+            next_run_at = cooldown_at
     return next_run_at.isoformat()
 
 
