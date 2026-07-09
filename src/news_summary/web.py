@@ -322,13 +322,20 @@ def create_app() -> Flask:
         return Response(status=204)
 
     def _healthz_response(*, include_details: bool):
+        generated_at = datetime.now(LOCAL_TZ).isoformat()
+        base_payload: dict[str, object] = {
+            "generated_at": generated_at,
+            "generated_at_label": format_datetime_label(generated_at),
+            "timezone": "Asia/Seoul",
+        }
         try:
             with store.connect() as conn:
                 conn.execute("SELECT 1").fetchone()
         except Exception as exc:  # noqa: BLE001 - health endpoint should return a clear degraded state.
             logger.warning("health check failed error=%s", exc)
-            return jsonify({"ok": False, "database": "error"}), 503
+            return jsonify({**base_payload, "ok": False, "database": "error"}), 503
         payload: dict[str, object] = {
+            **base_payload,
             "ok": True,
             "database": "ok",
             "commit": _running_commit_short(),

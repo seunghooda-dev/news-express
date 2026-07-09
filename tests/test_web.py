@@ -3210,6 +3210,9 @@ def test_healthz_reports_database_status(monkeypatch):
     payload = response.get_json()
     assert payload["database"] == "ok"
     assert payload["ok"] is True
+    assert payload["generated_at"]
+    assert payload["generated_at_label"]
+    assert payload["timezone"] == "Asia/Seoul"
     assert payload["auto_collector"] in {"enabled", "running", "disabled", "stopped", "unavailable"}
     assert payload["details_url"] == "/healthz/details"
     assert payload["service_status_level"] in {"ok", "warning", "error"}
