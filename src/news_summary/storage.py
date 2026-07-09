@@ -1076,6 +1076,41 @@ class Store:
             (_now(), press_release_id),
         )
 
+    def cleanup_stale_draft_generation_failures(self) -> dict[str, int]:
+        resolved_at = _now()
+        with self.connect() as conn:
+            drafted = conn.execute(
+                """
+                UPDATE draft_generation_failures
+                SET resolved_at = ?
+                WHERE resolved_at IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM article_drafts ad
+                      WHERE ad.press_release_id = draft_generation_failures.press_release_id
+                  )
+                """,
+                (resolved_at,),
+            ).rowcount
+            duplicates = conn.execute(
+                """
+                UPDATE draft_generation_failures
+                SET resolved_at = ?
+                WHERE resolved_at IS NULL
+                  AND id NOT IN (
+                      SELECT max_id
+                      FROM (
+                          SELECT press_release_id, MAX(id) AS max_id
+                          FROM draft_generation_failures
+                          WHERE resolved_at IS NULL
+                          GROUP BY press_release_id
+                      ) latest
+                  )
+                """,
+                (resolved_at,),
+            ).rowcount
+        return {"drafted_resolved": int(drafted or 0), "duplicate_resolved": int(duplicates or 0)}
+
     def draft_generation_failure_summary(self, limit: int = 5) -> dict[str, object]:
         now = _now()
         with self.connect() as conn:

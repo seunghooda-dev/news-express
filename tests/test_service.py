@@ -241,6 +241,144 @@ def test_draft_generation_failure_summary_uses_latest_unresolved_failure_per_rel
     assert ready_rows == []
 
 
+def test_cleanup_stale_draft_generation_failures_resolves_duplicates_and_drafted_items():
+    db_path = Path(f"data/.test_cleanup_stale_draft_failures_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    pending_id = store.add_press_release(
+        PressRelease(
+            source_id="pending",
+            source_name="대기 기관",
+            region="전남",
+            title="대기 원문",
+            url="https://example.com/stale-pending",
+            content="최신 실패 기록만 남아야 합니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    drafted_id = store.add_press_release(
+        PressRelease(
+            source_id="drafted",
+            source_name="완료 기관",
+            region="전남",
+            title="완료 원문",
+            url="https://example.com/stale-drafted",
+            content="초안이 있으므로 실패 기록은 정리되어야 합니다.",
+            published_at="2026-07-09 10:00",
+        )
+    )
+    assert pending_id is not None
+    assert drafted_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_id,
+            title="완료 원문",
+            body="초안 본문",
+            review_note="검수 메모",
+            model="gemini-3.5-flash",
+        )
+    )
+    now = datetime.now(timezone.utc)
+    old_at = (now - timedelta(minutes=20)).isoformat()
+    next_at = (now + timedelta(minutes=20)).isoformat()
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'generation_error', '이전 실패', 'gemini-3.5-flash', 1, ?, ?, ?, NULL)
+            """,
+            (pending_id, old_at, old_at, old_at),
+        )
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'quota', '최신 실패', 'gemini-3.5-flash', 2, ?, ?, ?, NULL)
+            """,
+            (pending_id, old_at, now.isoformat(), next_at),
+        )
+        conn.execute(
+            """
+            INSERT INTO draft_generation_failures
+            (press_release_id, failure_kind, message, attempted_models,
+             attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+            VALUES (?, 'quota', '완료 후 남은 실패', 'gemini-3.5-flash', 1, ?, ?, ?, NULL)
+            """,
+            (drafted_id, old_at, old_at, old_at),
+        )
+
+    result = store.cleanup_stale_draft_generation_failures()
+    summary = store.draft_generation_failure_summary()
+    with store.connect() as conn:
+        unresolved_rows = conn.execute(
+            """
+            SELECT press_release_id, failure_kind
+            FROM draft_generation_failures
+            WHERE resolved_at IS NULL
+            ORDER BY id
+            """
+        ).fetchall()
+
+    assert result == {"drafted_resolved": 1, "duplicate_resolved": 1}
+    assert summary["total"] == 1
+    assert summary["next_retry_at"] == next_at
+    assert [(int(row["press_release_id"]), row["failure_kind"]) for row in unresolved_rows] == [
+        (pending_id, "quota")
+    ]
+
+
+def test_auto_maintenance_cleans_stale_draft_failure_records(monkeypatch):
+    db_path = Path(f"data/.test_auto_cleanup_stale_draft_failures_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="pending",
+            source_name="대기 기관",
+            region="전남",
+            title="자동 정리 대상 원문",
+            url="https://example.com/auto-cleanup-stale-failures",
+            content="자동 유지보수에서 이전 실패 기록을 정리해야 합니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    assert release_id is not None
+    now = datetime.now(timezone.utc)
+    with store.connect() as conn:
+        for offset, kind in ((20, "generation_error"), (10, "quota")):
+            failed_at = (now - timedelta(minutes=offset)).isoformat()
+            conn.execute(
+                """
+                INSERT INTO draft_generation_failures
+                (press_release_id, failure_kind, message, attempted_models,
+                 attempts, first_failed_at, last_failed_at, next_retry_at, resolved_at)
+                VALUES (?, ?, '자동 정리 테스트', 'gemini-3.5-flash', 1, ?, ?, ?, NULL)
+                """,
+                (release_id, kind, failed_at, failed_at, failed_at),
+            )
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    monkeypatch.setattr(collector, "_persist_server_health_snapshot", lambda now: {"status_level": "ok"})
+    monkeypatch.setattr(collector, "_persist_collection_anomaly_snapshot", lambda now: {"issue_count": 0})
+    monkeypatch.setattr(collector, "_deduplicate_press_releases_once", lambda: None)
+    monkeypatch.setattr(collector, "_recover_failed_sources_once", lambda: [])
+    monkeypatch.setattr(collector, "_drain_pending_queue_once", lambda: [])
+    monkeypatch.setattr(collector, "_discover_fallback_url_candidates_once", lambda: [])
+    monkeypatch.setattr(collector, "_create_backup_if_needed_once", lambda now: None)
+    monkeypatch.setattr(collector, "_prune_old_backups_once", lambda: None)
+    monkeypatch.setattr(collector, "_verify_latest_backup_once", lambda: None)
+
+    collector._execute_maintenance_once(now)
+    summary = store.draft_generation_failure_summary()
+    daily = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
+
+    assert summary["total"] == 1
+    assert any("초안 실패 기록 자동 정리 1건" in message for message in daily["messages"])
+
+
 def test_gemini_cooldown_message_uses_korean_time_label():
     cooldown_until = datetime(2026, 7, 1, 21, 39, tzinfo=timezone.utc)
 

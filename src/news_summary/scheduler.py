@@ -512,6 +512,9 @@ class AutoCollector:
         dedupe_message = self._deduplicate_press_releases_once()
         if dedupe_message:
             messages.append(dedupe_message)
+        draft_failure_cleanup_message = self._cleanup_stale_draft_failures_once()
+        if draft_failure_cleanup_message:
+            messages.append(draft_failure_cleanup_message)
         asset_cleanup = prune_decorative_press_release_assets(self.store)
         if asset_cleanup["deleted"]:
             messages.append(f"보도자료 장식 이미지 {asset_cleanup['deleted']}건 정리")
@@ -616,6 +619,15 @@ class AutoCollector:
         if skipped:
             return f"중복 원문 {skipped}건은 초안 충돌로 보류"
         return None
+
+    def _cleanup_stale_draft_failures_once(self) -> str | None:
+        result = self.store.cleanup_stale_draft_generation_failures()
+        drafted_resolved = int(result.get("drafted_resolved") or 0)
+        duplicate_resolved = int(result.get("duplicate_resolved") or 0)
+        total = drafted_resolved + duplicate_resolved
+        if total <= 0:
+            return None
+        return f"초안 실패 기록 자동 정리 {total}건"
 
     def _recover_failed_sources_once(self) -> list[str]:
         limit = env_int(AUTO_RECOVERY_LIMIT_ENV, 5, minimum=0)
