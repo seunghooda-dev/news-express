@@ -167,6 +167,32 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>반복 실패 기관 우선순위</h2>
+      <span class="badge {% if operations_health.priority_sources %}badge-warning{% else %}badge-gemini{% endif %}">
+        {{ operations_health.priority_sources|length }}곳
+      </span>
+    </div>
+    {% if operations_health.priority_sources %}
+      <ul class="ops-mini-list">
+        {% for item in operations_health.priority_sources %}
+          <li>
+            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            <span class="badge {% if item.level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">{{ item.priority_label }}</span>
+            {{ item.consecutive_failures }}회 연속
+            {% if item.failure_stage %} · {{ item.failure_stage }}{% endif %}
+            {% if item.failure_reason %} · {{ item.failure_reason }}{% endif %}
+            <br>
+            마지막 점검 {{ item.checked_at|date_label }}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">우선 확인이 필요한 반복 실패 기관이 없습니다.</p>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>일일 운영 리포트</h2>
       <span class="badge badge-neutral">{{ daily_report.date }}</span>
     </div>

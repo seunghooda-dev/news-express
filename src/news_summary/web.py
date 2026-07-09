@@ -2909,6 +2909,7 @@ def _operations_health_report(
             "last_auto_finished_at": _auto_status_value(auto_status, "last_auto_finished_at"),
             "top_failure_stages": [],
             "top_failure_sources": [],
+            "priority_sources": [],
             "issues": [f"운영 점검 DB 조회 실패: {type(exc).__name__}"],
         }
 
@@ -3031,6 +3032,38 @@ def _operations_health_report(
         status_level = "ok"
         status_label = "정상"
 
+    priority_sources = []
+    for priority_label, level, rows in (
+        ("미복구 우선", "error", unresolved_rows),
+        ("재검증 대기", "warning", temporary_rows),
+    ):
+        for row in rows:
+            source_id = str(row["source_id"])
+            failure_stage, failure_reason = _source_failure_display(
+                row["failure_stage"],
+                row["failure_reason"],
+                row["message"],
+            )
+            priority_sources.append(
+                {
+                    "source_id": source_id,
+                    "source_name": source_display_label(str(row["source_name"])),
+                    "priority_label": priority_label,
+                    "level": level,
+                    "consecutive_failures": consecutive_failures.get(source_id, 0),
+                    "failure_stage": failure_stage or "수집 실패",
+                    "failure_reason": failure_reason,
+                    "checked_at": str(row["checked_at"] or ""),
+                }
+            )
+    priority_sources.sort(
+        key=lambda item: (
+            0 if item["level"] == "error" else 1,
+            -int(item["consecutive_failures"] or 0),
+            str(item["checked_at"] or ""),
+        )
+    )
+
     return {
         "status_level": status_level,
         "status_label": status_label,
@@ -3044,6 +3077,7 @@ def _operations_health_report(
         "last_auto_finished_at": last_auto_finished_at,
         "top_failure_stages": top_failure_stages,
         "top_failure_sources": top_failure_sources,
+        "priority_sources": priority_sources[:5],
         "issues": issues[:5],
     }
 

@@ -2876,6 +2876,8 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "최근 24시간 실패 1건" in html
     assert "자동 복구 1건" in html
     assert "외부 사이트 응답 지연 1건" in html
+    assert "반복 실패 기관 우선순위" in html
+    assert "0곳" in html
     assert "실패 상위 기관" in html
     assert "테스트 기관 1건 · 외부 사이트 응답 지연" in html
     assert "배포 버전" in html
@@ -2910,6 +2912,79 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
     assert "https://sample.trycloudflare.com" in html
+
+
+def test_operations_page_shows_repeated_failure_priority_sources(monkeypatch):
+    db_path = Path(f"data/.test_operations_priority_sources_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+    now_utc = datetime.now(timezone.utc)
+    with store.connect() as conn:
+        for checked_at in (
+            now_utc - timedelta(hours=3),
+            now_utc - timedelta(hours=2),
+            now_utc - timedelta(hours=1),
+        ):
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "alpha",
+                    "알파군청 보도자료",
+                    "failed",
+                    "본문 파싱 실패",
+                    "본문 파싱 실패",
+                    "선택자 불일치",
+                    0,
+                    0,
+                    0,
+                    checked_at.isoformat(),
+                ),
+            )
+        conn.execute(
+            """
+            INSERT INTO source_collection_runs
+            (source_id, source_name, status, message, failure_stage, failure_reason,
+             releases_found, inserted_count, repaired_dates, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "beta",
+                "베타군청 보도자료",
+                "failed",
+                "TLS 연결 시간 초과",
+                "외부 사이트 응답 지연",
+                "TLS 연결 시간 초과",
+                0,
+                0,
+                0,
+                (now_utc - timedelta(minutes=30)).isoformat(),
+            ),
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "반복 실패 기관 우선순위" in html
+    assert "알파군청 보도자료" in html
+    assert "미복구 우선" in html
+    assert "3회 연속" in html
+    assert "본문 파싱 실패" in html
+    assert "선택자 불일치" in html
+    assert "베타군청 보도자료" in html
+    assert "재검증 대기" in html
+    assert html.index("알파군청 보도자료") < html.index("베타군청 보도자료")
+    assert 'href="/sources/alpha"' in html
 
 
 def test_operations_page_links_date_issue_items_to_filtered_press_releases(monkeypatch):
