@@ -1158,7 +1158,16 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
         and bool(payload.get("gemini_cooldown_active"))
         and int(payload.get("draft_conversion_today_pending") or 0) > 0
     )
-    if gemini_status in {"warning", "error"} and not gemini_wait_already_counted:
+    draft_today_pending = int(payload.get("draft_conversion_today_pending") or 0)
+    gemini_retry_due = int(payload.get("gemini_retry_due") or 0)
+    gemini_retry_already_counted = (
+        gemini_status == "warning"
+        and draft_status in {"warning", "error"}
+        and draft_today_pending > 0
+        and gemini_retry_due > 0
+        and gemini_retry_due <= draft_today_pending
+    )
+    if gemini_status in {"warning", "error"} and not (gemini_wait_already_counted or gemini_retry_already_counted):
         add_issue(gemini_status, "gemini_queue", payload.get("gemini_queue_message"))
 
     if any(issue["level"] == "error" for issue in issues):

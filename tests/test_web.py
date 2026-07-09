@@ -3274,6 +3274,49 @@ def test_service_health_summary_keeps_distinct_collection_check_warning():
     ]
 
 
+def test_service_health_summary_merges_retry_due_when_today_pending_covers_it():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "draft_conversion_coverage_status": "warning",
+            "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 즉시 처리 가능 29건입니다.",
+            "draft_conversion_today_pending": 29,
+            "gemini_queue_status": "warning",
+            "gemini_queue_message": "Gemini 재처리 가능 원문 29건",
+            "gemini_retry_due": 29,
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 즉시 처리 가능 29건입니다."
+    assert [issue["component"] for issue in summary["service_status_issues"]] == [
+        "draft_conversion_coverage"
+    ]
+
+
+def test_service_health_summary_keeps_retry_due_when_it_exceeds_today_pending():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "draft_conversion_coverage_status": "warning",
+            "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다.",
+            "draft_conversion_today_pending": 29,
+            "gemini_queue_status": "warning",
+            "gemini_queue_message": "Gemini 재처리 가능 원문 35건",
+            "gemini_retry_due": 35,
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "오늘 수집 원문 중 초안 미변환 29건이 남아 있습니다. 외 1건"
+    assert [issue["component"] for issue in summary["service_status_issues"]] == [
+        "draft_conversion_coverage",
+        "gemini_queue",
+    ]
+
+
 def test_healthz_reports_collection_check_coverage(monkeypatch):
     db_path = Path(f"data/.test_healthz_collection_check_coverage_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
