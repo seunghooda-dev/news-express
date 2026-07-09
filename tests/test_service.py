@@ -448,6 +448,63 @@ def test_auto_maintenance_drains_pending_queue(monkeypatch):
     assert snapshot["queue_retry_due_after"] == 0
 
 
+def test_auto_maintenance_counts_created_drafts_when_pending_queue_grows(monkeypatch):
+    db_path = Path(f"data/.test_auto_queue_drain_grows_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="자동 큐 소진 중 기존 원문",
+            url="https://example.com/auto-queue-existing",
+            content="자동 큐 소진 중 초안을 만들 원문입니다.",
+            published_at="2026-07-06",
+        )
+    )
+    inserted_new_release = False
+
+    def fake_generate_draft(item_id, item, require_gemini=False):
+        nonlocal inserted_new_release
+        if not inserted_new_release:
+            store.add_press_release(
+                PressRelease(
+                    source_id="sample",
+                    source_name="테스트 기관",
+                    region="전남",
+                    title="자동 큐 소진 중 새 원문",
+                    url="https://example.com/auto-queue-new",
+                    content="같은 점검 중 새로 들어온 원문입니다.",
+                    published_at="2026-07-06 10:00",
+                )
+            )
+            inserted_new_release = True
+        return ArticleDraft(
+            press_release_id=item_id,
+            title=item.title,
+            body="자동 큐 소진 초안입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "0")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+    monkeypatch.setattr("news_summary.service.generate_draft", fake_generate_draft)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+    messages = collector._drain_pending_queue_once()
+
+    assert any("처리 1건" in message for message in messages)
+    assert store.pending_press_release_summary()["total"] == 1
+    snapshot = json.loads(store.get_app_metadata(AUTO_QUEUE_DRAIN_STATUS_KEY) or "{}")
+    assert snapshot["queue_pending_before"] == 1
+    assert snapshot["queue_pending_after"] == 1
+    assert snapshot["queue_processed_count"] == 1
+
+
 def test_auto_collector_runs_maintenance_immediately_when_worker_starts(monkeypatch):
     db_path = Path(f"data/.test_auto_immediate_maintenance_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

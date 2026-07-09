@@ -86,6 +86,10 @@ def env_int(name: str, default: int, minimum: int = 1) -> int:
     return max(minimum, parsed)
 
 
+def _created_draft_message_count(messages: list[str]) -> int:
+    return sum(1 for message in messages if message.startswith("초안 #") and " 생성:" in message)
+
+
 @dataclass
 class AutoCollectorStatus:
     enabled: bool = False
@@ -780,7 +784,7 @@ class AutoCollector:
         messages = draft_pending_releases(self.store, limit=limit, require_gemini=self.require_gemini)
         pending_after = int(self.store.pending_press_release_summary(limit=1).get("total") or 0)
         failure_after = self.store.draft_generation_failure_summary(limit=1)
-        processed_count = max(0, pending_total - pending_after)
+        processed_count = max(_created_draft_message_count(messages), pending_total - pending_after, 0)
         self.store.set_app_metadata(
             AUTO_QUEUE_DRAIN_STATUS_KEY,
             json.dumps(
