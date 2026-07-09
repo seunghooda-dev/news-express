@@ -2795,9 +2795,28 @@ def _url_discovery_report(store: Store) -> dict[str, object]:
     if not isinstance(payload, dict):
         return {"updated_at": None, "discoveries": []}
     discoveries = payload.get("discoveries")
+    display_items: list[dict[str, object]] = []
+    if isinstance(discoveries, list):
+        for item in discoveries:
+            if not isinstance(item, dict):
+                continue
+            urls = [
+                str(url).strip()
+                for url in item.get("urls") or []
+                if str(url).strip()
+            ]
+            display_items.append(
+                {
+                    "source_id": str(item.get("source_id") or ""),
+                    "source_name": source_display_label(str(item.get("source_name") or "")),
+                    "urls": urls,
+                    "url_count": len(urls),
+                    "preview_urls": urls[:2],
+                }
+            )
     return {
         "updated_at": payload.get("updated_at"),
-        "discoveries": discoveries if isinstance(discoveries, list) else [],
+        "discoveries": display_items,
     }
 
 
@@ -2856,7 +2875,12 @@ def _fallback_url_report(config_path: Path) -> dict[str, object]:
         "prepared_count": len(prepared),
         "total_count": len(sources),
         "sources": [
-            {"name": source_display_label(source.name), "count": len(source.fallback_urls)}
+            {
+                "source_id": source.id,
+                "name": source_display_label(source.name),
+                "count": len(source.fallback_urls),
+                "first_url": source.fallback_urls[0] if source.fallback_urls else "",
+            }
             for source in prepared[:8]
         ],
     }

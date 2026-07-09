@@ -547,7 +547,17 @@
     {% if fallback_report.sources %}
       <p class="gemini-models">
         {% for item in fallback_report.sources %}
-          <span>{{ item.name }} {{ item.count }}개</span>
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.name }}</a>
+            {% else %}
+              {{ item.name }}
+            {% endif %}
+            {{ item.count }}개
+            {% if item.first_url %}
+              · <a href="{{ item.first_url }}" target="_blank" rel="noopener noreferrer">대표 URL</a>
+            {% endif %}
+          </span>
         {% endfor %}
       </p>
     {% else %}
@@ -573,11 +583,25 @@
     <p class="meta">반복 실패 기관의 홈페이지에서 보도자료 후보 링크를 자동 기록합니다.</p>
     <p class="meta">최근 탐색 {{ url_discovery_report.updated_at|date_label }}</p>
     {% if url_discovery_report.discoveries %}
-      <p class="gemini-models">
+      <ul class="ops-mini-list">
         {% for item in url_discovery_report.discoveries[:5] %}
-          <span>{{ source_display_label(item.source_name) }} {{ item.urls|length }}개</span>
+          <li>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+              · <a href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ item.source_id) }}">로그</a>
+            {% else %}
+              {{ item.source_name }}
+            {% endif %}
+            · 후보 {{ item.url_count }}개
+            {% if item.preview_urls %}
+              <br>
+              {% for candidate_url in item.preview_urls %}
+                <a href="{{ candidate_url }}" target="_blank" rel="noopener noreferrer">후보 {{ loop.index }}</a>{% if not loop.last %} · {% endif %}
+              {% endfor %}
+            {% endif %}
+          </li>
         {% endfor %}
-      </p>
+      </ul>
     {% else %}
       <p class="meta">새로 발견된 후보 URL이 없습니다.</p>
     {% endif %}

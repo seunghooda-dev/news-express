@@ -5545,6 +5545,67 @@ def test_operations_page_shows_recovery_candidate_card(monkeypatch):
     assert 'href="/sources/sample-source"' in html
 
 
+def test_operations_page_links_fallback_and_url_discovery_items(monkeypatch):
+    db_path = Path(f"data/.test_operations_url_cards_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+    from news_summary.web import create_app
+
+    monkeypatch.setattr(
+        web_module,
+        "_fallback_url_report",
+        lambda config_path: {
+            "prepared_count": 1,
+            "total_count": 29,
+            "sources": [
+                {
+                    "source_id": "gangjin",
+                    "name": "강진군청 보도자료",
+                    "count": 2,
+                    "first_url": "https://example.com/gangjin/fallback",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_url_discovery_report",
+        lambda store: {
+            "updated_at": "2026-07-10T09:00:00+09:00",
+            "discoveries": [
+                {
+                    "source_id": "gangjin",
+                    "source_name": "강진군청 보도자료",
+                    "url_count": 3,
+                    "preview_urls": [
+                        "https://example.com/gangjin/press",
+                        "https://example.com/gangjin/news",
+                    ],
+                    "urls": [
+                        "https://example.com/gangjin/press",
+                        "https://example.com/gangjin/news",
+                        "https://example.com/gangjin/board",
+                    ],
+                }
+            ],
+        },
+    )
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "대체 URL 준비" in html
+    assert 'href="/sources/gangjin"' in html
+    assert 'href="https://example.com/gangjin/fallback"' in html
+    assert "URL 후보 탐색" in html
+    assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Dgangjin"' in html
+    assert 'href="https://example.com/gangjin/press"' in html
+    assert 'href="https://example.com/gangjin/news"' in html
+    assert "후보 3개" in html
+
+
 def test_operations_page_creates_and_restores_backup(monkeypatch):
     db_path = Path(f"data/.test_operations_backup_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_operations_backups_{uuid4().hex}").resolve()
