@@ -31,6 +31,7 @@ from .scheduler import (
     AUTO_DAILY_REPORT_KEY,
     AUTO_DEDUPLICATE_STATUS_KEY,
     AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+    AUTO_QUEUE_DRAIN_STATUS_KEY,
     AUTO_RECOVERY_STATUS_KEY,
     AUTO_SERVER_HEALTH_STATUS_KEY,
     AUTO_URL_DISCOVERY_STATUS_KEY,
@@ -2383,21 +2384,26 @@ def _deduplicate_report(store: Store) -> dict[str, object]:
 
 
 def _auto_queue_drain_report(store: Store) -> dict[str, object]:
-    report = _metadata_json_report(
-        store,
-        AUTO_RECOVERY_STATUS_KEY,
-        {
-            "updated_at": None,
-            "queue_pending_before": None,
-            "queue_pending_after": None,
-            "queue_processed_count": None,
-            "queue_failure_before": None,
-            "queue_failure_after": None,
-            "queue_retry_due_before": None,
-            "queue_retry_due_after": None,
-            "queue_drain_messages": [],
-        },
-    )
+    default = {
+        "updated_at": None,
+        "queue_pending_before": None,
+        "queue_pending_after": None,
+        "queue_processed_count": None,
+        "queue_failure_before": None,
+        "queue_failure_after": None,
+        "queue_retry_due_before": None,
+        "queue_retry_due_after": None,
+        "queue_drain_messages": [],
+    }
+    report = _metadata_json_report(store, AUTO_QUEUE_DRAIN_STATUS_KEY, default)
+    if not report.get("updated_at"):
+        legacy_report = _metadata_json_report(
+            store,
+            AUTO_RECOVERY_STATUS_KEY,
+            default,
+        )
+        if legacy_report.get("queue_pending_before") is not None or legacy_report.get("queue_drain_messages"):
+            report = legacy_report
     messages = report.get("queue_drain_messages")
     return {
         "updated_at": report.get("updated_at"),
@@ -2410,7 +2416,6 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
         "queue_retry_due_after": report.get("queue_retry_due_after"),
         "queue_drain_messages": messages if isinstance(messages, list) else [],
     }
-
 
 def _metadata_json_report(store: Store, key: str, default: dict[str, object]) -> dict[str, object]:
     raw_value = store.get_app_metadata(key)

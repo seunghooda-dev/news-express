@@ -2386,7 +2386,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
         (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
     )
     store.set_app_metadata(
-        "auto_recovery_status_snapshot",
+        "auto_queue_drain_status_snapshot",
         json.dumps(
             {
                 "updated_at": "2026-07-09T09:00:00+09:00",
@@ -3561,7 +3561,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     store.init_db()
     due_at = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
     store.set_app_metadata(
-        "auto_recovery_status_snapshot",
+        "auto_queue_drain_status_snapshot",
         json.dumps(
             {
                 "updated_at": "2026-07-09T00:30:00+00:00",

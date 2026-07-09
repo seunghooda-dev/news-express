@@ -57,6 +57,7 @@ AUTO_BACKUP_KEEP_COUNT_ENV = "NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
 PUBLIC_URL_ENV = "NEWS_SUMMARY_PUBLIC_URL"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
+AUTO_QUEUE_DRAIN_STATUS_KEY = "auto_queue_drain_status_snapshot"
 AUTO_DAILY_REPORT_KEY = "auto_daily_report_snapshot"
 AUTO_URL_DISCOVERY_STATUS_KEY = "auto_url_discovery_snapshot"
 AUTO_BACKUP_VERIFY_STATUS_KEY = "auto_backup_verify_snapshot"
@@ -741,7 +742,7 @@ class AutoCollector:
         failure_after = self.store.draft_generation_failure_summary(limit=1)
         processed_count = max(0, pending_total - pending_after)
         self.store.set_app_metadata(
-            AUTO_RECOVERY_STATUS_KEY,
+            AUTO_QUEUE_DRAIN_STATUS_KEY,
             json.dumps(
                 {
                     "updated_at": _now(),
