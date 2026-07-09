@@ -861,11 +861,13 @@ def create_app() -> Flask:
             return redirect(url_for("dashboard"))
         summary = _source_summary_by_id(store, config_path, source_id)
         source_detail_metrics = _source_detail_metrics(store, source_id)
+        source_collection_history = _source_collection_history(store, source_id)
         return render_template(
             "source_detail.html",
             source=source,
             summary=summary,
             source_detail_metrics=source_detail_metrics,
+            source_collection_history=source_collection_history,
             recent_releases=[_press_release_listing_item(row) for row in store.press_releases_by_source(source_id, limit=20)],
             recent_assets=_display_press_assets(store.press_release_assets_by_source(source_id, limit=30)),
             recent_drafts=store.drafts_by_source(source_id, limit=20),
@@ -4941,6 +4943,93 @@ def _source_detail_metrics(store: Store, source_id: str) -> dict[str, int]:
         "missing_drafts": int(pending_row["count"] or 0) if pending_row else 0,
         "date_issues": sum(1 for row in published_rows if _press_release_date_warning(row)),
         "assets": int(asset_row["count"] or 0) if asset_row else 0,
+    }
+
+
+def _source_collection_history(store: Store, source_id: str, limit: int = 6) -> dict[str, object]:
+    since = (datetime.now(LOCAL_TZ) - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM source_collection_runs
+            WHERE source_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (source_id, limit),
+        ).fetchall()
+        recent_failures_row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM source_collection_runs
+            WHERE source_id = ?
+              AND checked_at >= ?
+              AND status = 'failed'
+            """,
+            (source_id, since),
+        ).fetchone()
+        recovered_row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM source_collection_runs
+            WHERE source_id = ?
+              AND checked_at >= ?
+              AND status = 'ok'
+              AND message LIKE '%자동 재검증 통과%'
+            """,
+            (source_id, since),
+        ).fetchone()
+
+    history = []
+    for row in rows:
+        status = str(row["status"] or "")
+        message = str(row["message"] or "").strip()
+        failure_stage, failure_reason = _source_failure_display(
+            row["failure_stage"],
+            row["failure_reason"],
+            message,
+        )
+        if status == "ok" and "자동 재검증 통과" in message:
+            status_label = "자동 복구"
+            badge_class = "badge-gemini"
+        elif status == "ok":
+            status_label = "정상"
+            badge_class = "badge-gemini"
+        elif is_transient_site_failure(failure_stage, failure_reason):
+            status_label = "일시 지연"
+            badge_class = "badge-warning"
+        else:
+            status_label = "수집 실패"
+            badge_class = "badge-warning"
+
+        counts = []
+        releases_found = int(row["releases_found"] or 0)
+        inserted_count = int(row["inserted_count"] or 0)
+        repaired_dates = int(row["repaired_dates"] or 0)
+        if releases_found:
+            counts.append(f"확인 {releases_found}건")
+        if inserted_count:
+            counts.append(f"저장 {inserted_count}건")
+        if repaired_dates:
+            counts.append(f"보정 {repaired_dates}건")
+
+        history.append(
+            {
+                "checked_at": str(row["checked_at"] or ""),
+                "status_label": status_label,
+                "badge_class": badge_class,
+                "failure_stage": failure_stage,
+                "failure_reason": failure_reason,
+                "message": message,
+                "counts_label": " · ".join(counts),
+            }
+        )
+
+    return {
+        "recent_failures": int(recent_failures_row["count"] or 0) if recent_failures_row else 0,
+        "recent_recoveries": int(recovered_row["count"] or 0) if recovered_row else 0,
+        "history": history,
     }
 
 

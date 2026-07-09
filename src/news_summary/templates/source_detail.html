@@ -53,6 +53,26 @@
   <p class="meta">{{ summary.last_message or "아직 수집 점검 기록이 없습니다." }}</p>
 </section>
 
+{% if source_collection_history.history %}
+  <section class="source-health">
+    <h2>최근 수집 이력</h2>
+    <p class="meta">최근 24시간 실패 {{ source_collection_history.recent_failures }}건 · 자동 복구 {{ source_collection_history.recent_recoveries }}건</p>
+    <ul class="ops-mini-list">
+      {% for item in source_collection_history.history %}
+        <li>
+          <span class="badge {{ item.badge_class }}">{{ item.status_label }}</span>
+          {{ item.checked_at|date_label }}
+          {% if item.failure_stage %} · {{ item.failure_stage }}{% endif %}
+          {% if item.failure_reason %} · {{ item.failure_reason }}{% endif %}
+          <br>
+          {{ item.message or "점검 메시지 없음" }}
+          {% if item.counts_label %}<br>{{ item.counts_label }}{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
 {% if recent_assets %}
   <section class="asset-panel source-asset-panel" id="source-assets">
     <div class="section-head compact">
