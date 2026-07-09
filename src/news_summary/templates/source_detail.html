@@ -74,8 +74,24 @@
   </section>
 {% endif %}
 
+<section class="source-health">
+  <h2>권장 조치</h2>
+  <ul class="ops-mini-list">
+    {% for item in source_action_items %}
+      <li>
+        <span class="badge {% if item.level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">{{ item.label }}</span>
+        {% if item.href %}
+          <a href="{{ item.href }}">{{ item.message }}</a>
+        {% else %}
+          {{ item.message }}
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</section>
+
 {% if source_failure_summary.total_failures or source_failure_summary.last_success_at %}
-  <section class="source-health">
+  <section class="source-health" id="source-failure-summary">
     <h2>최근 실패 원인 요약</h2>
     {% if source_failure_summary.total_failures %}
       <p class="meta">
@@ -101,7 +117,7 @@
   </section>
 {% endif %}
 
-<section class="source-health">
+<section class="source-health" id="source-routes">
   <h2>수집 경로 점검</h2>
   {% if source_route_summary.configured_urls %}
     <p class="gemini-models">

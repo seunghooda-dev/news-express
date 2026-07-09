@@ -940,6 +940,7 @@ def create_app() -> Flask:
             return redirect(url_for("dashboard"))
         summary = _source_summary_by_id(store, config_path, source_id)
         source_detail_metrics = _source_detail_metrics(store, source_id)
+        source_route_summary = _source_route_summary(store, source)
         source_collection_history = _source_collection_history(store, source_id)
         source_failure_summary = _source_failure_summary(store, source_id)
         return render_template(
@@ -947,9 +948,16 @@ def create_app() -> Flask:
             source=source,
             summary=summary,
             source_detail_metrics=source_detail_metrics,
-            source_route_summary=_source_route_summary(store, source),
+            source_route_summary=source_route_summary,
             source_collection_history=source_collection_history,
             source_failure_summary=source_failure_summary,
+            source_action_items=_source_action_items(
+                source,
+                summary,
+                source_detail_metrics,
+                source_route_summary=source_route_summary,
+                source_failure_summary=source_failure_summary,
+            ),
             recent_releases=[_press_release_listing_item(row) for row in store.press_releases_by_source(source_id, limit=20)],
             recent_assets=_display_press_assets(store.press_release_assets_by_source(source_id, limit=30)),
             recent_drafts=store.drafts_by_source(source_id, limit=20),
@@ -5477,6 +5485,100 @@ def _source_route_summary(store: Store, source: Source) -> dict[str, object]:
         "discovered_urls": discovery["urls"],
         "discovered_at": discovery["updated_at"],
     }
+
+
+def _source_action_items(
+    source: Source,
+    summary: dict[str, object],
+    source_detail_metrics: dict[str, int],
+    source_route_summary: dict[str, object],
+    source_failure_summary: dict[str, object],
+) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    missing_drafts = int(source_detail_metrics.get("missing_drafts") or 0)
+    date_issues = int(source_detail_metrics.get("date_issues") or 0)
+    consecutive_failures = int(summary.get("consecutive_failures") or 0)
+    structural_failures = int(source_failure_summary.get("structural_failures") or 0)
+    discovered_urls = source_route_summary.get("discovered_urls") or []
+    fallback_urls = source_route_summary.get("fallback_urls") or []
+
+    if consecutive_failures >= 3:
+        if discovered_urls:
+            items.append(
+                {
+                    "level": "warning",
+                    "label": "후보 URL 검토",
+                    "message": f"연속 실패 {consecutive_failures}회입니다. 자동 탐색 후보 URL {len(discovered_urls)}개를 먼저 확인해 주세요.",
+                    "href": "#source-routes",
+                }
+            )
+        elif fallback_urls:
+            items.append(
+                {
+                    "level": "warning",
+                    "label": "대체 경로 점검",
+                    "message": f"연속 실패 {consecutive_failures}회입니다. 등록된 대체 URL {len(fallback_urls)}개 연결 상태를 우선 확인해 주세요.",
+                    "href": "#source-routes",
+                }
+            )
+        else:
+            items.append(
+                {
+                    "level": "warning",
+                    "label": "수집 경로 보강",
+                    "message": f"연속 실패 {consecutive_failures}회입니다. 대체 URL 또는 후보 URL 확보가 필요합니다.",
+                    "href": "#source-routes",
+                }
+            )
+        items.append(
+            {
+                "level": "warning",
+                "label": "기관 로그 확인",
+                "message": "최근 실패 원인과 자동 복구 기록을 기관 로그에서 바로 확인해 주세요.",
+                "href": url_for("ops_logs", tab="collector", q=f"source_id={source.id}"),
+            }
+        )
+
+    if structural_failures > 0:
+        items.append(
+            {
+                "level": "warning",
+                "label": "구조 변경 점검",
+                "message": f"최근 7일 구조성 실패가 {structural_failures}건 있습니다. URL 경로와 본문 구조를 함께 확인해 주세요.",
+                "href": "#source-failure-summary",
+            }
+        )
+
+    if missing_drafts > 0:
+        items.append(
+            {
+                "level": "warning",
+                "label": "초안 변환 확인",
+                "message": f"초안 없는 원문 {missing_drafts}건이 남아 있습니다. 미변환 원문 목록을 확인해 주세요.",
+                "href": url_for("press_releases", draft="missing", source=source.id),
+            }
+        )
+
+    if date_issues > 0:
+        items.append(
+            {
+                "level": "warning",
+                "label": "게시일 점검",
+                "message": f"게시일 확인 원문 {date_issues}건이 있습니다. 날짜 표기 보정이 필요한지 확인해 주세요.",
+                "href": url_for("press_releases", draft="date_issue", source=source.id),
+            }
+        )
+
+    if items:
+        return items[:5]
+    return [
+        {
+            "level": "ok",
+            "label": "즉시 조치 없음",
+            "message": "현재 운영 기준에서 바로 확인할 항목이 없습니다.",
+            "href": "",
+        }
+    ]
 
 
 def _source_url_discovery_summary(store: Store, source_id: str) -> dict[str, object]:

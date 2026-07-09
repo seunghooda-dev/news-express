@@ -3057,6 +3057,108 @@ def test_source_detail_shows_route_diagnostics(monkeypatch):
     assert "테스트군청 보도자료" in html
 
 
+def test_source_detail_shows_action_recommendations(monkeypatch):
+    db_path = Path(f"data/.test_source_detail_actions_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata(
+        "auto_url_discovery_snapshot",
+        json.dumps(
+            {
+                "updated_at": "2026-07-10T15:00:00+09:00",
+                "discoveries": [
+                    {
+                        "source_id": "action-source",
+                        "source_name": "테스트시청 보도자료",
+                        "urls": ["https://example.com/candidate/press"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    from news_summary import web as web_module
+
+    source = Source(
+        id="action-source",
+        name="테스트시청 보도자료",
+        region="전남 테스트",
+        type="html",
+        list_url="https://example.com/list",
+        fallback_urls=["https://example.com/fallback/press"],
+    )
+    monkeypatch.setattr(web_module, "_source_by_id", lambda config_path, source_id: source if source_id == "action-source" else None)
+    monkeypatch.setattr(
+        web_module,
+        "_source_summary_by_id",
+        lambda store, config_path, source_id: {
+            "id": "action-source",
+            "name": source.name,
+            "region": source.region,
+            "releases": 5,
+            "yesterday_releases": 2,
+            "today_releases": 0,
+            "last_collected": None,
+            "issue": "수집 실패",
+            "status_label": "수집 실패",
+            "status_level": "error",
+            "status_detail": "4회 연속 실패했습니다.",
+            "business_gap": 2,
+            "consecutive_failures": 4,
+            "last_status": "failed",
+            "last_checked_at": "2026-07-10T14:40:00+09:00",
+            "last_message": "본문 파싱 실패",
+            "failure_stage": "본문 파싱 실패",
+            "failure_reason": "선택자 불일치",
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_source_detail_metrics",
+        lambda store, source_id: {
+            "missing_drafts": 3,
+            "date_issues": 1,
+            "assets": 0,
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_source_failure_summary",
+        lambda store, source_id, days=7, limit=4: {
+            "days": 7,
+            "total_failures": 4,
+            "transient_failures": 1,
+            "structural_failures": 3,
+            "last_success_at": "2026-07-09T11:00:00+09:00",
+            "stages": [
+                {"stage": "본문 파싱 실패", "count": 3, "reason": "선택자 불일치"},
+            ],
+        },
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/sources/action-source").data.decode("utf-8")
+
+    assert "권장 조치" in html
+    assert "후보 URL 검토" in html
+    assert 'href="#source-routes"' in html
+    assert "기관 로그 확인" in html
+    assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Daction-source"' in html
+    assert "구조 변경 점검" in html
+    assert 'href="#source-failure-summary"' in html
+    assert "초안 변환 확인" in html
+    assert 'href="/press-releases?draft=missing&amp;source=action-source"' in html
+    assert "게시일 점검" in html
+    assert 'href="/press-releases?draft=date_issue&amp;source=action-source"' in html
+
+
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     db_path = Path(f"data/.test_recrawl_route_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
