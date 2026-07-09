@@ -2456,12 +2456,14 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "중복 원문 정리" in html
     assert "URL 후보 탐색" in html
     assert "Gemini 초안 대기열" in html
+    assert "전체 원문 기준 · 오늘 원문 외 대기분 포함" in html
     assert "마지막 자동 소진" in html
     assert "다음 자동 점검" in html
     assert "전 8건" in html
     assert "후 5건" in html
     assert "처리 3건" in html
     assert "Gemini 재처리 대기열" in html
+    assert "전체 원문 기준 · 오늘 원문 외 재처리 대기분 포함" in html
     assert "generation_error 1건" in html
     assert "최근 재처리 원문" in html
     assert "Gemini 대기 원문" in html
@@ -3544,6 +3546,7 @@ def test_healthz_reports_draft_conversion_coverage(monkeypatch):
     assert payload["draft_conversion_today_pending"] == 1
     assert payload["draft_conversion_retry_ready_pending"] == 1
     assert payload["draft_conversion_retry_scheduled_pending"] == 0
+    assert payload["draft_conversion_retry_scope"] == "today_releases"
     assert payload["draft_conversion_next_retry_at"] is None
     assert payload["draft_conversion_effective_next_retry_at"] is None
     assert payload["draft_conversion_drafted_percent"] == 50
@@ -3743,6 +3746,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_pending_total"] == 2
     assert payload["gemini_failure_total"] == 2
     assert payload["gemini_retry_due"] == 2
+    assert payload["gemini_queue_scope"] == "all_releases"
     assert payload["gemini_next_retry_at"] == due_at
     assert payload["gemini_effective_next_retry_at"] == due_at
     assert payload["gemini_oldest_first_failed_at"]

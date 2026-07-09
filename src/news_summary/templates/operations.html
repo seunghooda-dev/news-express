@@ -332,6 +332,7 @@
       <h2>Gemini 초안 대기열</h2>
       <span class="badge {% if pending_queue.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ pending_queue.total }}건</span>
     </div>
+    <p class="meta">전체 원문 기준 · 오늘 원문 외 대기분 포함</p>
     {% if pending_queue.total %}
       <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
       {% if queue_drain_report.updated_at %}
@@ -365,6 +366,7 @@
       <h2>Gemini 재처리 대기열</h2>
       <span class="badge {% if draft_failure_summary.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ draft_failure_summary.total }}건</span>
     </div>
+    <p class="meta">전체 원문 기준 · 오늘 원문 외 재처리 대기분 포함</p>
     {% if draft_failure_summary.total %}
       <p class="meta">
         {% if draft_failure_summary.due %}
