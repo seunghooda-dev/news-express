@@ -1366,6 +1366,63 @@ h3 {
   margin-bottom: 18px;
 }
 
+.ops-secondary-section {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.ops-secondary-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 12px 14px;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.ops-secondary-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.ops-secondary-toggle::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--accent-strong);
+  border-bottom: 2px solid var(--accent-strong);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.16s ease;
+}
+
+.ops-secondary-section[open] .ops-secondary-toggle::after {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.ops-secondary-toggle:hover,
+.ops-secondary-toggle:focus-visible {
+  background: #f7fbfa;
+}
+
+.ops-secondary-toggle b {
+  margin-left: auto;
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.ops-grid-secondary {
+  margin: 0;
+  padding: 0 14px 14px;
+}
+
 .ops-card {
   display: grid;
   gap: 10px;
@@ -2449,6 +2506,15 @@ h3 {
 
   .ops-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ops-secondary-toggle {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  .ops-grid-secondary {
+    padding: 0 10px 10px;
   }
 
   .visitor-date-tabs {

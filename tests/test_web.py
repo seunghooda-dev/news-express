@@ -3338,33 +3338,30 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "src/news_summary/web.py" in html
     assert "백업 자동 생성" in html
     assert "최근 7개 유지" in html
+
+
+def test_operations_page_collapses_secondary_reference_cards_by_default(monkeypatch):
+    db_path = Path(f"data/.test_operations_secondary_section_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert '<details class="ops-secondary-section">' in html
+    assert '<details class="ops-secondary-section" open' not in html
+    assert "참고 항목 펼치기" in html
+    assert "10개" in html
     assert "일일 운영 리포트" in html
     assert "운영 요약" in html
     assert "서버 상태 점검" in html
     assert "수집 이상치" in html
-    assert "게시일 점검" in html
     assert "대체 URL 준비" in html
-    assert "중복 원문 정리" in html
     assert "URL 후보 탐색" in html
-    assert "Gemini 초안 대기열" in html
-    assert "전체 원문 기준 · 오늘 원문 외 대기분 포함" in html
-    assert "마지막 자동 소진" in html
-    assert "다음 자동 점검" in html
-    assert "전 8건" in html
-    assert "후 5건" in html
-    assert "처리 3건" in html
-    assert "Gemini 재처리 대기열" in html
-    assert "전체 원문 기준 · 오늘 원문 외 재처리 대기분 포함" in html
-    assert "generation_error 1건" in html
-    assert "최근 재처리 원문" in html
-    assert "Gemini 대기 원문" in html
-    assert "다음 처리" in html
-    assert "테스트 기관 1건" in html
-    assert 'href="/sources/sample"' in html
-    assert 'href="/press-releases?draft=missing&amp;source=sample"' in html
-    assert "외부 접속" in html
-    assert "외부 접속 정상" in html
-    assert "https://sample.trycloudflare.com" in html
+    assert "접속자 현황" in html
+    assert "DB 백업" in html
 
 
 def test_operations_page_shows_repeated_failure_priority_sources(monkeypatch):
