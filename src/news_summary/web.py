@@ -1264,7 +1264,11 @@ def _deployment_version_report() -> dict[str, object]:
     branch = os.getenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express").strip()
     latest_commit = _latest_github_commit(repo, branch) if repo and branch else None
     deploy_config = _render_deploy_config_report()
-    change_report = _deployment_change_report(repo, running_commit, branch) if repo and running_commit and latest_commit else None
+    change_report = (
+        _deployment_change_report(repo, running_commit, branch, latest_commit)
+        if repo and running_commit and latest_commit
+        else None
+    )
     if running_commit and latest_commit:
         is_current = running_commit.lower().startswith(latest_commit[:12].lower()) or latest_commit.lower().startswith(
             running_commit[:12].lower()
@@ -1424,18 +1428,30 @@ def _latest_github_commit(repo: str, branch: str) -> str | None:
     return result
 
 
-def _deployment_change_report(repo: str, running_commit: str | None, branch: str) -> dict[str, object] | None:
+def _deployment_change_report(
+    repo: str,
+    running_commit: str | None,
+    branch: str,
+    latest_commit: str | None = None,
+) -> dict[str, object] | None:
     if not running_commit:
         return None
     filenames = _github_compare_files(repo, running_commit, branch)
     if filenames is None:
         return None
     runtime_files = [filename for filename in filenames if _is_runtime_deploy_file(filename)]
+    compare_head = latest_commit or branch
+    compare_url = (
+        f"https://github.com/{repo}/compare/{quote(running_commit, safe='')}...{quote(compare_head, safe='')}"
+        if repo and compare_head
+        else None
+    )
     return {
         "changed_count": len(filenames),
         "runtime_change_count": len(runtime_files),
         "sample_files": filenames[:5],
         "runtime_sample_files": runtime_files[:5],
+        "compare_url": compare_url,
     }
 
 

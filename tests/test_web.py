@@ -2890,6 +2890,13 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
             "auto_deploy_label": "커밋 시 자동 배포",
             "auto_deploy_trigger": "commit",
             "auto_deploy_level": "ok",
+            "change_report": {
+                "changed_count": 2,
+                "runtime_change_count": 1,
+                "sample_files": ["README.md", "src/news_summary/web.py"],
+                "runtime_sample_files": ["src/news_summary/web.py"],
+                "compare_url": "https://github.com/seunghooda-dev/news-express/compare/abc1234...abc1234",
+            },
         },
     )
     app = web_module.create_app()
@@ -2911,6 +2918,9 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "배포 버전" in html
     assert "최신 배포" in html
     assert "자동 배포 커밋 시 자동 배포" in html
+    assert "GitHub 변경 비교" in html
+    assert "런타임 파일:" in html
+    assert "src/news_summary/web.py" in html
     assert "백업 자동 생성" in html
     assert "최근 7개 유지" in html
     assert "일일 운영 리포트" in html
@@ -3780,6 +3790,8 @@ def test_deployment_report_marks_runtime_changes_as_deploy_needed(monkeypatch):
     assert report["status_label"] == "배포 필요"
     assert report["status_level"] == "warning"
     assert report["change_report"]["runtime_change_count"] == 1
+    assert report["change_report"]["runtime_sample_files"] == ["src/news_summary/web.py"]
+    assert report["change_report"]["compare_url"] == "https://github.com/owner/repo/compare/aaa111...bbb222"
 
 
 def test_cloudflare_tunnel_status_skips_process_check_on_render(monkeypatch):

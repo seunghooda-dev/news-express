@@ -113,6 +113,26 @@
       <p class="meta">
         미배포 변경 {{ deployment_version.change_report.changed_count }}개 · 런타임 영향 {{ deployment_version.change_report.runtime_change_count }}개
       </p>
+      {% if deployment_version.change_report.compare_url %}
+        <p class="inline-actions">
+          <a class="source-link" href="{{ deployment_version.change_report.compare_url }}" target="_blank" rel="noopener noreferrer">GitHub 변경 비교</a>
+        </p>
+      {% endif %}
+      {% if deployment_version.change_report.runtime_sample_files %}
+        <p class="gemini-models">
+          런타임 파일:
+          {% for item in deployment_version.change_report.runtime_sample_files %}
+            <span>{{ item }}</span>
+          {% endfor %}
+        </p>
+      {% elif deployment_version.change_report.sample_files %}
+        <p class="gemini-models">
+          변경 파일:
+          {% for item in deployment_version.change_report.sample_files %}
+            <span>{{ item }}</span>
+          {% endfor %}
+        </p>
+      {% endif %}
       {% if deployment_version.change_report.runtime_change_count == 0 and deployment_version.change_report.changed_count > 0 %}
         <p class="meta">서버 코드가 아닌 문서/워크플로 변경만 있어 현재 운영 버전을 정상으로 봅니다.</p>
       {% endif %}
