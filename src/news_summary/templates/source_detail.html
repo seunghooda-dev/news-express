@@ -73,6 +73,33 @@
   </section>
 {% endif %}
 
+{% if source_failure_summary.total_failures or source_failure_summary.last_success_at %}
+  <section class="source-health">
+    <h2>최근 실패 원인 요약</h2>
+    {% if source_failure_summary.total_failures %}
+      <p class="meta">
+        최근 {{ source_failure_summary.days }}일 실패 {{ source_failure_summary.total_failures }}건 ·
+        일시 장애 {{ source_failure_summary.transient_failures }}건 ·
+        구조 문제 {{ source_failure_summary.structural_failures }}건
+      </p>
+      <ul class="ops-mini-list">
+        {% for item in source_failure_summary.stages %}
+          <li>
+            <span class="badge badge-warning">{{ item.stage }}</span>
+            {{ item.count }}건
+            {% if item.reason %} · {{ item.reason }}{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">최근 {{ source_failure_summary.days }}일 실패 기록이 없습니다.</p>
+    {% endif %}
+    {% if source_failure_summary.last_success_at %}
+      <p class="meta">마지막 정상 수집 {{ source_failure_summary.last_success_at|date_label }}</p>
+    {% endif %}
+  </section>
+{% endif %}
+
 {% if recent_assets %}
   <section class="asset-panel source-asset-panel" id="source-assets">
     <div class="section-head compact">

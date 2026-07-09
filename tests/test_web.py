@@ -2491,6 +2491,98 @@ def test_source_detail_shows_recent_collection_history(monkeypatch):
     assert "확인 3건 · 저장 2건 · 보정 1건" in html
 
 
+def test_source_detail_shows_failure_summary(monkeypatch):
+    db_path = Path(f"data/.test_source_detail_failure_summary_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+    now_utc = datetime.now(timezone.utc)
+    with store.connect() as conn:
+        for payload in (
+            (
+                "failed",
+                "TLS 연결 시간 초과",
+                "외부 사이트 응답 지연",
+                "TLS 연결 시간 초과",
+                0,
+                0,
+                0,
+                (now_utc - timedelta(hours=6)).isoformat(),
+            ),
+            (
+                "failed",
+                "TLS 연결 시간 초과",
+                "외부 사이트 응답 지연",
+                "TLS 연결 시간 초과",
+                0,
+                0,
+                0,
+                (now_utc - timedelta(hours=5)).isoformat(),
+            ),
+            (
+                "failed",
+                "본문 파싱 실패",
+                "본문 파싱 실패",
+                "선택자 불일치",
+                0,
+                0,
+                0,
+                (now_utc - timedelta(hours=2)).isoformat(),
+            ),
+            (
+                "ok",
+                "원문 검증 통과 2건, 새로 저장 1건",
+                "",
+                "",
+                2,
+                1,
+                0,
+                (now_utc - timedelta(minutes=20)).isoformat(),
+            ),
+        ):
+            status, message, failure_stage, failure_reason, releases_found, inserted_count, repaired_dates, checked_at = payload
+            conn.execute(
+                """
+                INSERT INTO source_collection_runs
+                (source_id, source_name, status, message, failure_stage, failure_reason,
+                 releases_found, inserted_count, repaired_dates, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "jindo-county",
+                    "진도군청 보도자료",
+                    status,
+                    message,
+                    failure_stage,
+                    failure_reason,
+                    releases_found,
+                    inserted_count,
+                    repaired_dates,
+                    checked_at,
+                ),
+            )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/sources/jindo-county").data.decode("utf-8")
+
+    assert "최근 실패 원인 요약" in html
+    assert "최근 7일 실패 3건" in html
+    assert "일시 장애 2건" in html
+    assert "구조 문제 1건" in html
+    assert "외부 사이트 응답 지연" in html
+    assert "2건" in html
+    assert "본문 파싱 실패" in html
+    assert "선택자 불일치" in html
+    assert "마지막 정상 수집" in html
+
+
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     db_path = Path(f"data/.test_recrawl_route_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

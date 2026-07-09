@@ -862,12 +862,14 @@ def create_app() -> Flask:
         summary = _source_summary_by_id(store, config_path, source_id)
         source_detail_metrics = _source_detail_metrics(store, source_id)
         source_collection_history = _source_collection_history(store, source_id)
+        source_failure_summary = _source_failure_summary(store, source_id)
         return render_template(
             "source_detail.html",
             source=source,
             summary=summary,
             source_detail_metrics=source_detail_metrics,
             source_collection_history=source_collection_history,
+            source_failure_summary=source_failure_summary,
             recent_releases=[_press_release_listing_item(row) for row in store.press_releases_by_source(source_id, limit=20)],
             recent_assets=_display_press_assets(store.press_release_assets_by_source(source_id, limit=30)),
             recent_drafts=store.drafts_by_source(source_id, limit=20),
@@ -5030,6 +5032,68 @@ def _source_collection_history(store: Store, source_id: str, limit: int = 6) -> 
         "recent_failures": int(recent_failures_row["count"] or 0) if recent_failures_row else 0,
         "recent_recoveries": int(recovered_row["count"] or 0) if recovered_row else 0,
         "history": history,
+    }
+
+
+def _source_failure_summary(store: Store, source_id: str, days: int = 7, limit: int = 4) -> dict[str, object]:
+    since = (datetime.now(LOCAL_TZ) - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+    with store.connect() as conn:
+        failure_rows = conn.execute(
+            """
+            SELECT failure_stage, failure_reason, message, checked_at
+            FROM source_collection_runs
+            WHERE source_id = ?
+              AND checked_at >= ?
+              AND status = 'failed'
+            ORDER BY id DESC
+            """,
+            (source_id, since),
+        ).fetchall()
+        last_success_row = conn.execute(
+            """
+            SELECT checked_at
+            FROM source_collection_runs
+            WHERE source_id = ?
+              AND status = 'ok'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (source_id,),
+        ).fetchone()
+
+    stage_counts: Counter[str] = Counter()
+    stage_reasons: dict[str, str] = {}
+    transient_failures = 0
+    structural_failures = 0
+    for row in failure_rows:
+        stage, reason = _source_failure_display(
+            row["failure_stage"],
+            row["failure_reason"],
+            row["message"],
+        )
+        stage_label = stage or "수집 실패"
+        stage_counts[stage_label] += 1
+        if stage_label not in stage_reasons and reason:
+            stage_reasons[stage_label] = reason
+        if is_transient_site_failure(stage, reason):
+            transient_failures += 1
+        else:
+            structural_failures += 1
+
+    return {
+        "days": days,
+        "total_failures": len(failure_rows),
+        "transient_failures": transient_failures,
+        "structural_failures": structural_failures,
+        "last_success_at": str(last_success_row["checked_at"] or "") if last_success_row else "",
+        "stages": [
+            {
+                "stage": stage,
+                "count": count,
+                "reason": stage_reasons.get(stage, ""),
+            }
+            for stage, count in stage_counts.most_common(limit)
+        ],
     }
 
 
