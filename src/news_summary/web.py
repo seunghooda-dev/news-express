@@ -435,8 +435,10 @@ def create_app() -> Flask:
     def ops_logs():
         log_path = Path(app.config["NEWS_SUMMARY_LOG_PATH"])
         lines = _recent_log_lines(log_path, limit=250)
+        log_query = " ".join((request.args.get("q") or "").split()).strip()
+        filtered_lines = _filter_log_lines(lines, log_query)
         active_log_tab = request.args.get("tab") or "errors"
-        log_tabs = _ops_log_tabs(lines)
+        log_tabs = _ops_log_tabs(filtered_lines)
         if active_log_tab not in {tab["id"] for tab in log_tabs}:
             active_log_tab = "errors"
         active_log_lines = next(tab["lines"] for tab in log_tabs if tab["id"] == active_log_tab)
@@ -444,9 +446,12 @@ def create_app() -> Flask:
             "ops_logs.html",
             log_path=log_path,
             log_lines=lines,
+            log_query=log_query,
             log_tabs=log_tabs,
             active_log_tab=active_log_tab,
             active_log_lines=active_log_lines,
+            filtered_log_line_count=len(filtered_lines),
+            total_log_line_count=len(lines),
         )
 
     @app.get("/operations")
@@ -5232,6 +5237,14 @@ def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
         return log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
     except OSError:
         return ["운영 로그 파일을 읽을 수 없습니다."]
+
+
+def _filter_log_lines(lines: list[str], query: str) -> list[str]:
+    needle = " ".join((query or "").split()).strip()
+    if not needle:
+        return lines
+    lowered = needle.casefold()
+    return [line for line in lines if lowered in line.casefold()]
 
 
 def _ops_log_tabs(lines: list[str]) -> list[dict[str, object]]:

@@ -12,11 +12,21 @@
 </section>
 
 <section class="ops-log-view">
+  <form class="ops-log-filter" method="get" action="{{ url_for('ops_logs') }}">
+    <input type="hidden" name="tab" value="{{ active_log_tab }}">
+    <label class="sr-only" for="ops-log-query">로그 검색</label>
+    <input id="ops-log-query" name="q" type="search" value="{{ log_query }}" placeholder="기관명, source_id=..., 오류 문구 검색">
+    <button type="submit">검색</button>
+    {% if log_query %}
+      <a class="source-link" href="{{ url_for('ops_logs', tab=active_log_tab) }}">필터 해제</a>
+    {% endif %}
+  </form>
+
   <div class="ops-log-tabs" role="tablist" aria-label="운영 로그 분류">
     {% for tab in log_tabs %}
       <a
         class="{% if active_log_tab == tab.id %}active{% endif %}"
-        href="{{ url_for('ops_logs', tab=tab.id) }}"
+        href="{{ url_for('ops_logs', tab=tab.id, q=log_query if log_query else None) }}"
         role="tab"
         aria-selected="{{ 'true' if active_log_tab == tab.id else 'false' }}"
       >
@@ -29,14 +39,24 @@
   {% set current_tab = (log_tabs|selectattr("id", "equalto", active_log_tab)|list|first) %}
   <div class="ops-log-head">
     <h2>{{ current_tab.label if current_tab else "로그" }}</h2>
-    <span>최근 {{ active_log_lines|length }}줄</span>
+    <span>
+      {% if log_query %}
+        검색 {{ filtered_log_line_count }}줄 / 전체 {{ total_log_line_count }}줄
+      {% else %}
+        최근 {{ active_log_lines|length }}줄
+      {% endif %}
+    </span>
   </div>
+
+  {% if log_query %}
+    <p class="meta">현재 필터: <strong>{{ log_query }}</strong></p>
+  {% endif %}
 
   {% if active_log_lines %}
     <pre>{% for line in active_log_lines %}{{ line }}
 {% endfor %}</pre>
   {% else %}
-    <p class="empty">이 분류에 표시할 로그가 없습니다.</p>
+    <p class="empty">{% if log_query %}검색 조건에 맞는 로그가 없습니다.{% else %}이 분류에 표시할 로그가 없습니다.{% endif %}</p>
   {% endif %}
 </section>
 {% endblock %}

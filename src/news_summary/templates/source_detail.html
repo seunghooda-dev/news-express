@@ -10,6 +10,7 @@
     <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
     <a class="source-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}">게시일 확인 원문</a>
     <a class="source-link" href="{{ url_for('press_releases', asset='with', source=source.id) }}">첨부 포함 원문</a>
+    <a class="source-link" href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ source.id) }}">기관 로그</a>
     <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
   </div>
 </section>

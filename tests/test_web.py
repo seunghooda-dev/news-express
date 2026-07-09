@@ -2330,6 +2330,7 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     assert 'href="/press-releases?draft=date_issue&amp;source=jindo-county"' in html
     assert 'href="/press-releases?asset=with&amp;source=jindo-county"' in html
     assert 'href="/press-releases?source=jindo-county"' in html
+    assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Djindo-county"' in html
 
 
 def test_source_detail_shows_operational_counts_and_shortcuts(monkeypatch):
@@ -2690,6 +2691,33 @@ def test_ops_logs_page_filters_categories(monkeypatch, tmp_path):
     assert "slow web request path=/drafts" in invalid_html
 
 
+def test_ops_logs_page_filters_by_query_and_preserves_tab(monkeypatch, tmp_path):
+    db_path = Path(f"data/.test_ops_logs_query_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_LOG_DIR", str(tmp_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    log_path = tmp_path / "news_summary.log"
+    log_path.write_text(
+        "2026-06-02 WARNING [news_summary.service] source collection failed source_id=gangjin source_name=강진군청 보도자료 error=ConnectTimeout\n"
+        "2026-06-02 INFO [news_summary.service] source collection succeeded source_id=sinan source_name=신안군청 보도자료 releases=3 inserted=2\n",
+        encoding="utf-8",
+    )
+    client = app.test_client()
+
+    html = client.get("/ops-logs?tab=collector&q=source_id=gangjin").data.decode("utf-8")
+
+    assert "강진군청 보도자료" in html
+    assert "신안군청 보도자료" not in html
+    assert 'value="source_id=gangjin"' in html
+    assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Dgangjin"' in html
+    assert "현재 필터:" in html
+    assert "검색 1줄 / 전체 2줄" in html
+
+
 def test_operations_page_toggles_auto_collection(monkeypatch):
     db_path = Path(f"data/.test_operations_auto_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -2985,6 +3013,7 @@ def test_operations_page_shows_repeated_failure_priority_sources(monkeypatch):
     assert "재검증 대기" in html
     assert html.index("알파군청 보도자료") < html.index("베타군청 보도자료")
     assert 'href="/sources/alpha"' in html
+    assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Dalpha"' in html
 
 
 def test_operations_page_links_date_issue_items_to_filtered_press_releases(monkeypatch):

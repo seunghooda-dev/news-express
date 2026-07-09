@@ -177,6 +177,7 @@
         {% for item in operations_health.priority_sources %}
           <li>
             <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            · <a href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ item.source_id) }}">로그</a>
             <span class="badge {% if item.level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">{{ item.priority_label }}</span>
             {{ item.consecutive_failures }}회 연속
             {% if item.failure_stage %} · {{ item.failure_stage }}{% endif %}

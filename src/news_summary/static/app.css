@@ -1499,6 +1499,30 @@ h3 {
   white-space: pre-wrap;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ops-log-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ops-log-filter input[type="search"] {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
 .ops-log-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2385,6 +2409,14 @@ h3 {
 
   .ops-log-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ops-log-filter {
+    flex-wrap: wrap;
+  }
+
+  .ops-log-filter input[type="search"] {
+    flex-basis: 100%;
   }
 
   .ops-log-head {
