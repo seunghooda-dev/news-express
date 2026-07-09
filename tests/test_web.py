@@ -2535,7 +2535,7 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
     assert "자동 복구 점검" in html
     assert "주의" in html
     assert "Gemini 자동 재처리 대기 원문 2건" in html
-    assert "재시도 가능 2건" in html
+    assert "자동 처리 대기 2건" in html
     assert "재시도 대기 원문 1" in html
     assert "재시도 대기 원문 2" in html
     assert "/press-releases/1" in html

@@ -2609,7 +2609,7 @@ def _draft_failure_display_summary(store: Store, summary: dict[str, object]) -> 
     result = dict(summary)
     total = int(result.get("total") or 0)
     cooldown_until = gemini_cooldown_until(store)
-    result["retry_due_label"] = "처리 가능 대기" if cooldown_until else "지금 처리 가능"
+    result["retry_due_label"] = "처리 재개 대기" if cooldown_until else "자동 처리 대기"
     result["effective_next_retry_at"] = (
         _effective_next_draft_retry_at(result.get("next_retry_at"), cooldown_until)
         if total > 0
