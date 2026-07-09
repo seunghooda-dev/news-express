@@ -3613,9 +3613,16 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
             due_at,
         )
 
-    from news_summary.web import create_app
+    from news_summary import web as web_module
 
-    app = create_app()
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 9, 0, 31, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    app = web_module.create_app()
     app.testing = True
     payload = app.test_client().get("/healthz/details").get_json()
 
@@ -3642,6 +3649,20 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     ]
     assert payload["gemini_queue_message"] == "Gemini 재처리 가능 원문 2건"
     assert payload["gemini_cooldown_active"] is False
+
+
+def test_queue_drain_next_run_does_not_return_past_time(monkeypatch):
+    from news_summary import web as web_module
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS", "900")
+    now = datetime(2026, 7, 9, 2, 0, tzinfo=timezone.utc)
+
+    next_run_at = web_module._queue_drain_next_run_at(
+        "2026-07-09T01:30:00+00:00",
+        now=now,
+    )
+
+    assert next_run_at == "2026-07-09T02:00:00+00:00"
 
 
 def test_healthz_reports_small_gemini_queue_without_warning(monkeypatch):

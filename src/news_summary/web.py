@@ -2441,6 +2441,7 @@ def _queue_drain_next_run_at(
     updated_at: object,
     cooldown_until: datetime | None = None,
     retry_due: int = 0,
+    now: datetime | None = None,
 ) -> str | None:
     parsed = _parse_datetime(updated_at)
     if not parsed:
@@ -2455,6 +2456,9 @@ def _queue_drain_next_run_at(
         ready_recheck_at = parsed_utc + timedelta(seconds=_auto_queue_drain_ready_recheck_seconds())
         if ready_recheck_at < next_run_at:
             next_run_at = ready_recheck_at
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if next_run_at < now_utc:
+        next_run_at = now_utc
     return next_run_at.isoformat()
 
 
