@@ -1312,6 +1312,10 @@ def _deployment_version_health_payload() -> dict[str, object]:
             "deployment_auto_deploy_label": None,
             "deployment_auto_deploy_trigger": None,
         }
+    return _deployment_version_health_payload_from_report(report)
+
+
+def _deployment_version_health_payload_from_report(report: dict[str, object]) -> dict[str, object]:
     change_report = report.get("change_report") if isinstance(report.get("change_report"), dict) else {}
     status_level = str(report.get("status_level") or "warning")
     status_label = str(report.get("status_label") or "확인 불가")
@@ -1925,6 +1929,7 @@ def _operations_cached_report_bundle(
         "automation_settings": _automation_settings_report(),
         "cloudflare_tunnel": _cloudflare_quick_tunnel_status(),
     }
+    reports["service_status_report"] = _operations_service_status_report(store, config_path, auto_status, reports)
     if ttl_seconds > 0:
         with _operations_report_cache_lock:
             if len(_operations_report_cache) >= 32:
@@ -4686,6 +4691,68 @@ def _dashboard_source_cache_seconds() -> int:
     except ValueError:
         seconds = DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS
     return max(0, seconds)
+
+
+OPERATIONS_COMPONENT_CARD_MAP = {
+    "database": ("ops-db-backup", "DB 백업"),
+    "auto_collector": ("ops-auto-collect", "자동 수집"),
+    "auto_collector_timing": ("ops-auto-collect", "자동 수집"),
+    "source_collection": ("ops-recovery-health", "자동 복구 점검"),
+    "deployment_version": ("ops-deployment-version", "배포 버전"),
+    "collection_check_coverage": ("ops-collection-coverage", "오늘 수집 점검 커버리지"),
+    "draft_conversion_coverage": ("ops-draft-conversion", "오늘 초안 변환 커버리지"),
+    "gemini_queue": ("ops-gemini-retry-queue", "Gemini 재처리 대기열"),
+}
+
+
+def _operations_service_status_report(
+    store: Store,
+    config_path: Path,
+    auto_status: object | None,
+    reports: dict[str, object],
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "ok": reports.get("db_health", {}).get("status_level") == "ok" if isinstance(reports.get("db_health"), dict) else True,
+        "database": "ok",
+    }
+    if isinstance(reports.get("db_health"), dict) and reports["db_health"].get("status_level") != "ok":
+        payload["database"] = "error"
+        payload["ok"] = False
+    if auto_status is not None:
+        payload["auto_collector"] = _auto_collector_health_label(auto_status)
+        timing_health = _auto_collector_timing_health(auto_status)
+        payload.update(
+            {
+                "auto_collector_timing": timing_health["status"],
+                "auto_collector_health_message": timing_health["message"],
+            }
+        )
+    payload.update(_source_collection_health_payload(store))
+    payload.update(_collection_check_coverage_health_payload(store, config_path))
+    payload.update(_draft_conversion_coverage_health_payload(store))
+    payload.update(_gemini_queue_health_payload(store))
+    deployment_report = reports.get("deployment_version")
+    if isinstance(deployment_report, dict):
+        payload.update(_deployment_version_health_payload_from_report(deployment_report))
+    else:
+        payload.update(_deployment_version_health_payload())
+    summary = _service_health_summary(payload)
+    issues = []
+    for issue in summary.get("service_status_issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        component = str(issue.get("component") or "")
+        anchor_id, card_label = OPERATIONS_COMPONENT_CARD_MAP.get(component, ("", component))
+        enriched = dict(issue)
+        enriched["anchor_id"] = anchor_id
+        enriched["card_label"] = card_label
+        issues.append(enriched)
+    return {
+        "status_level": summary.get("service_status_level"),
+        "status_label": summary.get("service_status_label"),
+        "message": summary.get("service_status_message"),
+        "issues": issues,
+    }
 
 
 def _dashboard_source_summaries(store: Store, config_path: Path) -> list[dict[str, object]]:

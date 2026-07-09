@@ -5545,6 +5545,51 @@ def test_operations_page_shows_recovery_candidate_card(monkeypatch):
     assert 'href="/sources/sample-source"' in html
 
 
+def test_operations_page_shows_service_status_summary_card(monkeypatch):
+    db_path = Path(f"data/.test_operations_service_status_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+    from news_summary.web import create_app
+
+    monkeypatch.setattr(
+        web_module,
+        "_operations_service_status_report",
+        lambda store, config_path, auto_status, reports: {
+            "status_level": "warning",
+            "status_label": "주의",
+            "message": "오늘 수집 원문 중 초안 미변환 4건이 남아 있습니다. 외 1건",
+            "issues": [
+                {
+                    "level": "warning",
+                    "component": "draft_conversion_coverage",
+                    "message": "오늘 수집 원문 중 초안 미변환 4건이 남아 있습니다.",
+                    "anchor_id": "ops-draft-conversion",
+                    "card_label": "오늘 초안 변환 커버리지",
+                },
+                {
+                    "level": "warning",
+                    "component": "gemini_queue",
+                    "message": "Gemini 자동 재처리 대기 원문 2건",
+                    "anchor_id": "ops-gemini-retry-queue",
+                    "card_label": "Gemini 재처리 대기열",
+                },
+            ],
+        },
+    )
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "서비스 상태 요약" in html
+    assert "오늘 수집 원문 중 초안 미변환 4건이 남아 있습니다. 외 1건" in html
+    assert 'href="#ops-draft-conversion"' in html
+    assert 'href="#ops-gemini-retry-queue"' in html
+    assert "오늘 초안 변환 커버리지" in html
+    assert "Gemini 재처리 대기열" in html
+
+
 def test_operations_page_links_fallback_and_url_discovery_items(monkeypatch):
     db_path = Path(f"data/.test_operations_url_cards_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

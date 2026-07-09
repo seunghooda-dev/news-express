@@ -12,6 +12,32 @@
 </section>
 
 <section class="ops-grid">
+  <article class="ops-card" id="ops-service-status">
+    <div class="ops-card-head">
+      <h2>서비스 상태 요약</h2>
+      <span class="badge {% if service_status_report.status_level == 'ok' %}badge-gemini{% elif service_status_report.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ service_status_report.status_label }}
+      </span>
+    </div>
+    <p class="meta">{{ service_status_report.message }}</p>
+    {% if service_status_report.issues %}
+      <ul class="ops-mini-list">
+        {% for item in service_status_report.issues %}
+          <li>
+            <span class="badge {% if item.level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">{{ item.card_label }}</span>
+            {% if item.anchor_id %}
+              <a href="#{{ item.anchor_id }}">{{ item.message }}</a>
+            {% else %}
+              {{ item.message }}
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">현재 즉시 조치가 필요한 주요 운영 이상이 없습니다.</p>
+    {% endif %}
+  </article>
+
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>운영 변경 잠금</h2>
@@ -41,7 +67,7 @@
     {% endif %}
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-auto-collect">
     <div class="ops-card-head">
       <h2>자동 수집</h2>
       <span class="badge {% if auto_collector_status and auto_collector_status.enabled %}badge-gemini{% else %}badge-neutral{% endif %}">
@@ -73,7 +99,7 @@
     </form>
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-deployment-version">
     <div class="ops-card-head">
       <h2>배포 버전</h2>
       <span class="badge {% if deployment_version.status_level == 'ok' %}badge-gemini{% elif deployment_version.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
@@ -93,7 +119,7 @@
     {% endif %}
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-recovery-health">
     <div class="ops-card-head">
       <h2>자동 복구 점검</h2>
       <span class="badge {% if operations_health.status_level == 'ok' %}badge-gemini{% elif operations_health.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
@@ -225,7 +251,7 @@
     <p class="meta">서버 상태 {{ operations_summary.server_status_level }} · 갱신 {{ operations_summary.updated_at|date_label }}</p>
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-collection-coverage">
     <div class="ops-card-head">
       <h2>오늘 수집 점검 커버리지</h2>
       <span class="badge {% if collection_check_coverage_report.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">
@@ -288,7 +314,7 @@
     {% endif %}
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-draft-conversion">
     <div class="ops-card-head">
       <h2>오늘 초안 변환 커버리지</h2>
       <span class="badge {% if draft_conversion_coverage_report.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">
@@ -450,7 +476,7 @@
     {% endif %}
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-gemini-retry-queue">
     <div class="ops-card-head">
       <h2>Gemini 재처리 대기열</h2>
       <span class="badge {% if draft_failure_summary.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ draft_failure_summary.total }}건</span>
@@ -658,7 +684,7 @@
     {% endif %}
   </article>
 
-  <article class="ops-card">
+  <article class="ops-card" id="ops-db-backup">
     <div class="ops-card-head">
       <h2>DB 백업</h2>
       <span class="badge {% if db_health.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">{{ db_health.status_label }}</span>
