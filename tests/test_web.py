@@ -3942,6 +3942,73 @@ def test_healthz_reports_effective_gemini_retry_time_during_wait(monkeypatch):
     assert "처리 재개 대기 1건" in payload["gemini_queue_message"]
 
 
+def test_healthz_warns_when_gemini_queue_resume_is_overdue(monkeypatch):
+    db_path = Path(f"data/.test_healthz_gemini_queue_resume_overdue_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_GEMINI_RETRY_DUE_WARNING_COUNT", "50")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_READY_RECHECK_SECONDS", "300")
+    store = Store(db_path)
+    store.init_db()
+    due_at = datetime(2026, 7, 9, 1, 0, tzinfo=timezone.utc).isoformat()
+    store.set_app_metadata(
+        "auto_queue_drain_status_snapshot",
+        json.dumps(
+            {
+                "updated_at": "2026-07-09T00:50:00+00:00",
+                "queue_pending_before": 1,
+                "queue_pending_after": 1,
+                "queue_processed_count": 0,
+                "queue_failure_before": 1,
+                "queue_failure_after": 1,
+                "queue_retry_due_before": 1,
+                "queue_retry_due_after": 1,
+                "queue_drain_messages": [],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="재처리 점검 지연 원문",
+            url="https://example.com/gemini-queue-overdue",
+            content="Gemini 재처리 점검 지연 테스트 원문입니다.",
+            published_at="2026-07-09 09:00",
+        )
+    )
+    assert release_id is not None
+    store.record_draft_generation_failure(
+        release_id,
+        "quota",
+        "Gemini 처리 재개 대기",
+        "gemini-3.5-flash",
+        due_at,
+    )
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 9, 1, 10, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["gemini_queue_status"] == "warning"
+    assert payload["gemini_queue_resume_overdue"] is True
+    assert payload["gemini_queue_resume_overdue_minutes"] == 10
+    assert payload["gemini_retry_due"] == 1
+    assert payload["gemini_queue_message"].startswith("Gemini 자동 재처리 점검 지연:")
+    assert "전체 대기 1건" in payload["gemini_queue_message"]
+    assert "처리 재개 대기 1건" in payload["gemini_queue_message"]
+
+
 def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch):
     db_path = Path(f"data/.test_healthz_stopped_collector_thread_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

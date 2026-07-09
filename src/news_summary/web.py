@@ -2959,6 +2959,8 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
             "gemini_failure_total": None,
             "gemini_retry_due": None,
             "gemini_queue_scope": "all_releases",
+            "gemini_queue_resume_overdue": None,
+            "gemini_queue_resume_overdue_minutes": None,
             "gemini_effective_next_retry_at": None,
             "gemini_last_queue_drain_at": None,
             "gemini_next_queue_drain_at": None,
@@ -2986,10 +2988,23 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     cooldown_until = gemini_cooldown_until(store)
     effective_next_retry_at = _effective_next_draft_retry_at(next_retry_at, cooldown_until) if failure_total > 0 else None
     cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
+    resume_overdue = _gemini_queue_resume_overdue_report(
+        effective_next_retry_at,
+        queue_drain_report.get("updated_at"),
+        retry_due,
+        pending_total,
+    )
     if cooldown_until:
         status = "warning"
         message = (
             f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until)}까지"
+            f"{_gemini_queue_count_detail(pending_total, retry_due)}"
+        )
+    elif resume_overdue["overdue"]:
+        status = "warning"
+        message = (
+            "Gemini 자동 재처리 점검 지연: "
+            f"처리 가능 시각 이후 {resume_overdue['overdue_minutes']}분 경과"
             f"{_gemini_queue_count_detail(pending_total, retry_due)}"
         )
     elif retry_due >= _gemini_retry_due_warning_count():
@@ -3019,6 +3034,8 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_failure_total": failure_total,
         "gemini_retry_due": retry_due,
         "gemini_queue_scope": "all_releases",
+        "gemini_queue_resume_overdue": resume_overdue["overdue"],
+        "gemini_queue_resume_overdue_minutes": resume_overdue["overdue_minutes"],
         "gemini_next_retry_at": next_retry_at or None,
         "gemini_effective_next_retry_at": effective_next_retry_at,
         "gemini_oldest_first_failed_at": oldest_first_failed_at or None,
@@ -3046,6 +3063,32 @@ def _gemini_queue_count_detail(pending_total: int, retry_due: int) -> str:
     if retry_due > 0:
         details.append(f"처리 재개 대기 {retry_due}건")
     return f" · {', '.join(details)}" if details else ""
+
+
+def _gemini_queue_resume_overdue_report(
+    effective_next_retry_at: object,
+    last_queue_drain_at: object,
+    retry_due: int,
+    pending_total: int,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    if retry_due <= 0 and pending_total <= 0:
+        return {"overdue": False, "overdue_minutes": None}
+    due_at = _parse_datetime(effective_next_retry_at)
+    if not due_at:
+        return {"overdue": False, "overdue_minutes": None}
+    due_utc = due_at.astimezone(timezone.utc)
+    last_drain = _parse_datetime(last_queue_drain_at)
+    if not last_drain:
+        return {"overdue": False, "overdue_minutes": None}
+    if last_drain.astimezone(timezone.utc) >= due_utc:
+        return {"overdue": False, "overdue_minutes": None}
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    grace_at = due_utc + timedelta(seconds=_auto_queue_drain_ready_recheck_seconds())
+    if now_utc < grace_at:
+        return {"overdue": False, "overdue_minutes": None}
+    overdue_minutes = max(0, int((now_utc - due_utc).total_seconds() // 60))
+    return {"overdue": True, "overdue_minutes": overdue_minutes}
 
 
 def _source_collection_health_payload(store: Store) -> dict[str, object]:
