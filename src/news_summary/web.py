@@ -722,7 +722,7 @@ def create_app() -> Flask:
     def press_releases():
         selected_regions = _selected_regions(config_path)
         draft_filter = (request.args.get("draft") or "").strip()
-        if draft_filter not in {"missing", "drafted"}:
+        if draft_filter not in {"missing", "drafted", "date_issue"}:
             draft_filter = ""
         target_date = _parse_date(request.args.get("date"))
         query = (request.args.get("q") or "").strip()
@@ -739,6 +739,7 @@ def create_app() -> Flask:
         )
         has_more = display_limit < MAX_LIST_LIMIT and len(releases) > display_limit
         releases = releases[:display_limit]
+        releases = [_press_release_listing_item(row) for row in releases]
         region_filter_hidden = _clean_query_args(
             draft=draft_filter,
             date=target_date.isoformat() if target_date else "",
@@ -4340,22 +4341,52 @@ def _press_release_rows_for_listing(
         params.extend([like] * 4)
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
-    params.append(limit)
     with store.connect() as conn:
-        return conn.execute(
-            f"""
-            SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
-            FROM press_releases pr
-            LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
-            {where_sql}
-            ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
-                     pr.published_at DESC,
-                     pr.collected_at DESC,
-                     pr.id DESC
-            LIMIT ?
-            """,
-            tuple(params),
-        ).fetchall()
+        if draft_filter == "date_issue":
+            chunk_size = max(limit * 3, 100)
+            offset = 0
+            filtered = []
+            while len(filtered) < limit:
+                rows = _fetch_press_release_listing_rows(conn, where_sql, params, chunk_size, offset=offset)
+                if not rows:
+                    break
+                filtered.extend(row for row in rows if _press_release_date_warning(row))
+                offset += len(rows)
+                if len(rows) < chunk_size:
+                    break
+            return filtered[:limit]
+        return _fetch_press_release_listing_rows(conn, where_sql, params, limit)
+
+
+def _fetch_press_release_listing_rows(
+    conn,
+    where_sql: str,
+    params: list[object],
+    limit: int,
+    *,
+    offset: int = 0,
+):
+    query_params = [*params, limit, offset]
+    return conn.execute(
+        f"""
+        SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
+        FROM press_releases pr
+        LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+        {where_sql}
+        ORDER BY CASE WHEN pr.published_at IS NULL OR TRIM(pr.published_at) = '' THEN 1 ELSE 0 END ASC,
+                 pr.published_at DESC,
+                 pr.collected_at DESC,
+                 pr.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        tuple(query_params),
+    ).fetchall()
+
+
+def _press_release_listing_item(row) -> dict[str, object]:
+    item = dict(row) if not isinstance(row, dict) else dict(row)
+    item["date_warning"] = _press_release_date_warning(row)
+    return item
 
 
 def _press_release_date_sql_expr() -> str:
@@ -5119,6 +5150,8 @@ def _press_releases_page_title(
         parts.append("초안 없는 원문")
     elif draft_filter == "drafted":
         parts.append("초안 생성 원문")
+    elif draft_filter == "date_issue":
+        parts.append("게시일 확인 원문")
     if target_date:
         parts.append(_date_group_label(target_date, datetime.now(LOCAL_TZ).date()))
     if source_filter:

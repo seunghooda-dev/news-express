@@ -946,6 +946,52 @@ def test_press_releases_page_filters_missing_drafts_date_source_and_query(monkey
     assert "오늘 초안 생성 원문" not in query_page
 
 
+def test_press_releases_page_filters_date_issues(monkeypatch):
+    db_path = Path(f"data/.test_releases_date_issue_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="게시일 미정 원문",
+            url="https://example.com/date-issue",
+            content="게시일이 아직 정리되지 않은 원문입니다.",
+            published_at="미정",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="정상 게시일 원문",
+            url="https://example.com/date-ok",
+            content="정상 게시일 형식 원문입니다.",
+            published_at="2026-07-08 13:20",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/press-releases?draft=date_issue").data.decode("utf-8")
+
+    assert "게시일 확인 원문" in html
+    assert "게시일 미정 원문" in html
+    assert "게시일 파싱 실패" in html
+    assert "정상 게시일 원문" not in html
+    assert 'href="/press-releases?draft=date_issue"' in html
+
+
 def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     db_path = Path(f"data/.test_dashboard_source_counts_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -2556,6 +2602,45 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "외부 접속" in html
     assert "외부 접속 정상" in html
     assert "https://sample.trycloudflare.com" in html
+
+
+def test_operations_page_links_date_issue_items_to_filtered_press_releases(monkeypatch):
+    db_path = Path(f"data/.test_operations_date_issue_links_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_date_issue_report",
+        lambda store: {
+            "status_label": "확인 필요",
+            "status_level": "warning",
+            "issue_count": 2,
+            "by_source": [{"source_id": "sample", "source_name": "테스트 기관", "count": 2}],
+            "samples": [
+                {
+                    "id": 17,
+                    "source_id": "sample",
+                    "source_name": "테스트 기관",
+                    "title": "작성일 표기 원문",
+                    "published_at": "작성일 2026.07.08 09:00",
+                    "warning": "게시일 앞 문구 확인",
+                }
+            ],
+        },
+    )
+    app = web_module.create_app()
+    app.testing = True
+
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert 'href="/press-releases?draft=date_issue"' in html
+    assert 'href="/press-releases?draft=date_issue&amp;source=sample"' in html
+    assert 'href="/press-releases/17"' in html
+    assert "게시일 앞 문구 확인" in html
 
 
 def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):

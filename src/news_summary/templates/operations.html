@@ -447,13 +447,18 @@
       </span>
     </div>
     <p class="meta">최근 원문 기준 게시일 확인 필요 {{ date_issue_report.issue_count }}건</p>
+    {% if date_issue_report.issue_count %}
+      <p class="inline-actions">
+        <a class="source-link" href="{{ url_for('press_releases', draft='date_issue') }}">전체 확인 필요 원문 보기</a>
+      </p>
+    {% endif %}
     {% if date_issue_report.by_source %}
       <p class="gemini-models">
         기관별:
         {% for item in date_issue_report.by_source %}
           <span>
             {% if item.source_id %}
-              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }} {{ item.count }}건</a>
+              <a href="{{ url_for('press_releases', draft='date_issue', source=item.source_id) }}">{{ item.source_name }} {{ item.count }}건</a>
             {% else %}
               {{ item.source_name }} {{ item.count }}건
             {% endif %}
