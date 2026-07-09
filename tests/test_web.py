@@ -2454,14 +2454,14 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "대체 URL 준비" in html
     assert "중복 원문 정리" in html
     assert "URL 후보 탐색" in html
-    assert "Gemini 미변환 큐" in html
+    assert "Gemini 초안 대기열" in html
     assert "마지막 자동 소진" in html
     assert "전 8건" in html
     assert "후 5건" in html
     assert "처리 3건" in html
-    assert "Gemini 실패 큐" in html
+    assert "Gemini 재처리 대기열" in html
     assert "generation_error 1건" in html
-    assert "최근 보류 원문" in html
+    assert "최근 재처리 원문" in html
     assert "Gemini 대기 원문" in html
     assert "다음 재시도" in html
     assert "테스트 기관 1건" in html
@@ -2532,7 +2532,7 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
 
     assert "자동 복구 점검" in html
     assert "주의" in html
-    assert "Gemini 재시도 가능 실패 큐 2건" in html
+    assert "Gemini 재처리 가능 원문 2건" in html
     assert "재시도 가능 2건" in html
     assert "재시도 대기 원문 1" in html
     assert "재시도 대기 원문 2" in html
@@ -2548,7 +2548,7 @@ def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
         "gemini_cooldown_until",
         (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat(),
     )
-    store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 한도 초과")
+    store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 재개 대기")
 
     from news_summary import web as web_module
 
@@ -2577,8 +2577,8 @@ def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
     app.testing = True
     html = app.test_client().get("/operations").data.decode("utf-8")
 
-    assert "Gemini 쿨다운 중:" in html
-    assert "사유: 자동 초안 생성 한도 초과" in html
+    assert "Gemini 처리 재개 대기:" in html
+    assert "메모: 자동 초안 생성 재개 대기" in html
 
 
 def test_operations_page_prefetches_metadata_once(monkeypatch):
@@ -3597,7 +3597,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
         store.record_draft_generation_failure(
             release_id,
             "quota",
-            "Gemini 요청 한도 감지",
+            "Gemini 처리 재개 대기",
             "gemini-3.5-flash",
             due_at,
         )
@@ -3625,10 +3625,10 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_last_queue_retry_due_after"] == 3
     assert payload["gemini_last_queue_drain_messages"] == [
         "오래된 메시지",
-        "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 한도 25건",
+        "Gemini 미변환 큐 자동 소진: 대기 7건, 처리 기준 25건",
         "초안 생성 완료 2건",
     ]
-    assert payload["gemini_queue_message"] == "Gemini 재시도 가능 실패 큐 2건"
+    assert payload["gemini_queue_message"] == "Gemini 재처리 가능 원문 2건"
     assert payload["gemini_cooldown_active"] is False
 
 
@@ -3639,7 +3639,7 @@ def test_healthz_reports_gemini_cooldown_window(monkeypatch):
     store.init_db()
     cooldown_until = (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat()
     store.set_app_metadata("gemini_cooldown_until", cooldown_until)
-    store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 한도 초과")
+    store.set_app_metadata("gemini_cooldown_reason", "자동 초안 생성 재개 대기")
 
     from news_summary.web import create_app
 
@@ -3651,8 +3651,8 @@ def test_healthz_reports_gemini_cooldown_window(monkeypatch):
     assert payload["gemini_queue_status"] == "warning"
     assert payload["gemini_cooldown_active"] is True
     assert payload["gemini_cooldown_until"] == cooldown_until
-    assert payload["gemini_cooldown_reason"] == "자동 초안 생성 한도 초과"
-    assert payload["gemini_queue_message"].startswith("Gemini 쿨다운 중:")
+    assert payload["gemini_cooldown_reason"] == "자동 초안 생성 재개 대기"
+    assert payload["gemini_queue_message"].startswith("Gemini 처리 재개 대기:")
     assert payload["gemini_queue_message"].endswith("까지")
 
 
@@ -5107,8 +5107,8 @@ def test_refine_route_reports_gemini_cooldown_without_calling_api(monkeypatch):
     client = app.test_client()
 
     detail_html = client.get(f"/drafts/{draft_id}").data.decode("utf-8")
-    assert "Gemini 쿨다운 중:" in detail_html
-    assert "수동 다듬기를 보류합니다." in detail_html
+    assert "Gemini 처리 재개 대기:" in detail_html
+    assert "수동 다듬기를 기다립니다." in detail_html
     assert 'data-gemini-cooldown-until="' in detail_html
 
     response = client.post(
@@ -5126,8 +5126,8 @@ def test_refine_route_reports_gemini_cooldown_without_calling_api(monkeypatch):
     html = response.data.decode("utf-8")
 
     assert response.status_code == 200
-    assert "Gemini 쿨다운 중:" in html
-    assert "수동 다듬기를 보류합니다." in html
+    assert "Gemini 처리 재개 대기:" in html
+    assert "수동 다듬기를 기다립니다." in html
     assert calls == []
     assert Store(db_path).get_draft(draft_id)["title"] == "기존 제목"
 

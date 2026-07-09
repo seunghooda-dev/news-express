@@ -455,7 +455,15 @@ class AutoCollector:
             logger.info("auto maintenance skipped collector busy")
             return
         try:
-            self._execute_maintenance_once(now)
+            try:
+                self._execute_maintenance_once(now)
+            except Exception as exc:  # noqa: BLE001 - maintenance failures must not stop the collector thread.
+                logger.exception("auto maintenance failed")
+                with self._state_lock:
+                    self._status.last_error = f"자동 유지보수 실패: {type(exc).__name__}: {exc}"
+                    if not self._status.running:
+                        self._status.progress_message = "자동 유지보수 재시도 대기 중"
+                self._persist_status_snapshot()
         finally:
             self._run_lock.release()
 

@@ -268,7 +268,7 @@ def test_generate_draft_can_require_gemini(monkeypatch):
     try:
         generate_draft(1, item, require_gemini=True)
     except GeminiDraftError as exc:
-        assert "자동 초안 생성을 보류" in str(exc)
+        assert "자동 초안을 만들지 않았습니다" in str(exc)
     else:
         raise AssertionError("GeminiDraftError가 발생해야 합니다.")
 
@@ -298,7 +298,7 @@ def test_generate_draft_stops_model_fallback_after_quota(monkeypatch):
     try:
         generate_draft(1, item, require_gemini=True)
     except GeminiDraftError as exc:
-        assert "요청 한도" in str(exc)
+        assert "처리 가능 시간" in str(exc)
         assert exc.attempted_models == ["gemini-3.5-flash"]
     else:
         raise AssertionError("GeminiDraftError가 발생해야 합니다.")
@@ -491,7 +491,7 @@ def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
     try:
         refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
     except GeminiRefineError as exc:
-        assert "요청 한도" in str(exc)
+        assert "처리 가능 시간" in str(exc)
         assert exc.attempted_models == ["gemini-3.5-flash"]
     else:
         raise AssertionError("GeminiRefineError가 발생해야 합니다.")

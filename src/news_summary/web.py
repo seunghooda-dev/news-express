@@ -969,9 +969,15 @@ def create_app() -> Flask:
             suffix = f" 시도한 모델: {models}" if models else ""
             logger.warning("gemini refine failed draft_id=%s models=%s error=%s", draft_id, models, exc)
             if _is_gemini_quota_message(str(exc)):
-                cooldown_until = mark_gemini_cooldown(store, reason=f"수동 다듬기 한도 초과: {exc}")
-                flash(f"Gemini 요청 한도 감지로 {format_datetime_label(cooldown_until.isoformat())}까지 다듬기를 보류합니다.")
-            flash(f"{exc}{suffix}")
+                cooldown_until = mark_gemini_cooldown(store, reason="수동 다듬기 재개 대기")
+                flash(
+                    f"Gemini 처리 재개 예정: {format_datetime_label(cooldown_until.isoformat())} "
+                    "이후 다듬기를 다시 시도할 수 있습니다."
+                )
+                if suffix:
+                    flash(f"시도한 모델: {models}")
+            else:
+                flash(f"{exc}{suffix}")
             return redirect(url_for("draft_detail", draft_id=draft_id))
         except Exception as exc:  # noqa: BLE001 - UI should report a concise Gemini failure.
             logger.exception("gemini refine unexpected failure draft_id=%s", draft_id)
@@ -2405,6 +2411,10 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
         if legacy_report.get("queue_pending_before") is not None or legacy_report.get("queue_drain_messages"):
             report = legacy_report
     messages = report.get("queue_drain_messages")
+    if isinstance(messages, list):
+        messages = [_gemini_public_status_text(message) for message in messages]
+    else:
+        messages = []
     return {
         "updated_at": report.get("updated_at"),
         "queue_pending_before": report.get("queue_pending_before"),
@@ -2414,7 +2424,7 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
         "queue_failure_after": report.get("queue_failure_after"),
         "queue_retry_due_before": report.get("queue_retry_due_before"),
         "queue_retry_due_after": report.get("queue_retry_due_after"),
-        "queue_drain_messages": messages if isinstance(messages, list) else [],
+        "queue_drain_messages": messages,
     }
 
 def _metadata_json_report(store: Store, key: str, default: dict[str, object]) -> dict[str, object]:
@@ -2664,13 +2674,14 @@ def _operations_health_report(
 
     cooldown_until = gemini_cooldown_until(store)
     if cooldown_until:
-        cooldown_issue = f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until)}까지"
+        cooldown_issue = f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until)}까지"
         cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY)
         if cooldown_reason:
-            reason_label = re.sub(r"\s+", " ", str(cooldown_reason)).strip()
+            reason_label = _gemini_public_status_text(str(cooldown_reason))
+            reason_label = re.sub(r"\s+", " ", reason_label).strip()
             if len(reason_label) > 140:
                 reason_label = reason_label[:137].rstrip() + "..."
-            cooldown_issue = f"{cooldown_issue} · 사유: {reason_label}"
+            cooldown_issue = f"{cooldown_issue} · 메모: {reason_label}"
         issues.append(cooldown_issue)
 
     pending_total = int(pending_queue.get("total") or 0)
@@ -2687,9 +2698,9 @@ def _operations_health_report(
         draft_retry_due = int(draft_failure_summary.get("due") or 0)
         retry_warning_count = _gemini_retry_due_warning_count()
         if draft_retry_due >= retry_warning_count:
-            issues.append(f"Gemini 재시도 가능 실패 큐 {draft_retry_due}건")
+            issues.append(f"Gemini 재처리 가능 원문 {draft_retry_due}건")
         elif draft_failure_total >= 100:
-            issues.append(f"Gemini 실패 큐 {draft_failure_total}건")
+            issues.append(f"Gemini 재처리 대기 원문 {draft_failure_total}건")
 
     if unresolved_rows:
         status_level = "error"
@@ -2741,7 +2752,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
             "gemini_cooldown_active": None,
             "gemini_cooldown_until": None,
             "gemini_cooldown_reason": None,
-            "gemini_queue_message": f"Gemini 대기열 확인 실패: {type(exc).__name__}",
+            "gemini_queue_message": f"Gemini 초안 대기열 확인 실패: {type(exc).__name__}",
         }
 
     pending_total = int(pending_queue.get("total") or 0)
@@ -2750,24 +2761,24 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
     next_retry_at = str(draft_failure_summary.get("next_retry_at") or "")
     oldest_first_failed_at = str(draft_failure_summary.get("oldest_first_failed_at") or "")
     queue_drain_report = _auto_queue_drain_report(store)
-    queue_drain_messages = list(queue_drain_report.get("queue_drain_messages") or [])
+    queue_drain_messages = [_gemini_public_status_text(message) for message in queue_drain_report.get("queue_drain_messages") or []]
     cooldown_until = gemini_cooldown_until(store)
     cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
     if cooldown_until:
         status = "warning"
-        message = f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until)}까지"
+        message = f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until)}까지"
     elif retry_due >= _gemini_retry_due_warning_count():
         status = "warning"
-        message = f"Gemini 재시도 가능 실패 큐 {retry_due}건"
+        message = f"Gemini 재처리 가능 원문 {retry_due}건"
     elif failure_total >= 100:
         status = "warning"
-        message = f"Gemini 실패 큐 {failure_total}건"
+        message = f"Gemini 재처리 대기 원문 {failure_total}건"
     elif pending_total >= 100:
         status = "warning"
-        message = f"Gemini 미변환 큐 {pending_total}건"
+        message = f"Gemini 초안 대기 원문 {pending_total}건"
     else:
         status = "ok"
-        message = "Gemini 대기열 정상 범위"
+        message = "Gemini 초안 대기열 정상 범위"
     return {
         "gemini_queue_status": status,
         "gemini_pending_total": pending_total,
@@ -2786,7 +2797,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_last_queue_drain_messages": queue_drain_messages[-5:],
         "gemini_cooldown_active": bool(cooldown_until),
         "gemini_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
-        "gemini_cooldown_reason": cooldown_reason,
+        "gemini_cooldown_reason": _gemini_public_status_text(cooldown_reason) if cooldown_reason else None,
         "gemini_queue_message": message,
     }
 
@@ -4069,6 +4080,7 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
         if model not in current_model_names
     ]
     cooldown_until = gemini_cooldown_until(store)
+    cooldown_reason = store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None
     return {
         "today_total": today_drafts + today_refines,
         "today_drafts": today_drafts,
@@ -4082,7 +4094,7 @@ def _gemini_usage_summary(store: Store, auto_status=None) -> dict[str, object]:
         "last_error": getattr(auto_status, "last_error", None) if auto_status else None,
         "reset_at": reset_at.isoformat() if reset_at else None,
         "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
-        "cooldown_reason": store.get_app_metadata(GEMINI_COOLDOWN_REASON_KEY) if cooldown_until else None,
+        "cooldown_reason": _gemini_public_status_text(cooldown_reason) if cooldown_reason else None,
     }
 
 
@@ -4482,7 +4494,30 @@ def _is_gemini_quota_message(message: str) -> bool:
 
 
 def _gemini_refine_cooldown_message(cooldown_until: datetime) -> str:
-    return f"Gemini 쿨다운 중: {format_datetime_label(cooldown_until.isoformat())}까지 수동 다듬기를 보류합니다."
+    return f"Gemini 처리 재개 대기: {format_datetime_label(cooldown_until.isoformat())}까지 수동 다듬기를 기다립니다."
+
+
+def _gemini_public_status_text(value: object) -> str:
+    text = str(value or "")
+    text = re.sub(
+        r"Gemini 요청 한도 감지로 한국 시간 ([0-9.:\s]+)까지 초안 생성을 보류합니다\.",
+        r"Gemini 처리 재개 예정: 한국 시간 \1 이후 초안 생성을 다시 시도합니다.",
+        text,
+    )
+    replacements = {
+        "Gemini 요청 한도 감지": "Gemini 처리 재개 대기",
+        "Gemini 요청 한도가 찼습니다.": "Gemini 처리 가능 시간이 지나면 다시 시도합니다.",
+        "자동 초안 생성 한도 초과": "자동 초안 생성 재개 대기",
+        "수동 다듬기 한도 초과": "수동 다듬기 재개 대기",
+        "Gemini 쿨다운 중": "Gemini 처리 재개 대기",
+        "처리 한도": "처리 기준",
+        "한도 초과": "처리 재개 대기",
+        "요청 한도": "처리 대기",
+        "쿨다운": "처리 대기",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
 
 def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
@@ -4497,7 +4532,16 @@ def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
 def _ops_log_tabs(lines: list[str]) -> list[dict[str, object]]:
     categories = [
         ("errors", "오류", lambda line: " ERROR " in line or " WARNING " in line or "slow web request" in line),
-        ("gemini", "Gemini", lambda line: "gemini" in line.lower() or "제미나이" in line or "쿨다운" in line),
+        (
+            "gemini",
+            "Gemini",
+            lambda line: (
+                "gemini" in line.lower()
+                or "제미나이" in line
+                or "쿨다운" in line
+                or "처리 재개 대기" in line
+            ),
+        ),
         (
             "collector",
             "자동수집",

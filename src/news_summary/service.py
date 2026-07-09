@@ -819,8 +819,9 @@ def _draft_rows(
         except GeminiDraftError as exc:
             models = ", ".join(exc.attempted_models)
             suffix = f" 시도한 모델: {models}" if models else ""
-            messages.append(f"{row['source_name']} 초안 보류: {exc}{suffix}")
             is_quota_error = _is_gemini_quota_message(str(exc))
+            display_error = _gemini_error_display_message(exc, quota=is_quota_error)
+            messages.append(f"{row['source_name']} 초안 생성 대기: {display_error}{suffix}")
             next_retry_at = (
                 datetime.now(timezone.utc) + timedelta(seconds=gemini_draft_failure_retry_seconds())
             ).isoformat()
@@ -832,7 +833,7 @@ def _draft_rows(
                 exc,
             )
             if is_quota_error:
-                cooldown_until = mark_gemini_cooldown(store, reason=f"자동 초안 생성 한도 초과: {exc}")
+                cooldown_until = mark_gemini_cooldown(store, reason="자동 초안 생성 재개 대기")
                 next_retry_at = cooldown_until.isoformat()
                 messages.append(gemini_cooldown_message(cooldown_until))
                 logger.warning("gemini cooldown started until=%s", cooldown_until.isoformat())
@@ -928,7 +929,7 @@ def gemini_cooldown_until(store: Store) -> datetime | None:
 
 def mark_gemini_cooldown(
     store: Store,
-    reason: str = "Gemini 요청 한도 감지",
+    reason: str = "Gemini 처리 재개 대기",
     seconds: int = DEFAULT_GEMINI_COOLDOWN_SECONDS,
 ) -> datetime:
     cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
@@ -938,7 +939,13 @@ def mark_gemini_cooldown(
 
 
 def gemini_cooldown_message(cooldown_until: datetime) -> str:
-    return f"Gemini 요청 한도 감지로 한국 시간 {_format_local_datetime(cooldown_until)}까지 초안 생성을 보류합니다."
+    return f"Gemini 처리 재개 예정: 한국 시간 {_format_local_datetime(cooldown_until)} 이후 초안 생성을 다시 시도합니다."
+
+
+def _gemini_error_display_message(exc: Exception, *, quota: bool) -> str:
+    if quota:
+        return "Gemini 처리 가능 시간이 지나면 자동으로 다시 시도합니다."
+    return str(exc)
 
 
 def _format_local_datetime(value: datetime) -> str:

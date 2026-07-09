@@ -94,7 +94,7 @@
         <span id="refine-status" class="refine-status" aria-live="polite" hidden>다듬는 중...</span>
       </div>
       {% if gemini_cooldown_until %}
-        <p class="refine-cooldown">Gemini 쿨다운 중: {{ gemini_cooldown_until.isoformat()|date_label }}까지 수동 다듬기를 보류합니다.</p>
+        <p class="refine-cooldown">Gemini 처리 재개 대기: {{ gemini_cooldown_until.isoformat()|date_label }}까지 수동 다듬기를 기다립니다.</p>
       {% endif %}
     </div>
 
@@ -154,7 +154,7 @@
         refineSubmit.disabled = true;
       }
       if (refineStatus) {
-        refineStatus.textContent = isCooldownActive() ? "Gemini 쿨다운 중..." : "다듬는 중...";
+        refineStatus.textContent = isCooldownActive() ? "Gemini 처리 대기 중..." : "다듬는 중...";
         refineStatus.hidden = false;
       }
       if (form.requestSubmit) {

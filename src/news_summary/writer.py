@@ -120,7 +120,7 @@ def generate_draft(
         return _fallback_draft(item_id, item, f"{failed_model}:gemini-error:{error_name}")
 
     if require_gemini:
-        raise GeminiDraftError("Gemini API 키가 설정되어 있지 않아 자동 초안 생성을 보류했습니다.", [])
+        raise GeminiDraftError("Gemini API 키가 설정되어 있지 않아 자동 초안을 만들지 않았습니다.", [])
 
     openai_model = model or os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -457,7 +457,7 @@ def _summarize_gemini_error(exc: Exception | None) -> str:
     message = str(exc)
     lowered = message.lower()
     if "429" in message or "resource_exhausted" in lowered or "quota" in lowered:
-        return "Gemini 요청 한도가 찼습니다. 원문 난이도에 맞는 모델을 시도했지만 초안 생성을 보류했습니다."
+        return "Gemini 처리 가능 시간이 지나면 다시 시도합니다. 원문 난이도에 맞는 모델을 모두 시도했고 이번 작업은 재개 대기 상태로 남겼습니다."
     if "503" in message or "unavailable" in lowered:
         return "Gemini 모델이 일시적으로 과부하 상태입니다. 잠시 뒤 다시 시도하세요."
     if "api key" in lowered or "401" in message or "unauthorized" in lowered:

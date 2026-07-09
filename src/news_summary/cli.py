@@ -30,8 +30,8 @@ def main() -> None:
     draft_date.add_argument("--limit", type=int, default=250, help="최대 초안 생성 건수")
     draft_date.add_argument("--require-gemini", action="store_true", help="Gemini 성공 건만 초안으로 저장합니다.")
     draft_date.add_argument("--sleep-seconds", type=float, default=0.0, help="초안 생성 사이 대기 초")
-    draft_date.add_argument("--wait-cooldown", action="store_true", help="Gemini 쿨다운이면 기다렸다가 재시도합니다.")
-    draft_date.add_argument("--quota-retry-limit", type=int, default=0, help="한도 초과 후 쿨다운 대기 재시도 횟수")
+    draft_date.add_argument("--wait-cooldown", action="store_true", help="Gemini 처리 대기 상태면 기다렸다가 재시도합니다.")
+    draft_date.add_argument("--quota-retry-limit", type=int, default=0, help="Gemini 처리 대기 후 재시도 횟수")
     draft_date.add_argument("--newest-first", action="store_true", help="최신 원문부터 처리합니다.")
 
     run = sub.add_parser("run", help="원문 수집과 초안 생성을 함께 실행합니다.")
@@ -186,7 +186,7 @@ def _wait_until(target: datetime) -> None:
         remaining = (target_utc - datetime.now(timezone.utc)).total_seconds()
         if remaining <= 0:
             return
-        print(f"Gemini 쿨다운 대기 중: {int(remaining)}초 남음")
+        print(f"Gemini 처리 대기 중: {int(remaining)}초 남음")
         time.sleep(min(60.0, max(1.0, remaining)))
 
 

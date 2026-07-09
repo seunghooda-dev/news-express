@@ -23,8 +23,8 @@
   </div>
   {% if gemini_usage.cooldown_until %}
     <p class="auto-status-error">
-      Gemini 쿨다운 중: {{ gemini_usage.cooldown_until|date_label }}까지 Gemini 작업을 보류합니다.
-      {% if gemini_usage.cooldown_reason %}사유: {{ gemini_usage.cooldown_reason }}{% endif %}
+      Gemini 처리 재개 대기: {{ gemini_usage.cooldown_until|date_label }} 이후 Gemini 작업을 다시 시도합니다.
+      {% if gemini_usage.cooldown_reason %}메모: {{ gemini_usage.cooldown_reason }}{% endif %}
     </p>
   {% endif %}
   <p class="gemini-models">
@@ -49,7 +49,7 @@
   {% if gemini_usage.reset_at %}
     <p class="meta">초기화 시각: {{ gemini_usage.reset_at|date_label }}</p>
   {% endif %}
-  <p class="meta">무료 key의 정확한 남은 한도와 분당/일일 제한은 Google AI Studio의 Usage and Limits에서 확인합니다. 이 화면은 News Express가 로컬 DB에 저장한 성공 호출 기준입니다.</p>
+  <p class="meta">무료 key의 정확한 사용 가능량과 분당/일일 제한은 Google AI Studio의 Usage and Limits에서 확인합니다. 이 화면은 News Express가 로컬 DB에 저장한 성공 호출 기준입니다.</p>
 </section>
 
 <section class="gemini-usage">

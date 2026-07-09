@@ -62,7 +62,7 @@ def test_draft_pending_releases_keeps_item_pending_when_gemini_required(monkeypa
 
     messages = draft_pending_releases(store, limit=5, require_gemini=True)
 
-    assert "초안 보류" in messages[0]
+    assert "초안 생성 대기" in messages[0]
     assert len(store.pending_press_releases(5)) == 1
     assert store.drafts(limit=5) == []
 
@@ -96,10 +96,10 @@ def test_draft_pending_releases_starts_cooldown_after_gemini_quota(monkeypatch):
     second_messages = draft_pending_releases(store, limit=5, require_gemini=True)
 
     assert len(calls) == 1
-    assert any("초안 보류" in message for message in messages)
-    assert any("초안 생성을 보류" in message for message in messages)
+    assert any("초안 생성 대기" in message for message in messages)
+    assert any("초안 생성을 다시 시도" in message for message in messages)
     assert len(second_messages) == 1
-    assert "초안 생성을 보류" in second_messages[0]
+    assert "초안 생성을 다시 시도" in second_messages[0]
     assert gemini_cooldown_until(store) is not None
     assert len(store.pending_press_releases(5)) == 2
 
@@ -130,7 +130,7 @@ def test_draft_pending_releases_records_generation_failure_queue(monkeypatch):
     second_messages = draft_pending_releases(store, limit=5, require_gemini=True)
     summary = store.draft_generation_failure_summary()
 
-    assert any("초안 보류" in message for message in first_messages)
+    assert any("초안 생성 대기" in message for message in first_messages)
     assert summary["total"] == 1
     assert summary["due"] == 0
     assert summary["next_retry_at"]
@@ -147,7 +147,7 @@ def test_gemini_cooldown_message_uses_korean_time_label():
 
     assert "UTC" not in message
     assert "한국 시간 2026.07.02 06:39" in message
-    assert "초안 생성을 보류합니다." in message
+    assert "초안 생성을 다시 시도합니다." in message
 
 
 def test_store_saves_and_replaces_press_release_assets():
@@ -420,6 +420,24 @@ def test_auto_collector_runs_maintenance_immediately_when_worker_starts(monkeypa
     collector._loop()
 
     assert calls == [True]
+
+
+def test_auto_maintenance_failure_is_recorded_without_raising(monkeypatch):
+    db_path = Path(f"data/.test_auto_maintenance_failure_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+
+    def fail_maintenance(now):
+        raise FileNotFoundError("missing config")
+
+    monkeypatch.setattr(collector, "_execute_maintenance_once", fail_maintenance)
+
+    collector._run_maintenance_if_due(force=True)
+
+    snapshot = collector.snapshot()
+    assert "자동 유지보수 실패: FileNotFoundError" in str(snapshot.last_error)
+    assert snapshot.progress_message == "자동 유지보수 재시도 대기 중"
 
 
 def test_auto_maintenance_creates_missing_backup_and_verifies(monkeypatch):
