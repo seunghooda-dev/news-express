@@ -3615,6 +3615,109 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "최근 7개 유지" in html
 
 
+def test_operations_page_shows_attention_source_queue(monkeypatch):
+    db_path = Path(f"data/.test_operations_attention_sources_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="alpha",
+            source_name="전남광주통합특별시 테스트군청 보도자료",
+            region="전남 테스트",
+            title="게시일 미정 원문",
+            url="https://example.com/alpha-missing",
+            content="게시일 점검이 필요한 원문입니다.",
+            published_at="미정",
+        )
+    )
+    drafted_id = store.add_press_release(
+        PressRelease(
+            source_id="beta",
+            source_name="테스트시청 보도자료",
+            region="전남 테스트",
+            title="정상 원문",
+            url="https://example.com/beta-normal",
+            content="정상 원문입니다.",
+            published_at="2026-07-10",
+        )
+    )
+    assert drafted_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_id,
+            title="정상 초안",
+            body="정상 초안입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_source_summaries",
+        lambda store, config_path: [
+            {
+                "id": "alpha",
+                "name": "전남광주통합특별시 테스트군청 보도자료",
+                "region": "전남 테스트",
+                "releases": 1,
+                "yesterday_releases": 0,
+                "today_releases": 0,
+                "last_collected": None,
+                "issue": "수집 실패",
+                "status_label": "수집 실패",
+                "status_level": "error",
+                "status_detail": "4회 연속 실패했습니다. 선택자 불일치",
+                "business_gap": 2,
+                "consecutive_failures": 4,
+                "last_status": "failed",
+                "last_checked_at": "2026-07-10T15:00:00+09:00",
+                "last_message": "본문 파싱 실패",
+                "failure_stage": "본문 파싱 실패",
+                "failure_reason": "선택자 불일치",
+            },
+            {
+                "id": "beta",
+                "name": "테스트시청 보도자료",
+                "region": "전남 테스트",
+                "releases": 1,
+                "yesterday_releases": 0,
+                "today_releases": 1,
+                "last_collected": None,
+                "issue": "",
+                "status_label": "정상",
+                "status_level": "ok",
+                "status_detail": "",
+                "business_gap": 0,
+                "consecutive_failures": 0,
+                "last_status": "ok",
+                "last_checked_at": "2026-07-10T15:00:00+09:00",
+                "last_message": "",
+                "failure_stage": "",
+                "failure_reason": "",
+            },
+        ],
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "즉시 확인 기관" in html
+    assert "테스트군청 보도자료" in html
+    assert "연속 실패 4회" in html
+    assert "미변환 1건" in html
+    assert "게시일 1건" in html
+    assert "4회 연속 실패했습니다. 선택자 불일치" in html
+    assert 'href="/sources/alpha"' in html
+    assert 'href="/press-releases?draft=missing&amp;source=alpha"' in html
+    assert 'href="/press-releases?draft=date_issue&amp;source=alpha"' in html
+    assert 'href="/ops-logs?tab=collector&amp;q=source_id%3Dalpha"' in html
+
+
 def test_operations_page_shows_actionable_overview_links(monkeypatch):
     db_path = Path(f"data/.test_operations_overview_links_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

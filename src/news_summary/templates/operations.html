@@ -72,6 +72,39 @@
     {% endif %}
   </article>
 
+  <article class="ops-card" id="ops-attention-sources">
+    <div class="ops-card-head">
+      <h2>즉시 확인 기관</h2>
+      <span class="badge {% if attention_source_report.count %}badge-warning{% else %}badge-gemini{% endif %}">
+        {{ attention_source_report.count }}곳
+      </span>
+    </div>
+    {% if attention_source_report.sources %}
+      <ul class="ops-mini-list">
+        {% for item in attention_source_report.sources %}
+          <li>
+            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            <span class="badge {% if item.status_level == 'error' %}badge-warning{% elif item.status_level == 'warning' %}badge-neutral{% else %}badge-gemini{% endif %}">{{ item.status_label }}</span>
+            {% for reason in item.reason_labels %}
+              <span class="badge badge-warning">{{ reason }}</span>
+            {% endfor %}
+            {% if item.summary_text %}
+              <br>
+              {{ item.summary_text }}
+            {% endif %}
+            <br>
+            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">기관 화면</a>
+            {% if item.missing_drafts %} · <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">미변환</a>{% endif %}
+            {% if item.date_issues %} · <a href="{{ url_for('press_releases', draft='date_issue', source=item.source_id) }}">게시일</a>{% endif %}
+            · <a href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ item.source_id) }}">로그</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">지금 바로 확인할 기관이 없습니다.</p>
+    {% endif %}
+  </article>
+
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>운영 변경 잠금</h2>

@@ -2012,6 +2012,7 @@ def _operations_cached_report_bundle(
     reports = {
         "retention_policy": _retention_policy_summary(),
         "operations_health": _operations_health_report(store, auto_status, pending_queue),
+        "attention_source_report": _operations_attention_source_report(store, config_path),
         "recovery_candidate_report": _recovery_candidate_report(store, config_path),
         "deployment_version": _deployment_version_report(),
         "db_health": _db_health_report(store, backup_dir),
@@ -3059,6 +3060,95 @@ def _fallback_url_report(config_path: Path) -> dict[str, object]:
             }
             for source in prepared[:8]
         ],
+    }
+
+
+def _operations_attention_source_report(store: Store, config_path: Path, limit: int = 6) -> dict[str, object]:
+    summaries = _source_summaries(store, config_path)
+    with store.connect() as conn:
+        missing_rows = conn.execute(
+            """
+            SELECT pr.source_id, COUNT(*) AS count
+            FROM press_releases pr
+            LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+            WHERE ad.id IS NULL
+            GROUP BY pr.source_id
+            """
+        ).fetchall()
+        published_rows = conn.execute(
+            """
+            SELECT source_id, source_name, published_at
+            FROM press_releases
+            ORDER BY id DESC
+            LIMIT 1000
+            """
+        ).fetchall()
+
+    missing_counts = {str(row["source_id"] or ""): int(row["count"] or 0) for row in missing_rows}
+    date_issue_counts: Counter[str] = Counter()
+    for row in published_rows:
+        if _press_release_date_warning(row):
+            date_issue_counts[str(row["source_id"] or "")] += 1
+
+    items: list[dict[str, object]] = []
+    for summary in summaries:
+        source_id = str(summary.get("id") or "")
+        if not source_id:
+            continue
+        missing_drafts = int(missing_counts.get(source_id) or 0)
+        date_issues = int(date_issue_counts.get(source_id) or 0)
+        consecutive_failures = int(summary.get("consecutive_failures") or 0)
+        status_level = str(summary.get("status_level") or "ok")
+        status_label = str(summary.get("status_label") or "정상")
+        issue_label = str(summary.get("issue") or "").strip()
+        reason_labels: list[str] = []
+        score = 0
+
+        if status_level == "error":
+            if consecutive_failures >= 3:
+                reason_labels.append(f"연속 실패 {consecutive_failures}회")
+                score += 120 + consecutive_failures
+            elif issue_label and issue_label not in {"점검 기록 없음"}:
+                reason_labels.append(issue_label)
+                score += 90
+        elif status_level == "warning" and issue_label and issue_label not in {"점검 기록 없음"}:
+            reason_labels.append(issue_label)
+            score += 40
+
+        if missing_drafts > 0:
+            reason_labels.append(f"미변환 {missing_drafts}건")
+            score += 20 + min(missing_drafts, 9)
+        if date_issues > 0:
+            reason_labels.append(f"게시일 {date_issues}건")
+            score += 15 + min(date_issues, 9)
+
+        if not reason_labels:
+            continue
+
+        items.append(
+            {
+                "source_id": source_id,
+                "source_name": source_display_label(str(summary.get("name") or source_id)),
+                "status_level": status_level,
+                "status_label": status_label,
+                "reason_labels": reason_labels[:3],
+                "summary_text": str(summary.get("status_detail") or summary.get("last_message") or "").strip(),
+                "missing_drafts": missing_drafts,
+                "date_issues": date_issues,
+                "consecutive_failures": consecutive_failures,
+                "score": score,
+            }
+        )
+
+    items.sort(
+        key=lambda item: (
+            -int(item["score"] or 0),
+            str(item["source_name"] or ""),
+        )
+    )
+    return {
+        "count": len(items),
+        "sources": items[:limit],
     }
 
 
