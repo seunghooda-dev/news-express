@@ -3665,6 +3665,19 @@ def test_queue_drain_next_run_does_not_return_past_time(monkeypatch):
     assert next_run_at == "2026-07-09T02:00:00+00:00"
 
 
+def test_queue_drain_next_run_waits_for_later_gemini_resume(monkeypatch):
+    from news_summary import web as web_module
+
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN_INTERVAL_SECONDS", "900")
+    next_run_at = web_module._queue_drain_next_run_at(
+        "2026-07-09T01:30:00+00:00",
+        cooldown_until=datetime(2026, 7, 9, 2, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 9, 1, 40, tzinfo=timezone.utc),
+    )
+
+    assert next_run_at == "2026-07-09T02:00:00+00:00"
+
+
 def test_healthz_reports_small_gemini_queue_without_warning(monkeypatch):
     db_path = Path(f"data/.test_healthz_small_gemini_queue_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

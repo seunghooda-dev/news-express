@@ -2450,7 +2450,7 @@ def _queue_drain_next_run_at(
     next_run_at = parsed_utc + timedelta(seconds=_auto_queue_drain_interval_seconds())
     if cooldown_until:
         cooldown_at = cooldown_until.astimezone(timezone.utc)
-        if parsed_utc < cooldown_at < next_run_at:
+        if parsed_utc < cooldown_at:
             next_run_at = cooldown_at
     elif retry_due > 0:
         ready_recheck_at = parsed_utc + timedelta(seconds=_auto_queue_drain_ready_recheck_seconds())
