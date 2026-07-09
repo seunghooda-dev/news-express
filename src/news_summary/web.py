@@ -362,6 +362,7 @@ def create_app() -> Flask:
             payload.update(_draft_conversion_coverage_health_payload(store))
         else:
             payload["details_url"] = url_for("healthz_details")
+        payload.update(_service_health_summary(payload))
         return jsonify(payload)
 
     @app.get("/healthz")
@@ -1094,6 +1095,70 @@ def create_app() -> Flask:
         return redirect(url_for("dashboard"))
 
     return app
+
+
+def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
+    issues: list[dict[str, str]] = []
+
+    def add_issue(level: str, component: str, message: object) -> None:
+        if level not in {"warning", "error"}:
+            return
+        text = str(message or "").strip()
+        issues.append(
+            {
+                "level": level,
+                "component": component,
+                "message": text or component,
+            }
+        )
+
+    if payload.get("database") == "error" or payload.get("ok") is False:
+        add_issue("error", "database", "DB 연결 확인 필요")
+
+    auto_collector = str(payload.get("auto_collector") or "")
+    if auto_collector == "stopped":
+        add_issue("error", "auto_collector", payload.get("auto_collector_health_message") or "자동 수집 스레드 중단")
+    elif auto_collector == "disabled":
+        add_issue("warning", "auto_collector", payload.get("auto_collector_health_message") or "자동 수집 꺼짐")
+
+    auto_timing = str(payload.get("auto_collector_timing") or "")
+    if auto_timing == "warning":
+        add_issue("warning", "auto_collector_timing", payload.get("auto_collector_health_message"))
+
+    status_specs = (
+        ("source_collection_status", "source_collection", "source_collection_message"),
+        ("collection_check_coverage_status", "collection_check_coverage", "collection_check_coverage_message"),
+        ("draft_conversion_coverage_status", "draft_conversion_coverage", "draft_conversion_coverage_message"),
+        ("gemini_queue_status", "gemini_queue", "gemini_queue_message"),
+    )
+    for status_key, component, message_key in status_specs:
+        status = str(payload.get(status_key) or "")
+        if status in {"warning", "error"}:
+            add_issue(status, component, payload.get(message_key) or status_key)
+
+    if any(issue["level"] == "error" for issue in issues):
+        level = "error"
+        label = "확인 필요"
+    elif issues:
+        level = "warning"
+        label = "주의"
+    else:
+        level = "ok"
+        label = "정상"
+
+    if issues:
+        first = issues[0]["message"]
+        suffix = f" 외 {len(issues) - 1}건" if len(issues) > 1 else ""
+        message = f"{first}{suffix}"
+    else:
+        message = "서비스 상태 정상 범위"
+
+    return {
+        "service_status_level": level,
+        "service_status_label": label,
+        "service_status_message": message,
+        "service_status_issues": issues[:10],
+    }
 
 
 def _retention_policy_summary() -> dict[str, object]:

@@ -3211,6 +3211,9 @@ def test_healthz_reports_database_status(monkeypatch):
     assert payload["ok"] is True
     assert payload["auto_collector"] in {"enabled", "running", "disabled", "stopped", "unavailable"}
     assert payload["details_url"] == "/healthz/details"
+    assert payload["service_status_level"] in {"ok", "warning", "error"}
+    assert payload["service_status_label"]
+    assert isinstance(payload["service_status_issues"], list)
     assert "gemini_queue_status" not in payload
     assert "source_collection_status" not in payload
     assert "collection_check_coverage_status" not in payload
@@ -3452,6 +3455,12 @@ def test_healthz_reports_draft_conversion_coverage(monkeypatch):
     assert payload["draft_conversion_pending_sources"] == [
         {"source_name": "순천시청 보도자료", "count": 1}
     ]
+    assert payload["service_status_level"] in {"warning", "error"}
+    assert any(
+        issue["component"] == "draft_conversion_coverage"
+        and issue["message"] == payload["draft_conversion_coverage_message"]
+        for issue in payload["service_status_issues"]
+    )
 
 
 def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
@@ -3501,6 +3510,12 @@ def test_healthz_reports_unresolved_source_collection_failures(monkeypatch):
             "failure_stage": "본문 파싱 실패",
         }
     ]
+    assert payload["service_status_level"] == "error"
+    assert any(
+        issue["component"] == "source_collection"
+        and issue["message"] == "미복구 수집 실패 기관 1곳"
+        for issue in payload["service_status_issues"]
+    )
 
 
 def test_healthz_treats_recent_collection_failures_recovered_by_latest_ok_as_ok(monkeypatch):
