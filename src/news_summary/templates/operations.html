@@ -316,6 +316,7 @@
       {% if queue_drain_report.updated_at %}
         <p class="meta">
           마지막 자동 소진 {{ queue_drain_report.updated_at|date_label }} ·
+          {% if queue_drain_report.next_run_at %}다음 자동 점검 {{ queue_drain_report.next_run_at|date_label }} ·{% endif %}
           전 {{ queue_drain_report.queue_pending_before if queue_drain_report.queue_pending_before is not none else '-' }}건 /
           후 {{ queue_drain_report.queue_pending_after if queue_drain_report.queue_pending_after is not none else '-' }}건 /
           처리 {{ queue_drain_report.queue_processed_count if queue_drain_report.queue_processed_count is not none else '-' }}건

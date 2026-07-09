@@ -35,6 +35,7 @@ from .scheduler import (
     AUTO_RECOVERY_STATUS_KEY,
     AUTO_SERVER_HEALTH_STATUS_KEY,
     AUTO_URL_DISCOVERY_STATUS_KEY,
+    _auto_queue_drain_interval_seconds,
     _source_recovery_candidates,
 )
 from .service import (
@@ -2415,8 +2416,11 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
         messages = [_gemini_public_status_text(message) for message in messages]
     else:
         messages = []
+    updated_at = report.get("updated_at")
+    next_run_at = _queue_drain_next_run_at(updated_at)
     return {
-        "updated_at": report.get("updated_at"),
+        "updated_at": updated_at,
+        "next_run_at": next_run_at,
         "queue_pending_before": report.get("queue_pending_before"),
         "queue_pending_after": report.get("queue_pending_after"),
         "queue_processed_count": report.get("queue_processed_count"),
@@ -2426,6 +2430,15 @@ def _auto_queue_drain_report(store: Store) -> dict[str, object]:
         "queue_retry_due_after": report.get("queue_retry_due_after"),
         "queue_drain_messages": messages,
     }
+
+
+def _queue_drain_next_run_at(updated_at: object) -> str | None:
+    parsed = _parse_datetime(updated_at)
+    if not parsed:
+        return None
+    next_run_at = parsed.astimezone(timezone.utc) + timedelta(seconds=_auto_queue_drain_interval_seconds())
+    return next_run_at.isoformat()
+
 
 def _metadata_json_report(store: Store, key: str, default: dict[str, object]) -> dict[str, object]:
     raw_value = store.get_app_metadata(key)
@@ -2741,6 +2754,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
             "gemini_failure_total": None,
             "gemini_retry_due": None,
             "gemini_last_queue_drain_at": None,
+            "gemini_next_queue_drain_at": None,
             "gemini_last_queue_pending_before": None,
             "gemini_last_queue_pending_after": None,
             "gemini_last_queue_processed_count": None,
@@ -2787,6 +2801,7 @@ def _gemini_queue_health_payload(store: Store) -> dict[str, object]:
         "gemini_next_retry_at": next_retry_at or None,
         "gemini_oldest_first_failed_at": oldest_first_failed_at or None,
         "gemini_last_queue_drain_at": queue_drain_report.get("updated_at"),
+        "gemini_next_queue_drain_at": queue_drain_report.get("next_run_at"),
         "gemini_last_queue_pending_before": queue_drain_report.get("queue_pending_before"),
         "gemini_last_queue_pending_after": queue_drain_report.get("queue_pending_after"),
         "gemini_last_queue_processed_count": queue_drain_report.get("queue_processed_count"),

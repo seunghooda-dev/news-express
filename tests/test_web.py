@@ -2456,6 +2456,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "URL 후보 탐색" in html
     assert "Gemini 초안 대기열" in html
     assert "마지막 자동 소진" in html
+    assert "다음 자동 점검" in html
     assert "전 8건" in html
     assert "후 5건" in html
     assert "처리 3건" in html
@@ -3616,6 +3617,7 @@ def test_healthz_reports_gemini_queue_warning(monkeypatch):
     assert payload["gemini_next_retry_at"] == due_at
     assert payload["gemini_oldest_first_failed_at"]
     assert payload["gemini_last_queue_drain_at"] == "2026-07-09T00:30:00+00:00"
+    assert payload["gemini_next_queue_drain_at"] == "2026-07-09T00:45:00+00:00"
     assert payload["gemini_last_queue_pending_before"] == 7
     assert payload["gemini_last_queue_pending_after"] == 5
     assert payload["gemini_last_queue_processed_count"] == 2
