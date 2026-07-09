@@ -677,6 +677,12 @@ def create_app() -> Flask:
         target_date = _parse_date(request.args.get("date"))
         query = (request.args.get("q") or "").strip()
         review_filter = (request.args.get("review") or "").strip()
+        asset_filter = (request.args.get("asset") or "").strip()
+        if asset_filter not in {"with"}:
+            asset_filter = ""
+        model_filter = (request.args.get("model") or "").strip()
+        if model_filter not in {"flash", "lite", "rule"}:
+            model_filter = ""
         source_filter = (request.args.get("source") or "").strip()
         selected_regions = _selected_regions(config_path)
         display_limit = _list_display_limit()
@@ -687,6 +693,8 @@ def create_app() -> Flask:
             selected_regions=selected_regions,
             source_filter=source_filter,
             target_date=target_date,
+            asset_filter=asset_filter,
+            model_filter=model_filter,
             query=query,
             limit=FILTER_FETCH_LIMIT if review_filter else display_limit + 1,
             include_original_content=needs_original_content,
@@ -701,6 +709,8 @@ def create_app() -> Flask:
             status=status,
             date=target_date.isoformat() if target_date else "",
             review=review_filter,
+            asset=asset_filter,
+            model=model_filter,
             source=source_filter,
             q=query,
         )
@@ -711,6 +721,8 @@ def create_app() -> Flask:
             date_filter=target_date,
             query=query,
             review_filter=review_filter,
+            asset_filter=asset_filter,
+            model_filter=model_filter,
             source_filter=source_filter,
             duplicate_titles=duplicate_titles,
             draft_thumbnails=draft_thumbnails,
@@ -719,7 +731,15 @@ def create_app() -> Flask:
             selected_regions=selected_regions,
             region_filter_hidden=region_filter_hidden,
             region_reset_url=url_for("drafts", **region_filter_hidden),
-            page_title=_drafts_page_title(status, target_date, review_filter, source_filter, config_path),
+            page_title=_drafts_page_title(
+                status,
+                target_date,
+                review_filter,
+                asset_filter,
+                model_filter,
+                source_filter,
+                config_path,
+            ),
             displayed_count=len(draft_rows),
             has_more=has_more,
             more_url=_load_more_url("drafts", display_limit + LIST_PAGE_SIZE) if has_more else "",
@@ -4368,6 +4388,8 @@ def _draft_rows_for_listing(
     selected_regions: list[str] | None = None,
     source_filter: str = "",
     target_date: date | None = None,
+    asset_filter: str = "",
+    model_filter: str = "",
     query: str = "",
     limit: int = LIST_PAGE_SIZE,
     include_original_content: bool = True,
@@ -4388,6 +4410,18 @@ def _draft_rows_for_listing(
     if target_date:
         where.append(f"{_draft_date_sql_expr()} = ?")
         params.append(target_date.isoformat())
+    if asset_filter == "with":
+        where.append("EXISTS (SELECT 1 FROM press_release_assets pra WHERE pra.press_release_id = pr.id)")
+    model_expr = "LOWER(COALESCE(ad.model, ''))"
+    if model_filter == "flash":
+        where.append(f"{model_expr} LIKE ? AND {model_expr} LIKE ? AND {model_expr} NOT LIKE ?")
+        params.extend(["%gemini%", "%flash%", "%lite%"])
+    elif model_filter == "lite":
+        where.append(f"{model_expr} LIKE ? AND {model_expr} LIKE ?")
+        params.extend(["%gemini%", "%lite%"])
+    elif model_filter == "rule":
+        where.append(f"{model_expr} LIKE ?")
+        params.append("%:rule-based%")
     for term in [term.casefold() for term in query.split() if term.strip()]:
         like = f"%{term}%"
         where.append(
@@ -5586,13 +5620,19 @@ def _drafts_page_title(
     status: str | None,
     target_date: date | None,
     review_filter: str = "",
+    asset_filter: str = "",
+    model_filter: str = "",
     source_filter: str = "",
     config_path: Path | None = None,
 ) -> str:
+    parts: list[str] = []
+    if target_date:
+        parts.append(_date_group_label(target_date, datetime.now(LOCAL_TZ).date()))
     if source_filter and config_path:
         for source in load_sources(config_path):
             if source.id == source_filter:
-                return f"{source.name} 기사"
+                parts.append(source.name)
+                break
     if review_filter:
         labels = {
             "today": "오늘 기사",
@@ -5602,11 +5642,22 @@ def _drafts_page_title(
             "event": "행사·교육 기사",
             "support": "지원·예산 기사",
         }
-        return labels.get(review_filter, "필터 기사")
-    if target_date:
-        label = _date_group_label(target_date, datetime.now(LOCAL_TZ).date())
-        status_text = status_label(status) if status else "전체"
-        return f"{label} {status_text} 전체"
+        parts.append(labels.get(review_filter, "필터 기사"))
+    if asset_filter == "with":
+        parts.append("사진 포함")
+    if model_filter:
+        model_titles = {
+            "flash": "Gemini Flash",
+            "lite": "Gemini Lite",
+            "rule": "규칙 기반",
+        }
+        parts.append(model_titles.get(model_filter, "모델 필터"))
+    if parts:
+        if status:
+            parts.append(status_label(status))
+        elif not any(str(part).endswith("기사") for part in parts):
+            parts.append("기사")
+        return " ".join(parts)
     if status:
         return f"{status_label(status)} 기사"
     return "기사 초안"

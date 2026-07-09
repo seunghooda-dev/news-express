@@ -829,6 +829,125 @@ def test_drafts_page_uses_load_more_pagination(monkeypatch):
     assert "더보기" not in expanded_page
 
 
+def test_drafts_page_filters_assets_and_models(monkeypatch):
+    db_path = Path(f"data/.test_drafts_asset_model_filters_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    flash_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample-flash",
+            source_name="테스트 기관",
+            region="전남",
+            title="사진 있는 Flash 초안 원문",
+            url="https://example.com/drafts-flash-image",
+            content="사진이 포함된 Flash 초안 원문입니다.",
+            published_at="2026-07-10",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/drafts-flash-image.jpg",
+                    title="Flash 사진",
+                    filename="drafts-flash-image.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    lite_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample-lite",
+            source_name="테스트 기관",
+            region="전남",
+            title="이미지 없는 Lite 초안 원문",
+            url="https://example.com/drafts-lite-no-image",
+            content="이미지가 없는 Lite 초안 원문입니다.",
+            published_at="2026-07-10",
+        )
+    )
+    lite_image_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample-lite-image",
+            source_name="테스트 기관",
+            region="전남",
+            title="사진 있는 Lite 초안 원문",
+            url="https://example.com/drafts-lite-image",
+            content="사진이 포함된 Lite 초안 원문입니다.",
+            published_at="2026-07-10",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/drafts-lite-image.jpg",
+                    title="Lite 사진",
+                    filename="drafts-lite-image.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert flash_release_id is not None
+    assert lite_release_id is not None
+    assert lite_image_release_id is not None
+
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=flash_release_id,
+            title="사진 있는 Flash 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=lite_release_id,
+            title="이미지 없는 Lite 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.1-flash-lite:gemini",
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=lite_image_release_id,
+            title="사진 있는 Lite 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.1-flash-lite:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    asset_page = client.get("/drafts?asset=with").data.decode("utf-8")
+    lite_page = client.get("/drafts?model=lite").data.decode("utf-8")
+    combined_page = client.get("/drafts?status=needs_review&asset=with&model=lite").data.decode("utf-8")
+
+    assert "사진 포함 기사" in asset_page
+    assert "사진 있는 Flash 초안" in asset_page
+    assert "사진 있는 Lite 초안" in asset_page
+    assert "이미지 없는 Lite 초안" not in asset_page
+
+    assert "Gemini Lite 기사" in lite_page
+    assert "이미지 없는 Lite 초안" in lite_page
+    assert "사진 있는 Lite 초안" in lite_page
+    assert "사진 있는 Flash 초안" not in lite_page
+    assert '<option value="lite" selected>Gemini Lite</option>' in lite_page
+
+    assert "Gemini Lite 검수 대기" in combined_page
+    assert "사진 있는 Lite 초안" in combined_page
+    assert "사진 있는 Flash 초안" not in combined_page
+    assert "이미지 없는 Lite 초안" not in combined_page
+    assert 'href="/drafts?status=needs_review"' in combined_page
+
+
 def test_press_releases_page_uses_load_more_pagination(monkeypatch):
     db_path = Path(f"data/.test_releases_load_more_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
