@@ -310,7 +310,11 @@
     {% if anomaly_report.issues %}
       <p class="gemini-models">
         {% for item in anomaly_report.issues[:5] %}
-          <span>{{ source_display_label(item.source_name) }} {{ item.label }} {{ item.today_count }}건/평균 {{ item.average }}</span>
+          {% if item.type == 'today_zero' %}
+            <span>{{ source_display_label(item.source_name) }} 오늘 0건 / 평균 {{ item.average }}건</span>
+          {% else %}
+            <span>{{ source_display_label(item.source_name) }} {{ item.label }} · 오늘 {{ item.today_count }}건 / 평균 {{ item.average }}건</span>
+          {% endif %}
         {% endfor %}
       </p>
     {% else %}

@@ -2543,6 +2543,49 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
     assert "/press-releases/1" in html
 
 
+def test_operations_page_formats_collection_anomaly_counts_without_duplication(monkeypatch):
+    db_path = Path(f"data/.test_operations_anomaly_counts_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_collection_anomaly_report",
+        lambda store: {
+            "updated_at": "2026-07-09T10:00:00+09:00",
+            "status_level": "warning",
+            "status_label": "확인 필요",
+            "issue_count": 2,
+            "issues": [
+                {
+                    "source_id": "zero-source",
+                    "source_name": "강진군청 보도자료",
+                    "type": "today_zero",
+                    "label": "오늘 0건",
+                    "today_count": 0,
+                    "average": 12.0,
+                },
+                {
+                    "source_id": "drop-source",
+                    "source_name": "무안군청 보도자료",
+                    "type": "drop",
+                    "label": "평소 대비 급감",
+                    "today_count": 1,
+                    "average": 5.5,
+                },
+            ],
+        },
+    )
+    app = web_module.create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "강진군청 보도자료 오늘 0건 / 평균 12.0건" in html
+    assert "오늘 0건 0건/평균" not in html
+    assert "무안군청 보도자료 평소 대비 급감 · 오늘 1건 / 평균 5.5건" in html
+
+
 def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
     db_path = Path(f"data/.test_operations_gemini_cooldown_reason_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
