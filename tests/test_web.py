@@ -3228,6 +3228,34 @@ def test_healthz_reports_database_status(monkeypatch):
         assert "auto_collector_thread_alive" in payload
 
 
+def test_healthz_details_reports_deployment_version_warning(monkeypatch):
+    db_path = Path(f"data/.test_healthz_deployment_version_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_GIT_COMMIT", "aaa111")
+    monkeypatch.setenv("NEWS_SUMMARY_GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("NEWS_SUMMARY_GITHUB_BRANCH", "codex/news-express")
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_latest_github_commit", lambda repo, branch: "bbb222")
+    monkeypatch.setattr(web_module, "_github_compare_files", lambda repo, base, head: ["src/news_summary/web.py"])
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["deployment_version_status"] == "warning"
+    assert payload["deployment_version_label"] == "배포 필요"
+    assert payload["deployment_running_commit"] == "aaa111"
+    assert payload["deployment_latest_commit"] == "bbb222"
+    assert payload["deployment_runtime_change_count"] == 1
+    assert payload["deployment_version_message"] == "운영 버전이 GitHub 최신 커밋보다 뒤처져 있습니다: 운영 aaa111 · GitHub bbb222"
+    assert any(
+        issue["component"] == "deployment_version"
+        and issue["message"] == payload["deployment_version_message"]
+        for issue in payload["service_status_issues"]
+    )
+
+
 def test_service_health_summary_merges_duplicate_operational_warnings():
     summary = _service_health_summary(
         {

@@ -367,6 +367,7 @@ def create_app() -> Flask:
             payload.update(_source_collection_health_payload(store))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
             payload.update(_draft_conversion_coverage_health_payload(store))
+            payload.update(_deployment_version_health_payload())
         else:
             payload["details_url"] = url_for("healthz_details")
         payload.update(_service_health_summary(payload))
@@ -1136,6 +1137,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     if source_status in {"warning", "error"}:
         add_issue(source_status, "source_collection", payload.get("source_collection_message"))
 
+    deployment_status = str(payload.get("deployment_version_status") or "")
+    if deployment_status in {"warning", "error"}:
+        add_issue(deployment_status, "deployment_version", payload.get("deployment_version_message"))
+
     collection_status = str(payload.get("collection_check_coverage_status") or "")
     collection_failed_today = int(payload.get("collection_check_coverage_failed_today") or 0)
     collection_unchecked_count = int(payload.get("collection_check_coverage_unchecked_count") or 0)
@@ -1246,6 +1251,48 @@ def _deployment_version_report() -> dict[str, object]:
         "branch": branch,
         "change_report": change_report,
         **deploy_config,
+    }
+
+
+def _deployment_version_health_payload() -> dict[str, object]:
+    try:
+        report = _deployment_version_report()
+    except Exception as exc:  # noqa: BLE001 - health checks should continue even if GitHub lookup fails.
+        logger.warning("deployment version health check failed error=%s", exc)
+        return {
+            "deployment_version_status": "warning",
+            "deployment_version_label": "확인 불가",
+            "deployment_version_message": f"배포 버전 확인 실패: {type(exc).__name__}",
+            "deployment_running_commit": None,
+            "deployment_latest_commit": None,
+            "deployment_changed_count": None,
+            "deployment_runtime_change_count": None,
+            "deployment_auto_deploy_label": None,
+            "deployment_auto_deploy_trigger": None,
+        }
+    change_report = report.get("change_report") if isinstance(report.get("change_report"), dict) else {}
+    status_level = str(report.get("status_level") or "warning")
+    status_label = str(report.get("status_label") or "확인 불가")
+    running_commit = report.get("running_commit")
+    latest_commit = report.get("latest_commit")
+    if status_level == "warning" and running_commit and latest_commit:
+        message = f"운영 버전이 GitHub 최신 커밋보다 뒤처져 있습니다: 운영 {running_commit} · GitHub {latest_commit}"
+    elif status_level == "ok":
+        message = "배포 버전 정상"
+    else:
+        message = f"배포 버전 상태: {status_label}"
+    return {
+        "deployment_version_status": status_level,
+        "deployment_version_label": status_label,
+        "deployment_version_message": message,
+        "deployment_running_commit": running_commit,
+        "deployment_latest_commit": latest_commit,
+        "deployment_repo": report.get("repo"),
+        "deployment_branch": report.get("branch"),
+        "deployment_changed_count": change_report.get("changed_count"),
+        "deployment_runtime_change_count": change_report.get("runtime_change_count"),
+        "deployment_auto_deploy_label": report.get("auto_deploy_label"),
+        "deployment_auto_deploy_trigger": report.get("auto_deploy_trigger"),
     }
 
 
