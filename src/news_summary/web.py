@@ -762,6 +762,9 @@ def create_app() -> Flask:
         asset_filter = (request.args.get("asset") or "").strip()
         if asset_filter not in {"with"}:
             asset_filter = ""
+        model_filter = (request.args.get("model") or "").strip()
+        if model_filter not in {"flash", "lite", "rule"}:
+            model_filter = ""
         target_date = _parse_date(request.args.get("date"))
         query = (request.args.get("q") or "").strip()
         source_filter = (request.args.get("source") or "").strip()
@@ -773,6 +776,7 @@ def create_app() -> Flask:
             target_date=target_date,
             draft_filter=draft_filter,
             asset_filter=asset_filter,
+            model_filter=model_filter,
             query=query,
             limit=display_limit + 1,
         )
@@ -782,6 +786,7 @@ def create_app() -> Flask:
         region_filter_hidden = _clean_query_args(
             draft=draft_filter,
             asset=asset_filter,
+            model=model_filter,
             date=target_date.isoformat() if target_date else "",
             source=source_filter,
             q=query,
@@ -791,6 +796,7 @@ def create_app() -> Flask:
             press_releases=releases,
             draft_filter=draft_filter,
             asset_filter=asset_filter,
+            model_filter=model_filter,
             date_filter=target_date,
             query=query,
             source_filter=source_filter,
@@ -799,7 +805,15 @@ def create_app() -> Flask:
             selected_regions=selected_regions,
             region_filter_hidden=region_filter_hidden,
             region_reset_url=url_for("press_releases", **region_filter_hidden),
-            page_title=_press_releases_page_title(draft_filter, asset_filter, target_date, source_filter, query, config_path),
+            page_title=_press_releases_page_title(
+                draft_filter,
+                asset_filter,
+                model_filter,
+                target_date,
+                source_filter,
+                query,
+                config_path,
+            ),
             today_iso=datetime.now(LOCAL_TZ).date().isoformat(),
             displayed_count=len(releases),
             has_more=has_more,
@@ -4486,6 +4500,7 @@ def _press_release_rows_for_listing(
     target_date: date | None = None,
     draft_filter: str = "",
     asset_filter: str = "",
+    model_filter: str = "",
     query: str = "",
     limit: int = LIST_PAGE_SIZE,
 ):
@@ -4508,6 +4523,16 @@ def _press_release_rows_for_listing(
         where.append("ad.id IS NOT NULL")
     if asset_filter == "with":
         where.append("EXISTS (SELECT 1 FROM press_release_assets pra WHERE pra.press_release_id = pr.id)")
+    model_expr = "LOWER(COALESCE(ad.model, ''))"
+    if model_filter == "flash":
+        where.append(f"{model_expr} LIKE ? AND {model_expr} LIKE ? AND {model_expr} NOT LIKE ?")
+        params.extend(["%gemini%", "%flash%", "%lite%"])
+    elif model_filter == "lite":
+        where.append(f"{model_expr} LIKE ? AND {model_expr} LIKE ?")
+        params.extend(["%gemini%", "%lite%"])
+    elif model_filter == "rule":
+        where.append(f"{model_expr} LIKE ?")
+        params.append("%:rule-based%")
     for term in [term.casefold() for term in query.split() if term.strip()]:
         like = f"%{term}%"
         where.append(
@@ -5666,6 +5691,7 @@ def _drafts_page_title(
 def _press_releases_page_title(
     draft_filter: str,
     asset_filter: str,
+    model_filter: str,
     target_date: date | None,
     source_filter: str,
     query: str,
@@ -5680,6 +5706,13 @@ def _press_releases_page_title(
         parts.append("게시일 확인 원문")
     if asset_filter == "with":
         parts.append("첨부 포함 원문")
+    if model_filter:
+        model_titles = {
+            "flash": "Gemini Flash 원문",
+            "lite": "Gemini Lite 원문",
+            "rule": "규칙 기반 원문",
+        }
+        parts.append(model_titles.get(model_filter, "모델 필터 원문"))
     if target_date:
         parts.append(_date_group_label(target_date, datetime.now(LOCAL_TZ).date()))
     if source_filter:

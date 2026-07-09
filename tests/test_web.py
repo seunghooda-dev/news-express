@@ -1065,6 +1065,90 @@ def test_press_releases_page_filters_missing_drafts_date_source_and_query(monkey
     assert "오늘 초안 생성 원문" not in query_page
 
 
+def test_press_releases_page_filters_models(monkeypatch):
+    db_path = Path(f"data/.test_releases_model_filters_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    flash_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample-flash",
+            source_name="테스트 기관",
+            region="전남",
+            title="Flash 원문",
+            url="https://example.com/release-flash",
+            content="Flash 초안이 생성된 원문입니다.",
+            published_at="2026-07-10",
+        )
+    )
+    lite_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample-lite",
+            source_name="테스트 기관",
+            region="전남",
+            title="Lite 원문",
+            url="https://example.com/release-lite",
+            content="Lite 초안이 생성된 원문입니다.",
+            published_at="2026-07-10",
+        )
+    )
+    missing_release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample-missing",
+            source_name="테스트 기관",
+            region="전남",
+            title="초안 없는 원문",
+            url="https://example.com/release-missing",
+            content="초안이 아직 없는 원문입니다.",
+            published_at="2026-07-10",
+        )
+    )
+    assert flash_release_id is not None
+    assert lite_release_id is not None
+    assert missing_release_id is not None
+
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=flash_release_id,
+            title="Flash 기사 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=lite_release_id,
+            title="Lite 기사 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.1-flash-lite:gemini",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    lite_page = client.get("/press-releases?model=lite").data.decode("utf-8")
+    flash_page = client.get("/press-releases?draft=drafted&model=flash").data.decode("utf-8")
+
+    assert "Gemini Lite 원문" in lite_page
+    assert "Lite 원문" in lite_page
+    assert "Flash 원문" not in lite_page
+    assert "초안 없는 원문" not in lite_page
+    assert '<option value="lite" selected>Gemini Lite</option>' in lite_page
+    assert 'href="/press-releases?draft=drafted&amp;asset=&amp;model=lite' in lite_page or 'href="/press-releases?draft=drafted&amp;model=lite' in lite_page
+
+    assert "초안 생성 원문 · Gemini Flash 원문" in flash_page
+    assert "Flash 원문" in flash_page
+    assert "Lite 원문" not in flash_page
+    assert "초안 없는 원문" not in flash_page
+
+
 def test_press_releases_page_filters_date_issues(monkeypatch):
     db_path = Path(f"data/.test_releases_date_issue_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

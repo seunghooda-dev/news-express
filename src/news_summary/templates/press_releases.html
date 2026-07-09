@@ -6,12 +6,12 @@
 </section>
 
 <section class="quick-filters">
-  <a class="{% if not draft_filter and not date_filter and not asset_filter %}active{% endif %}" href="{{ url_for('press_releases', region=selected_regions) }}">전체 원문</a>
-  <a class="{% if draft_filter == 'missing' %}active{% endif %}" href="{{ url_for('press_releases', draft='missing', asset=asset_filter, region=selected_regions) }}">초안 없음</a>
-  <a class="{% if draft_filter == 'drafted' %}active{% endif %}" href="{{ url_for('press_releases', draft='drafted', asset=asset_filter, region=selected_regions) }}">초안 있음</a>
-  <a class="{% if draft_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('press_releases', draft='date_issue', asset=asset_filter, region=selected_regions) }}">게시일 확인</a>
-  <a class="{% if asset_filter == 'with' %}active{% endif %}" href="{{ url_for('press_releases', asset='with', draft=draft_filter, region=selected_regions) }}">첨부 포함</a>
-  <a class="{% if date_filter and date_filter.isoformat() == today_iso %}active{% endif %}" href="{{ url_for('press_releases', date=today_iso, draft=draft_filter, asset=asset_filter, region=selected_regions) }}">오늘 원문</a>
+  <a class="{% if not draft_filter and not date_filter and not asset_filter and not model_filter %}active{% endif %}" href="{{ url_for('press_releases', source=source_filter, q=query, region=selected_regions) }}">전체 원문</a>
+  <a class="{% if draft_filter == 'missing' %}active{% endif %}" href="{{ url_for('press_releases', draft='missing', asset=asset_filter, model=model_filter, source=source_filter, q=query, region=selected_regions) }}">초안 없음</a>
+  <a class="{% if draft_filter == 'drafted' %}active{% endif %}" href="{{ url_for('press_releases', draft='drafted', asset=asset_filter, model=model_filter, source=source_filter, q=query, region=selected_regions) }}">초안 있음</a>
+  <a class="{% if draft_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('press_releases', draft='date_issue', asset=asset_filter, model=model_filter, source=source_filter, q=query, region=selected_regions) }}">게시일 확인</a>
+  <a class="{% if asset_filter == 'with' %}active{% endif %}" href="{{ url_for('press_releases', asset='with', draft=draft_filter, model=model_filter, source=source_filter, q=query, region=selected_regions) }}">첨부 포함</a>
+  <a class="{% if date_filter and date_filter.isoformat() == today_iso %}active{% endif %}" href="{{ url_for('press_releases', date=today_iso, draft=draft_filter, asset=asset_filter, model=model_filter, source=source_filter, q=query, region=selected_regions) }}">오늘 원문</a>
 </section>
 
 {% include "_region_filter.html" %}
@@ -29,18 +29,26 @@
       <option value="{{ source.id }}" {% if source_filter == source.id %}selected{% endif %}>{{ source_display_label(source.name) }}</option>
     {% endfor %}
   </select>
+  <label for="model">모델별</label>
+  <select id="model" name="model" onchange="this.form.submit()">
+    <option value="">전체 모델</option>
+    <option value="flash" {% if model_filter == 'flash' %}selected{% endif %}>Gemini Flash</option>
+    <option value="lite" {% if model_filter == 'lite' %}selected{% endif %}>Gemini Lite</option>
+    <option value="rule" {% if model_filter == 'rule' %}selected{% endif %}>규칙 기반</option>
+  </select>
 </form>
 
 <form class="searchbar" method="get">
   {% if draft_filter %}<input type="hidden" name="draft" value="{{ draft_filter }}">{% endif %}
   {% if asset_filter %}<input type="hidden" name="asset" value="{{ asset_filter }}">{% endif %}
+  {% if model_filter %}<input type="hidden" name="model" value="{{ model_filter }}">{% endif %}
   {% if date_filter %}<input type="hidden" name="date" value="{{ date_filter.isoformat() }}">{% endif %}
   {% if source_filter %}<input type="hidden" name="source" value="{{ source_filter }}">{% endif %}
   {% for region in selected_regions %}<input type="hidden" name="region" value="{{ region }}">{% endfor %}
   <label for="q">검색</label>
   <input id="q" name="q" value="{{ query }}" placeholder="제목, 지자체, 원문">
   <button type="submit">검색</button>
-  {% if query or draft_filter or source_filter or date_filter or selected_regions %}
+  {% if query or draft_filter or asset_filter or model_filter or source_filter or date_filter or selected_regions %}
     <a class="source-link" href="{{ url_for('press_releases') }}">초기화</a>
   {% endif %}
 </form>
