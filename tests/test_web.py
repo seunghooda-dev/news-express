@@ -4400,6 +4400,40 @@ def test_draft_conversion_coverage_report_splits_ready_and_scheduled_pending(mon
     assert "예약 대기 1건" in report["message"]
 
 
+def test_draft_conversion_coverage_report_uses_collected_time_for_date_only_pending(monkeypatch):
+    db_path = Path(f"data/.test_draft_conversion_date_only_pending_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 6, 14, 0, tzinfo=LOCAL_TZ)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(web_module, "datetime", FixedDatetime)
+    store.add_press_release(
+        PressRelease(
+            source_id="date-only",
+            source_name="날짜 기관 보도자료",
+            region="전남",
+            title="게시일 날짜만 있는 원문",
+            url="https://example.com/date-only-pending",
+            content="게시일은 날짜만 있고 수집 시간은 별도로 있는 원문입니다.",
+            published_at="2026-07-06",
+            collected_at="2026-07-06T04:30:00+00:00",
+        )
+    )
+
+    report = _draft_conversion_coverage_report(store)
+
+    assert report["today_pending"] == 1
+    assert report["latest_pending_at"] == "2026-07-06T04:30:00+00:00"
+    assert report["oldest_pending_at"] == "2026-07-06T04:30:00+00:00"
+
+
 def test_draft_conversion_coverage_report_uses_latest_unresolved_failure_per_release(monkeypatch):
     db_path = Path(f"data/.test_draft_conversion_latest_failure_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

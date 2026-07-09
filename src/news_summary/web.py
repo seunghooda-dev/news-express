@@ -2274,7 +2274,13 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     def pending_time(row) -> str | None:
         if not row:
             return None
-        return str(row["published_at"] or row["collected_at"] or "") or None
+        published_at = str(row["published_at"] or "").strip()
+        collected_at = str(row["collected_at"] or "").strip()
+        if published_at and _has_time_component(published_at):
+            return published_at
+        if collected_at and _has_time_component(collected_at):
+            return collected_at
+        return published_at or collected_at or None
 
     return {
         "status_level": status_level,
@@ -4842,6 +4848,12 @@ def _parse_date(value: object) -> date | None:
     if parsed.tzinfo:
         parsed = parsed.astimezone(LOCAL_TZ)
     return parsed.date()
+
+
+def _has_time_component(value: object) -> bool:
+    if not value:
+        return False
+    return bool(re.search(r"\d{1,2}:\d{2}", str(value)))
 
 
 def _parse_datetime(value: object) -> datetime | None:
