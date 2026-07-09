@@ -3162,9 +3162,13 @@ def test_operations_page_formats_collection_anomaly_counts_without_duplication(m
     app.testing = True
     html = app.test_client().get("/operations").data.decode("utf-8")
 
-    assert "강진군청 보도자료 오늘 0건 / 평균 12.0건" in html
+    assert 'href="/sources/zero-source"' in html
+    assert "강진군청 보도자료</a>" in html
+    assert "오늘 0건 / 평균 12.0건" in html
     assert "오늘 0건 0건/평균" not in html
-    assert "무안군청 보도자료 평소 대비 급감 · 오늘 1건 / 평균 5.5건" in html
+    assert 'href="/sources/drop-source"' in html
+    assert "무안군청 보도자료</a>" in html
+    assert "평소 대비 급감 · 오늘 1건 / 평균 5.5건" in html
 
 
 def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
@@ -4953,6 +4957,7 @@ def test_collection_check_coverage_report_flags_unchecked_business_day_sources(m
     assert report["checked_today"] == 1
     assert report["success_today"] == 1
     assert report["today_release_sources"] == 1
+    assert report["unchecked_items"] == [{"source_id": "missing", "source_name": "미점검 기관"}]
     assert report["unchecked_labels"] == ["미점검 기관"]
 
 
@@ -5001,6 +5006,8 @@ def test_operations_page_shows_collection_check_coverage_card(monkeypatch):
             "success_today": 1,
             "failed_today": 0,
             "today_release_sources": 1,
+            "unchecked_items": [{"source_id": "missing", "source_name": "미점검 기관"}],
+            "failed_items": [],
             "unchecked_labels": ["미점검 기관"],
             "failed_labels": [],
             "message": "오늘 아직 점검되지 않은 기관이 1곳 있습니다.",
@@ -5014,7 +5021,8 @@ def test_operations_page_shows_collection_check_coverage_card(monkeypatch):
     assert "오늘 수집 점검 커버리지" in html
     assert "1/2" in html
     assert "오늘 아직 점검되지 않은 기관이 1곳 있습니다." in html
-    assert "미점검 미점검 기관" in html
+    assert 'href="/sources/missing"' in html
+    assert "미점검 기관" in html
 
 
 def test_draft_conversion_coverage_report_flags_today_pending_releases(monkeypatch):

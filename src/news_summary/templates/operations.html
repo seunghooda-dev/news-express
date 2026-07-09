@@ -236,13 +236,27 @@
     <p class="meta">
       성공 {{ collection_check_coverage_report.success_today }}곳 · 실패 {{ collection_check_coverage_report.failed_today }}곳 · 오늘 원문 기관 {{ collection_check_coverage_report.today_release_sources }}곳
     </p>
-    {% if collection_check_coverage_report.unchecked_labels or collection_check_coverage_report.failed_labels %}
+    {% if collection_check_coverage_report.unchecked_items or collection_check_coverage_report.failed_items %}
       <p class="gemini-models">
-        {% for item in collection_check_coverage_report.unchecked_labels[:5] %}
-          <span>미점검 {{ item }}</span>
+        {% for item in collection_check_coverage_report.unchecked_items[:5] %}
+          <span>
+            미점검
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            {% else %}
+              {{ item.source_name }}
+            {% endif %}
+          </span>
         {% endfor %}
-        {% for item in collection_check_coverage_report.failed_labels[:5] %}
-          <span>실패 {{ item }}</span>
+        {% for item in collection_check_coverage_report.failed_items[:5] %}
+          <span>
+            실패
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            {% else %}
+              {{ item.source_name }}
+            {% endif %}
+          </span>
         {% endfor %}
       </p>
     {% endif %}
@@ -359,9 +373,23 @@
       <p class="gemini-models">
         {% for item in anomaly_report.issues[:5] %}
           {% if item.type == 'today_zero' %}
-            <span>{{ source_display_label(item.source_name) }} 오늘 0건 / 평균 {{ item.average }}건</span>
+            <span>
+              {% if item.source_id %}
+                <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }}</a>
+              {% else %}
+                {{ source_display_label(item.source_name) }}
+              {% endif %}
+              오늘 0건 / 평균 {{ item.average }}건
+            </span>
           {% else %}
-            <span>{{ source_display_label(item.source_name) }} {{ item.label }} · 오늘 {{ item.today_count }}건 / 평균 {{ item.average }}건</span>
+            <span>
+              {% if item.source_id %}
+                <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }}</a>
+              {% else %}
+                {{ source_display_label(item.source_name) }}
+              {% endif %}
+              {{ item.label }} · 오늘 {{ item.today_count }}건 / 평균 {{ item.average }}건
+            </span>
           {% endif %}
         {% endfor %}
       </p>

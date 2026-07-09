@@ -2033,6 +2033,8 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
             "success_today": 0,
             "failed_today": 0,
             "today_release_sources": 0,
+            "unchecked_items": [],
+            "failed_items": [],
             "unchecked_labels": [],
             "failed_labels": [],
             "message": f"수집 설정을 읽지 못했습니다: {type(exc).__name__}",
@@ -2082,6 +2084,8 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
             "success_today": 0,
             "failed_today": 0,
             "today_release_sources": 0,
+            "unchecked_items": [],
+            "failed_items": [],
             "unchecked_labels": [],
             "failed_labels": [],
             "message": f"오늘 수집 점검 현황을 읽지 못했습니다: {type(exc).__name__}",
@@ -2108,6 +2112,14 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
     }
     release_ids = {str(row["source_id"]) for row in release_rows if str(row["source_id"]) in source_ids}
     unchecked_ids = [source.id for source in sources if source.id not in checked_ids]
+    failed_items = [
+        {"source_id": source_id, "source_name": source_labels[source_id]}
+        for source_id in sorted(failed_ids, key=source_labels.get)
+    ]
+    unchecked_items = [
+        {"source_id": source_id, "source_name": source_labels[source_id]}
+        for source_id in unchecked_ids
+    ]
     failed_labels = [source_labels[source_id] for source_id in sorted(failed_ids, key=source_labels.get)]
     unchecked_labels = [source_labels[source_id] for source_id in unchecked_ids]
 
@@ -2149,6 +2161,8 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
         "success_today": len(success_ids),
         "failed_today": len(failed_ids),
         "today_release_sources": len(release_ids),
+        "unchecked_items": unchecked_items,
+        "failed_items": failed_items,
         "unchecked_labels": unchecked_labels,
         "failed_labels": failed_labels,
         "message": message,
@@ -2157,6 +2171,8 @@ def _collection_check_coverage_report(store: Store, config_path: Path) -> dict[s
 
 def _collection_check_coverage_health_payload(store: Store, config_path: Path) -> dict[str, object]:
     report = _collection_check_coverage_report(store, config_path)
+    unchecked_items = list(report.get("unchecked_items") or [])
+    failed_items = list(report.get("failed_items") or [])
     unchecked_labels = list(report.get("unchecked_labels") or [])
     failed_labels = list(report.get("failed_labels") or [])
     return {
@@ -2169,6 +2185,8 @@ def _collection_check_coverage_health_payload(store: Store, config_path: Path) -
         "collection_check_coverage_failed_today": int(report.get("failed_today") or 0),
         "collection_check_coverage_unchecked_count": len(unchecked_labels),
         "collection_check_coverage_today_release_sources": int(report.get("today_release_sources") or 0),
+        "collection_check_coverage_unchecked_items": unchecked_items[:5],
+        "collection_check_coverage_failed_items": failed_items[:5],
         "collection_check_coverage_unchecked_sources": unchecked_labels[:5],
         "collection_check_coverage_failed_sources": failed_labels[:5],
         "collection_check_coverage_message": report.get("message"),
