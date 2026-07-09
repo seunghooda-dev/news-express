@@ -989,7 +989,62 @@ def test_press_releases_page_filters_date_issues(monkeypatch):
     assert "게시일 미정 원문" in html
     assert "게시일 파싱 실패" in html
     assert "정상 게시일 원문" not in html
-    assert 'href="/press-releases?draft=date_issue"' in html
+    assert '/press-releases?draft=date_issue' in html
+
+
+def test_press_releases_page_filters_asset_releases(monkeypatch):
+    db_path = Path(f"data/.test_releases_asset_filter_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="첨부 포함 원문",
+            url="https://example.com/with-asset",
+            content="첨부 파일이 포함된 원문입니다.",
+            published_at="2026-07-08",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/photo.jpg",
+                    title="현장 사진",
+                    filename="photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="첨부 없는 원문",
+            url="https://example.com/without-asset",
+            content="첨부 파일이 없는 원문입니다.",
+            published_at="2026-07-08",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    html = client.get("/press-releases?asset=with").data.decode("utf-8")
+
+    assert "첨부 포함 원문" in html
+    assert "첨부 1개" in html
+    assert "첨부 없는 원문" not in html
+    assert '/press-releases?asset=with' in html
 
 
 def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
@@ -2273,6 +2328,7 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     assert "진도군 농업기술센터 보도자료" not in releases_html
     assert 'href="/press-releases?draft=missing&amp;source=jindo-county"' in html
     assert 'href="/press-releases?draft=date_issue&amp;source=jindo-county"' in html
+    assert 'href="/press-releases?asset=with&amp;source=jindo-county"' in html
     assert 'href="/press-releases?source=jindo-county"' in html
 
 
@@ -2338,11 +2394,12 @@ def test_source_detail_shows_operational_counts_and_shortcuts(monkeypatch):
     assert f'href="/press-releases?source=jindo-county&amp;date={today_iso}"' in html
     assert 'href="/press-releases?draft=missing&amp;source=jindo-county"' in html
     assert 'href="/press-releases?draft=date_issue&amp;source=jindo-county"' in html
-    assert 'href="#source-assets"' in html
+    assert 'href="/press-releases?asset=with&amp;source=jindo-county"' in html
     assert "운영 확인:" in html
     assert "초안 없는 원문 1건" in html
     assert "게시일 확인 원문 1건" in html
     assert "게시일 파싱 실패" in html
+    assert "첨부 1개" in html
 
 
 def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):

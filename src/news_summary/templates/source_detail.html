@@ -9,6 +9,7 @@
     <a class="source-link" href="{{ url_for('drafts', status='needs_review', source=source.id) }}">검수 대기 보기</a>
     <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
     <a class="source-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}">게시일 확인 원문</a>
+    <a class="source-link" href="{{ url_for('press_releases', asset='with', source=source.id) }}">첨부 포함 원문</a>
     <a class="source-link" href="{{ url_for('dashboard') }}">대시보드</a>
   </div>
 </section>
@@ -20,7 +21,7 @@
   <a class="metric-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}"><b>{{ source_detail_metrics.missing_drafts }}</b><span>초안 없는 원문</span></a>
   <a class="metric-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}"><b>{{ source_detail_metrics.date_issues }}</b><span>게시일 확인 원문</span></a>
   {% if source_detail_metrics.assets %}
-    <a class="metric-link" href="#source-assets"><b>{{ source_detail_metrics.assets }}</b><span>첨부 파일</span></a>
+    <a class="metric-link" href="{{ url_for('press_releases', asset='with', source=source.id) }}"><b>{{ source_detail_metrics.assets }}</b><span>첨부 파일</span></a>
   {% else %}
     <div class="metric-link metric-static"><b>0</b><span>첨부 파일</span></div>
   {% endif %}
@@ -112,6 +113,7 @@
       <div class="section-actions">
         <a class="source-link" href="{{ url_for('press_releases', source=source.id, date=today_iso) }}">오늘 원문</a>
         <a class="source-link" href="{{ url_for('press_releases', draft='date_issue', source=source.id) }}">게시일 확인 원문</a>
+        <a class="source-link" href="{{ url_for('press_releases', asset='with', source=source.id) }}">첨부 포함 원문</a>
         <a class="source-link" href="{{ url_for('press_releases', draft='missing', source=source.id) }}">초안 없는 원문</a>
         <a class="source-link" href="{{ url_for('press_releases', source=source.id) }}">원문 전체</a>
       </div>
@@ -124,6 +126,9 @@
             <span>{{ item.published_at|date_label }}</span>
             {% if item.date_warning %}
               <span class="badge badge-warning">{{ item.date_warning }}</span>
+            {% endif %}
+            {% if item.asset_count %}
+              <span class="badge badge-neutral">첨부 {{ item.asset_count }}개</span>
             {% endif %}
             {% if item.draft_id %}
               <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>

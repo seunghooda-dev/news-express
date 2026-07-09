@@ -724,6 +724,9 @@ def create_app() -> Flask:
         draft_filter = (request.args.get("draft") or "").strip()
         if draft_filter not in {"missing", "drafted", "date_issue"}:
             draft_filter = ""
+        asset_filter = (request.args.get("asset") or "").strip()
+        if asset_filter not in {"with"}:
+            asset_filter = ""
         target_date = _parse_date(request.args.get("date"))
         query = (request.args.get("q") or "").strip()
         source_filter = (request.args.get("source") or "").strip()
@@ -734,6 +737,7 @@ def create_app() -> Flask:
             source_filter=source_filter,
             target_date=target_date,
             draft_filter=draft_filter,
+            asset_filter=asset_filter,
             query=query,
             limit=display_limit + 1,
         )
@@ -742,6 +746,7 @@ def create_app() -> Flask:
         releases = [_press_release_listing_item(row) for row in releases]
         region_filter_hidden = _clean_query_args(
             draft=draft_filter,
+            asset=asset_filter,
             date=target_date.isoformat() if target_date else "",
             source=source_filter,
             q=query,
@@ -750,6 +755,7 @@ def create_app() -> Flask:
             "press_releases.html",
             press_releases=releases,
             draft_filter=draft_filter,
+            asset_filter=asset_filter,
             date_filter=target_date,
             query=query,
             source_filter=source_filter,
@@ -758,7 +764,7 @@ def create_app() -> Flask:
             selected_regions=selected_regions,
             region_filter_hidden=region_filter_hidden,
             region_reset_url=url_for("press_releases", **region_filter_hidden),
-            page_title=_press_releases_page_title(draft_filter, target_date, source_filter, query, config_path),
+            page_title=_press_releases_page_title(draft_filter, asset_filter, target_date, source_filter, query, config_path),
             today_iso=datetime.now(LOCAL_TZ).date().isoformat(),
             displayed_count=len(releases),
             has_more=has_more,
@@ -4311,6 +4317,7 @@ def _press_release_rows_for_listing(
     source_filter: str = "",
     target_date: date | None = None,
     draft_filter: str = "",
+    asset_filter: str = "",
     query: str = "",
     limit: int = LIST_PAGE_SIZE,
 ):
@@ -4331,6 +4338,8 @@ def _press_release_rows_for_listing(
         where.append("ad.id IS NULL")
     elif draft_filter == "drafted":
         where.append("ad.id IS NOT NULL")
+    if asset_filter == "with":
+        where.append("EXISTS (SELECT 1 FROM press_release_assets pra WHERE pra.press_release_id = pr.id)")
     for term in [term.casefold() for term in query.split() if term.strip()]:
         like = f"%{term}%"
         where.append(
@@ -4372,7 +4381,12 @@ def _fetch_press_release_listing_rows(
     query_params = [*params, limit, offset]
     return conn.execute(
         f"""
-        SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model
+        SELECT pr.*, ad.id AS draft_id, ad.status AS draft_status, ad.model AS draft_model,
+               (
+                 SELECT COUNT(*)
+                 FROM press_release_assets pra
+                 WHERE pra.press_release_id = pr.id
+               ) AS asset_count
         FROM press_releases pr
         LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
         {where_sql}
@@ -5179,6 +5193,7 @@ def _drafts_page_title(
 
 def _press_releases_page_title(
     draft_filter: str,
+    asset_filter: str,
     target_date: date | None,
     source_filter: str,
     query: str,
@@ -5191,6 +5206,8 @@ def _press_releases_page_title(
         parts.append("초안 생성 원문")
     elif draft_filter == "date_issue":
         parts.append("게시일 확인 원문")
+    if asset_filter == "with":
+        parts.append("첨부 포함 원문")
     if target_date:
         parts.append(_date_group_label(target_date, datetime.now(LOCAL_TZ).date()))
     if source_filter:

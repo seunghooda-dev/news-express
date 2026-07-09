@@ -6,17 +6,19 @@
 </section>
 
 <section class="quick-filters">
-  <a class="{% if not draft_filter and not date_filter %}active{% endif %}" href="{{ url_for('press_releases', region=selected_regions) }}">전체 원문</a>
-  <a class="{% if draft_filter == 'missing' %}active{% endif %}" href="{{ url_for('press_releases', draft='missing', region=selected_regions) }}">초안 없음</a>
-  <a class="{% if draft_filter == 'drafted' %}active{% endif %}" href="{{ url_for('press_releases', draft='drafted', region=selected_regions) }}">초안 있음</a>
-  <a class="{% if draft_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('press_releases', draft='date_issue', region=selected_regions) }}">게시일 확인</a>
-  <a class="{% if date_filter and date_filter.isoformat() == today_iso %}active{% endif %}" href="{{ url_for('press_releases', date=today_iso, draft=draft_filter, region=selected_regions) }}">오늘 원문</a>
+  <a class="{% if not draft_filter and not date_filter and not asset_filter %}active{% endif %}" href="{{ url_for('press_releases', region=selected_regions) }}">전체 원문</a>
+  <a class="{% if draft_filter == 'missing' %}active{% endif %}" href="{{ url_for('press_releases', draft='missing', asset=asset_filter, region=selected_regions) }}">초안 없음</a>
+  <a class="{% if draft_filter == 'drafted' %}active{% endif %}" href="{{ url_for('press_releases', draft='drafted', asset=asset_filter, region=selected_regions) }}">초안 있음</a>
+  <a class="{% if draft_filter == 'date_issue' %}active{% endif %}" href="{{ url_for('press_releases', draft='date_issue', asset=asset_filter, region=selected_regions) }}">게시일 확인</a>
+  <a class="{% if asset_filter == 'with' %}active{% endif %}" href="{{ url_for('press_releases', asset='with', draft=draft_filter, region=selected_regions) }}">첨부 포함</a>
+  <a class="{% if date_filter and date_filter.isoformat() == today_iso %}active{% endif %}" href="{{ url_for('press_releases', date=today_iso, draft=draft_filter, asset=asset_filter, region=selected_regions) }}">오늘 원문</a>
 </section>
 
 {% include "_region_filter.html" %}
 
 <form class="source-filter" method="get">
   {% if draft_filter %}<input type="hidden" name="draft" value="{{ draft_filter }}">{% endif %}
+  {% if asset_filter %}<input type="hidden" name="asset" value="{{ asset_filter }}">{% endif %}
   {% if date_filter %}<input type="hidden" name="date" value="{{ date_filter.isoformat() }}">{% endif %}
   {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
   {% for region in selected_regions %}<input type="hidden" name="region" value="{{ region }}">{% endfor %}
@@ -31,6 +33,7 @@
 
 <form class="searchbar" method="get">
   {% if draft_filter %}<input type="hidden" name="draft" value="{{ draft_filter }}">{% endif %}
+  {% if asset_filter %}<input type="hidden" name="asset" value="{{ asset_filter }}">{% endif %}
   {% if date_filter %}<input type="hidden" name="date" value="{{ date_filter.isoformat() }}">{% endif %}
   {% if source_filter %}<input type="hidden" name="source" value="{{ source_filter }}">{% endif %}
   {% for region in selected_regions %}<input type="hidden" name="region" value="{{ region }}">{% endfor %}
@@ -58,6 +61,9 @@
         {% set date_warning = item.date_warning if item.date_warning is defined else '' %}
         {% if date_warning %}
           <span class="badge badge-warning">{{ date_warning }}</span>
+        {% endif %}
+        {% if item.asset_count %}
+          <span class="badge badge-neutral">첨부 {{ item.asset_count }}개</span>
         {% endif %}
         {% if item.draft_id %}
           <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
