@@ -1114,7 +1114,7 @@ class Store:
     def draft_generation_failure_summary(self, limit: int = 5) -> dict[str, object]:
         now = _now()
         with self.connect() as conn:
-            total = conn.execute(
+            summary = conn.execute(
                 """
                 WITH latest_failure AS (
                     SELECT dgf.*
@@ -1125,68 +1125,21 @@ class Store:
                         WHERE resolved_at IS NULL
                         GROUP BY press_release_id
                     ) latest ON latest.max_id = dgf.id
-                )
-                SELECT COUNT(*) AS count
-                FROM latest_failure dgf
-                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
-                WHERE ad.id IS NULL
-                """
-            ).fetchone()["count"]
-            due = conn.execute(
-                """
-                WITH latest_failure AS (
+                ),
+                pending_failure AS (
                     SELECT dgf.*
-                    FROM draft_generation_failures dgf
-                    JOIN (
-                        SELECT press_release_id, MAX(id) AS max_id
-                        FROM draft_generation_failures
-                        WHERE resolved_at IS NULL
-                        GROUP BY press_release_id
-                    ) latest ON latest.max_id = dgf.id
+                    FROM latest_failure dgf
+                    LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
+                    WHERE ad.id IS NULL
                 )
-                SELECT COUNT(*) AS count
-                FROM latest_failure dgf
-                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
-                WHERE ad.id IS NULL
-                  AND dgf.next_retry_at <= ?
+                SELECT
+                    COUNT(*) AS total_count,
+                    SUM(CASE WHEN next_retry_at <= ? THEN 1 ELSE 0 END) AS due_count,
+                    MIN(next_retry_at) AS next_retry_at,
+                    MIN(first_failed_at) AS first_failed_at
+                FROM pending_failure
                 """,
                 (now,),
-            ).fetchone()["count"]
-            next_retry_row = conn.execute(
-                """
-                WITH latest_failure AS (
-                    SELECT dgf.*
-                    FROM draft_generation_failures dgf
-                    JOIN (
-                        SELECT press_release_id, MAX(id) AS max_id
-                        FROM draft_generation_failures
-                        WHERE resolved_at IS NULL
-                        GROUP BY press_release_id
-                    ) latest ON latest.max_id = dgf.id
-                )
-                SELECT MIN(dgf.next_retry_at) AS next_retry_at
-                FROM latest_failure dgf
-                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
-                WHERE ad.id IS NULL
-                """
-            ).fetchone()
-            oldest_failure_row = conn.execute(
-                """
-                WITH latest_failure AS (
-                    SELECT dgf.*
-                    FROM draft_generation_failures dgf
-                    JOIN (
-                        SELECT press_release_id, MAX(id) AS max_id
-                        FROM draft_generation_failures
-                        WHERE resolved_at IS NULL
-                        GROUP BY press_release_id
-                    ) latest ON latest.max_id = dgf.id
-                )
-                SELECT MIN(dgf.first_failed_at) AS first_failed_at
-                FROM latest_failure dgf
-                LEFT JOIN article_drafts ad ON ad.press_release_id = dgf.press_release_id
-                WHERE ad.id IS NULL
-                """
             ).fetchone()
             by_kind = conn.execute(
                 """
@@ -1233,10 +1186,10 @@ class Store:
                 (limit,),
             ).fetchall()
         return {
-            "total": int(total or 0),
-            "due": int(due or 0),
-            "next_retry_at": str(next_retry_row["next_retry_at"] or "") if next_retry_row else "",
-            "oldest_first_failed_at": str(oldest_failure_row["first_failed_at"] or "") if oldest_failure_row else "",
+            "total": int(summary["total_count"] or 0) if summary else 0,
+            "due": int(summary["due_count"] or 0) if summary else 0,
+            "next_retry_at": str(summary["next_retry_at"] or "") if summary else "",
+            "oldest_first_failed_at": str(summary["first_failed_at"] or "") if summary else "",
             "by_kind": [
                 {"kind": str(row["failure_kind"]), "count": int(row["count"])}
                 for row in by_kind
