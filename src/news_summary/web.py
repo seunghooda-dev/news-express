@@ -3940,6 +3940,8 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
     counts = {key: 0 for key in date_keys}
     selected_rows: list[dict[str, object]] = []
     selected_ips: set[str] = set()
+    selected_path_counts: Counter[tuple[str, str]] = Counter()
+    selected_error_count = 0
     for row in store.visitor_access_logs_since(_visitor_cutoff_iso()):
         visited_at = _parse_datetime(row["visited_at"])
         if visited_at is None:
@@ -3954,13 +3956,19 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
         if row_key == selected_key:
             masked_ip = str(row["masked_ip"] or "알 수 없음")
             selected_ips.add(masked_ip)
+            method = str(row["method"] or "")
+            path = str(row["path"] or "")
+            selected_path_counts[(method, path)] += 1
+            status_code = int(row["status_code"] or 0)
+            if status_code >= 400:
+                selected_error_count += 1
         if row_key == selected_key and len(selected_rows) < 200:
             selected_rows.append(
                 {
                     "masked_ip": masked_ip,
-                    "method": str(row["method"] or ""),
-                    "path": str(row["path"] or ""),
-                    "status_code": int(row["status_code"] or 0),
+                    "method": method,
+                    "path": path,
+                    "status_code": status_code,
                     "user_agent": str(row["user_agent"] or "브라우저 미상"),
                     "visited_at": local_visited_at.isoformat(),
                 }
@@ -3980,6 +3988,11 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
         "rows": selected_rows,
         "selected_count": counts[selected_key],
         "unique_masked_ips": len(selected_ips),
+        "error_count": selected_error_count,
+        "top_paths": [
+            {"method": method, "path": path, "count": count}
+            for (method, path), count in selected_path_counts.most_common(5)
+        ],
         "total_count": sum(counts.values()),
     }
 

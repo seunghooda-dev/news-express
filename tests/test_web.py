@@ -3712,6 +3712,29 @@ def test_operations_page_filters_visitor_access_by_recent_date(monkeypatch):
     assert "/too-old" not in html
 
 
+def test_operations_page_summarizes_top_visitor_paths_and_errors(monkeypatch):
+    db_path = Path(f"data/.test_visitor_access_summary_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    store.record_visitor_access("10.10.xxx.xxx", "GET", "/drafts", "drafts", 200, "Chrome", visited_at=now_utc)
+    store.record_visitor_access("11.11.xxx.xxx", "GET", "/drafts", "drafts", 200, "Chrome", visited_at=now_utc)
+    store.record_visitor_access("12.12.xxx.xxx", "GET", "/operations", "operations", 500, "Chrome", visited_at=now_utc)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "오류 응답 1건" in html
+    assert "자주 열린 경로:" in html
+    assert "GET /drafts 2건" in html
+    assert "GET /operations 1건" in html
+
+
 def test_cloudflare_tunnel_status_detects_active_connection(tmp_path, monkeypatch):
     log_path = tmp_path / "cloudflare.log"
     log_path.write_text(

@@ -684,7 +684,16 @@
     <div class="visitor-summary">
       <span>선택 날짜 {{ visitor_access.selected_count }}건</span>
       <span>마스킹 IP {{ visitor_access.unique_masked_ips }}개</span>
+      <span>오류 응답 {{ visitor_access.error_count }}건</span>
     </div>
+    {% if visitor_access.top_paths %}
+      <p class="gemini-models">
+        자주 열린 경로:
+        {% for item in visitor_access.top_paths %}
+          <span>{{ item.method }} {{ item.path }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+    {% endif %}
     {% if visitor_access.rows %}
       <div class="visitor-list">
         {% for item in visitor_access.rows %}
