@@ -1862,6 +1862,11 @@ h3 {
 }
 
 @media (max-width: 820px) {
+  body {
+    background:
+      linear-gradient(180deg, #f8fbfc 0, var(--bg) 240px, #eef3f5 100%);
+  }
+
   .topbar {
     position: sticky;
     top: 0;
@@ -2116,7 +2121,8 @@ h3 {
     min-height: 0;
     gap: 4px;
     padding: 9px 10px;
-    background: #f7faf7;
+    border-color: rgba(198, 211, 220, 0.92);
+    background: linear-gradient(180deg, #ffffff 0, #fbfdfd 100%);
     font-size: 13px;
   }
 
@@ -2323,10 +2329,10 @@ h3 {
     max-width: 520px;
     margin: 0 auto;
     padding: 10px;
-    border: 1px solid #b9d9d3;
+    border: 1px solid var(--accent-line);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 12px 36px rgba(14, 31, 43, 0.18);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0, rgba(248, 252, 251, 0.98) 100%);
+    box-shadow: var(--shadow-lg);
   }
 
   .mobile-review-bar button {
