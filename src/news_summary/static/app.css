@@ -1428,6 +1428,47 @@ h3 {
   background: linear-gradient(180deg, #fbfefd 0, #f3fbf8 100%);
 }
 
+.source-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.source-activity-card {
+  display: grid;
+  gap: 6px;
+}
+
+.source-activity-card strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.source-activity-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.source-activity-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-activity-links a {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.source-activity-links a:hover,
+.source-activity-links a:focus-visible {
+  text-decoration: underline;
+}
+
 .ops-secondary-section {
   grid-column: 1 / -1;
   border: 1px solid var(--line);
@@ -2572,6 +2613,10 @@ h3 {
 
   .ops-overview {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .source-activity-grid {
+    grid-template-columns: 1fr;
   }
 
   .ops-secondary-toggle {

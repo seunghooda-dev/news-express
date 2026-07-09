@@ -2789,6 +2789,92 @@ def test_source_detail_shows_operational_counts_and_shortcuts(monkeypatch):
     assert "첨부 1개" in html
 
 
+def test_source_detail_shows_recent_activity_trend(monkeypatch):
+    db_path = Path(f"data/.test_source_detail_activity_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    store = Store(db_path)
+    store.init_db()
+    today = datetime.now(LOCAL_TZ).date()
+    yesterday = today - timedelta(days=1)
+    two_days_ago = today - timedelta(days=2)
+
+    today_release_id = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="오늘 원문",
+            url="https://example.com/jindo-trend-today",
+            content="오늘 원문입니다.",
+            published_at=today.isoformat(),
+        )
+    )
+    yesterday_release_id = store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="어제 원문",
+            url="https://example.com/jindo-trend-yesterday",
+            content="어제 원문입니다.",
+            published_at=yesterday.isoformat(),
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="jindo-county",
+            source_name="진도군청 보도자료",
+            region="전남 진도",
+            title="그제 원문",
+            url="https://example.com/jindo-trend-two-days",
+            content="그제 원문입니다.",
+            published_at=two_days_ago.isoformat(),
+        )
+    )
+    assert today_release_id is not None
+    assert yesterday_release_id is not None
+
+    today_draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=today_release_id,
+            title="오늘 초안",
+            body="오늘 초안입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    yesterday_draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=yesterday_release_id,
+            title="어제 초안",
+            body="어제 초안입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    assert today_draft_id is not None
+    assert yesterday_draft_id is not None
+    store.set_draft_status(yesterday_draft_id, "approved")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/sources/jindo-county").data.decode("utf-8")
+
+    assert "최근 3일 수집/초안 추이" in html
+    assert "원문 1건 · 초안 1건" in html
+    assert "미변환 0건" in html
+    assert "검수 대기 1건" in html
+    assert "미변환 1건" in html
+    assert f'href="/press-releases?source=jindo-county&amp;date={today.isoformat()}"' in html
+    assert f'href="/press-releases?source=jindo-county&amp;date={yesterday.isoformat()}"' in html
+    assert f'href="/press-releases?source=jindo-county&amp;date={two_days_ago.isoformat()}"' in html
+    assert f'href="/drafts?source=jindo-county&amp;date={today.isoformat()}"' in html
+
+
 def test_source_detail_shows_recent_collection_history(monkeypatch):
     db_path = Path(f"data/.test_source_detail_history_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

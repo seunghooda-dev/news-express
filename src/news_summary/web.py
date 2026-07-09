@@ -941,6 +941,7 @@ def create_app() -> Flask:
         summary = _source_summary_by_id(store, config_path, source_id)
         source_detail_metrics = _source_detail_metrics(store, source_id)
         source_route_summary = _source_route_summary(store, source)
+        source_recent_activity = _source_recent_activity(store, source_id)
         source_collection_history = _source_collection_history(store, source_id)
         source_failure_summary = _source_failure_summary(store, source_id)
         return render_template(
@@ -949,6 +950,7 @@ def create_app() -> Flask:
             summary=summary,
             source_detail_metrics=source_detail_metrics,
             source_route_summary=source_route_summary,
+            source_recent_activity=source_recent_activity,
             source_collection_history=source_collection_history,
             source_failure_summary=source_failure_summary,
             source_action_items=_source_action_items(
@@ -5485,6 +5487,66 @@ def _source_route_summary(store: Store, source: Source) -> dict[str, object]:
         "discovered_urls": discovery["urls"],
         "discovered_at": discovery["updated_at"],
     }
+
+
+def _source_recent_activity(store: Store, source_id: str, days: int = 3) -> list[dict[str, object]]:
+    today = datetime.now(LOCAL_TZ).date()
+    target_dates = [today - timedelta(days=offset) for offset in range(days)]
+    target_date_strings = [item.isoformat() for item in target_dates]
+    date_expr = (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(pr.published_at, ''), pr.collected_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
+    by_date: dict[str, dict[str, int]] = {}
+    placeholders = ", ".join("?" for _ in target_date_strings)
+    with store.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                {date_expr} AS published_date,
+                COUNT(pr.id) AS release_count,
+                SUM(CASE WHEN ad.id IS NULL THEN 0 ELSE 1 END) AS draft_count,
+                SUM(CASE WHEN ad.status = 'needs_review' THEN 1 ELSE 0 END) AS pending_review_count
+            FROM press_releases pr
+            LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+            WHERE pr.source_id = ?
+              AND {date_expr} IN ({placeholders})
+            GROUP BY {date_expr}
+            """,
+            (source_id, *target_date_strings),
+        ).fetchall()
+    for row in rows:
+        published_date = str(row["published_date"] or "").strip()
+        if not published_date:
+            continue
+        by_date[published_date] = {
+            "release_count": int(row["release_count"] or 0),
+            "draft_count": int(row["draft_count"] or 0),
+            "pending_review_count": int(row["pending_review_count"] or 0),
+        }
+
+    activity = []
+    for target_date in target_dates:
+        item = by_date.get(target_date.isoformat(), {})
+        release_count = int(item.get("release_count") or 0)
+        draft_count = int(item.get("draft_count") or 0)
+        pending_review_count = int(item.get("pending_review_count") or 0)
+        activity.append(
+            {
+                "date": target_date.isoformat(),
+                "label": _date_group_label(target_date, today),
+                "release_count": release_count,
+                "draft_count": draft_count,
+                "pending_review_count": pending_review_count,
+                "missing_draft_count": max(release_count - draft_count, 0),
+            }
+        )
+    return activity
 
 
 def _source_action_items(

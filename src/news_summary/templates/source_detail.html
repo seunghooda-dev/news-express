@@ -29,6 +29,29 @@
 </section>
 
 <section class="source-health">
+  <div class="section-head compact">
+    <h2>최근 3일 수집/초안 추이</h2>
+  </div>
+  <div class="source-activity-grid">
+    {% for item in source_recent_activity %}
+      <div class="metric-link metric-static source-activity-card">
+        <strong>{{ item.label }}</strong>
+        <b>{{ item.release_count }}</b>
+        <span>원문 {{ item.release_count }}건 · 초안 {{ item.draft_count }}건</span>
+        <small>
+          미변환 {{ item.missing_draft_count }}건
+          {% if item.pending_review_count %} · 검수 대기 {{ item.pending_review_count }}건{% endif %}
+        </small>
+        <span class="source-activity-links">
+          <a href="{{ url_for('press_releases', source=source.id, date=item.date) }}">원문 보기</a>
+          <a href="{{ url_for('drafts', source=source.id, date=item.date) }}">초안 보기</a>
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="source-health">
   <h2>최근 수집 점검</h2>
   <p>
     <strong>{{ summary.last_status }}</strong>
