@@ -1125,16 +1125,34 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     if auto_timing == "warning":
         add_issue("warning", "auto_collector_timing", payload.get("auto_collector_health_message"))
 
-    status_specs = (
-        ("source_collection_status", "source_collection", "source_collection_message"),
-        ("collection_check_coverage_status", "collection_check_coverage", "collection_check_coverage_message"),
-        ("draft_conversion_coverage_status", "draft_conversion_coverage", "draft_conversion_coverage_message"),
-        ("gemini_queue_status", "gemini_queue", "gemini_queue_message"),
+    source_status = str(payload.get("source_collection_status") or "")
+    if source_status in {"warning", "error"}:
+        add_issue(source_status, "source_collection", payload.get("source_collection_message"))
+
+    collection_status = str(payload.get("collection_check_coverage_status") or "")
+    collection_failed_today = int(payload.get("collection_check_coverage_failed_today") or 0)
+    collection_unchecked_count = int(payload.get("collection_check_coverage_unchecked_count") or 0)
+    collection_failure_already_counted = (
+        collection_failed_today > 0
+        and collection_unchecked_count == 0
+        and source_status in {"warning", "error"}
     )
-    for status_key, component, message_key in status_specs:
-        status = str(payload.get(status_key) or "")
-        if status in {"warning", "error"}:
-            add_issue(status, component, payload.get(message_key) or status_key)
+    if collection_status in {"warning", "error"} and not collection_failure_already_counted:
+        add_issue(collection_status, "collection_check_coverage", payload.get("collection_check_coverage_message"))
+
+    draft_status = str(payload.get("draft_conversion_coverage_status") or "")
+    if draft_status in {"warning", "error"}:
+        add_issue(draft_status, "draft_conversion_coverage", payload.get("draft_conversion_coverage_message"))
+
+    gemini_status = str(payload.get("gemini_queue_status") or "")
+    gemini_wait_already_counted = (
+        gemini_status == "warning"
+        and draft_status in {"warning", "error"}
+        and bool(payload.get("gemini_cooldown_active"))
+        and int(payload.get("draft_conversion_today_pending") or 0) > 0
+    )
+    if gemini_status in {"warning", "error"} and not gemini_wait_already_counted:
+        add_issue(gemini_status, "gemini_queue", payload.get("gemini_queue_message"))
 
     if any(issue["level"] == "error" for issue in issues):
         level = "error"

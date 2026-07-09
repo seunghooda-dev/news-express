@@ -20,6 +20,7 @@ from news_summary.web import (
     _group_drafts_by_recent_dates,
     _max_asset_preview_bytes,
     _recovery_candidate_report,
+    _service_health_summary,
     _source_coverage_report,
     _sort_drafts_latest_first,
     LOCAL_TZ,
@@ -3220,6 +3221,54 @@ def test_healthz_reports_database_status(monkeypatch):
     assert "draft_conversion_coverage_status" not in payload
     if payload["auto_collector"] != "unavailable":
         assert "auto_collector_thread_alive" in payload
+
+
+def test_service_health_summary_merges_duplicate_operational_warnings():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "source_collection_status": "warning",
+            "source_collection_message": "일시 장애 재검증 대상 1곳",
+            "collection_check_coverage_status": "warning",
+            "collection_check_coverage_message": "전체 기관은 점검됐고 실패 기록 1곳은 자동 복구 대상입니다.",
+            "collection_check_coverage_failed_today": 1,
+            "collection_check_coverage_unchecked_count": 0,
+            "draft_conversion_coverage_status": "warning",
+            "draft_conversion_coverage_message": "오늘 수집 원문 중 초안 미변환 13건이 남아 있습니다.",
+            "draft_conversion_today_pending": 13,
+            "gemini_queue_status": "warning",
+            "gemini_queue_message": "Gemini 처리 재개 대기: 2026.07.09 14:23까지",
+            "gemini_cooldown_active": True,
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "일시 장애 재검증 대상 1곳 외 1건"
+    assert [issue["component"] for issue in summary["service_status_issues"]] == [
+        "source_collection",
+        "draft_conversion_coverage",
+    ]
+
+
+def test_service_health_summary_keeps_distinct_collection_check_warning():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "source_collection_status": "ok",
+            "collection_check_coverage_status": "warning",
+            "collection_check_coverage_message": "미점검 기관 2곳",
+            "collection_check_coverage_failed_today": 0,
+            "collection_check_coverage_unchecked_count": 2,
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "미점검 기관 2곳"
+    assert [issue["component"] for issue in summary["service_status_issues"]] == [
+        "collection_check_coverage"
+    ]
 
 
 def test_healthz_reports_collection_check_coverage(monkeypatch):
