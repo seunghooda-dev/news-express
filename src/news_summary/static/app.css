@@ -1439,6 +1439,13 @@ h3 {
   gap: 6px;
 }
 
+.source-activity-alerts,
+.source-activity-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .source-activity-card strong {
   color: #111827;
   font-size: 14px;

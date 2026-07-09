@@ -32,12 +32,26 @@
   <div class="section-head compact">
     <h2>최근 3일 수집/초안 추이</h2>
   </div>
+  {% if source_activity_alerts %}
+    <p class="gemini-models source-activity-alerts">
+      {% for item in source_activity_alerts %}
+        <span class="badge {% if item.level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">{{ item.label }}</span>
+      {% endfor %}
+    </p>
+  {% endif %}
   <div class="source-activity-grid">
     {% for item in source_recent_activity %}
       <div class="metric-link metric-static source-activity-card">
         <strong>{{ item.label }}</strong>
         <b>{{ item.release_count }}</b>
         <span>원문 {{ item.release_count }}건 · 초안 {{ item.draft_count }}건</span>
+        {% if item.flags %}
+          <div class="source-activity-flags">
+            {% for flag in item.flags %}
+              <span class="badge {% if flag.level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">{{ flag.label }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
         <small>
           미변환 {{ item.missing_draft_count }}건
           {% if item.pending_review_count %} · 검수 대기 {{ item.pending_review_count }}건{% endif %}

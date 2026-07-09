@@ -942,6 +942,7 @@ def create_app() -> Flask:
         source_detail_metrics = _source_detail_metrics(store, source_id)
         source_route_summary = _source_route_summary(store, source)
         source_recent_activity = _source_recent_activity(store, source_id)
+        source_activity_alerts = _source_activity_alerts(source_recent_activity)
         source_collection_history = _source_collection_history(store, source_id)
         source_failure_summary = _source_failure_summary(store, source_id)
         return render_template(
@@ -951,6 +952,7 @@ def create_app() -> Flask:
             source_detail_metrics=source_detail_metrics,
             source_route_summary=source_route_summary,
             source_recent_activity=source_recent_activity,
+            source_activity_alerts=source_activity_alerts,
             source_collection_history=source_collection_history,
             source_failure_summary=source_failure_summary,
             source_action_items=_source_action_items(
@@ -5626,6 +5628,30 @@ def _source_recent_activity(store: Store, source_id: str, days: int = 3) -> list
         release_count = int(item.get("release_count") or 0)
         draft_count = int(item.get("draft_count") or 0)
         pending_review_count = int(item.get("pending_review_count") or 0)
+        missing_draft_count = max(release_count - draft_count, 0)
+        is_today = target_date == today
+        flags: list[dict[str, str]] = []
+        if release_count == 0:
+            flags.append(
+                {
+                    "label": "오늘 수집 없음" if is_today else "원문 없음",
+                    "level": "warning" if is_today else "neutral",
+                }
+            )
+        if missing_draft_count > 0:
+            flags.append(
+                {
+                    "label": f"{'초안 지연' if is_today else '미변환'} {missing_draft_count}건",
+                    "level": "warning",
+                }
+            )
+        if pending_review_count > 0:
+            flags.append(
+                {
+                    "label": f"검수 대기 {pending_review_count}건",
+                    "level": "neutral",
+                }
+            )
         activity.append(
             {
                 "date": target_date.isoformat(),
@@ -5633,10 +5659,42 @@ def _source_recent_activity(store: Store, source_id: str, days: int = 3) -> list
                 "release_count": release_count,
                 "draft_count": draft_count,
                 "pending_review_count": pending_review_count,
-                "missing_draft_count": max(release_count - draft_count, 0),
+                "missing_draft_count": missing_draft_count,
+                "flags": flags,
             }
         )
     return activity
+
+
+def _source_activity_alerts(activity: list[dict[str, object]]) -> list[dict[str, str]]:
+    if not activity:
+        return []
+    alerts: list[dict[str, str]] = []
+    today_item = activity[0]
+    consecutive_zero_days = 0
+    for item in activity:
+        if int(item.get("release_count") or 0) == 0:
+            consecutive_zero_days += 1
+        else:
+            break
+    if consecutive_zero_days >= 3:
+        alerts.append({"level": "warning", "label": "3일 연속 원문 없음"})
+    elif int(today_item.get("release_count") or 0) == 0 and any(
+        int(item.get("release_count") or 0) > 0 for item in activity[1:]
+    ):
+        alerts.append({"level": "warning", "label": "오늘 수집 없음"})
+
+    today_missing = int(today_item.get("missing_draft_count") or 0)
+    total_missing = sum(int(item.get("missing_draft_count") or 0) for item in activity)
+    if today_missing > 0:
+        alerts.append({"level": "warning", "label": f"오늘 미변환 {today_missing}건"})
+    elif total_missing > 0:
+        alerts.append({"level": "neutral", "label": f"최근 3일 미변환 {total_missing}건"})
+
+    pending_review_total = sum(int(item.get("pending_review_count") or 0) for item in activity)
+    if pending_review_total >= 3:
+        alerts.append({"level": "neutral", "label": f"검수 대기 누적 {pending_review_total}건"})
+    return alerts[:3]
 
 
 def _source_action_items(
