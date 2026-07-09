@@ -260,6 +260,9 @@
         {% endif %}
         {% if draft_conversion_coverage_report.effective_next_retry_at %} · 다음 처리 {{ draft_conversion_coverage_report.effective_next_retry_at|date_label }}{% elif draft_conversion_coverage_report.next_retry_at %} · 다음 처리 {{ draft_conversion_coverage_report.next_retry_at|date_label }}{% endif %}
       </p>
+      <p class="inline-actions">
+        <a class="source-link" href="{{ url_for('press_releases', draft='missing', date=draft_conversion_coverage_report.date) }}">오늘 미변환 원문 보기</a>
+      </p>
     {% endif %}
     {% if draft_conversion_coverage_report.latest_pending_at or draft_conversion_coverage_report.oldest_pending_at %}
       <p class="meta">
@@ -339,6 +342,9 @@
     <p class="meta">전체 원문 기준 · 오늘 원문 외 대기분 포함</p>
     {% if pending_queue.total %}
       <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
+      <p class="inline-actions">
+        <a class="source-link" href="{{ url_for('press_releases', draft='missing') }}">전체 초안 대기 원문 보기</a>
+      </p>
       {% if queue_drain_report.updated_at %}
         <p class="meta">
           마지막 자동 소진 {{ queue_drain_report.updated_at|date_label }} ·

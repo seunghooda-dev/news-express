@@ -721,21 +721,44 @@ def create_app() -> Flask:
     @app.get("/press-releases")
     def press_releases():
         selected_regions = _selected_regions(config_path)
+        draft_filter = (request.args.get("draft") or "").strip()
+        if draft_filter not in {"missing", "drafted"}:
+            draft_filter = ""
+        target_date = _parse_date(request.args.get("date"))
+        query = (request.args.get("q") or "").strip()
+        source_filter = (request.args.get("source") or "").strip()
         display_limit = _list_display_limit()
         releases = _press_release_rows_for_listing(
             store,
             selected_regions=selected_regions,
+            source_filter=source_filter,
+            target_date=target_date,
+            draft_filter=draft_filter,
+            query=query,
             limit=display_limit + 1,
         )
         has_more = display_limit < MAX_LIST_LIMIT and len(releases) > display_limit
         releases = releases[:display_limit]
+        region_filter_hidden = _clean_query_args(
+            draft=draft_filter,
+            date=target_date.isoformat() if target_date else "",
+            source=source_filter,
+            q=query,
+        )
         return render_template(
             "press_releases.html",
             press_releases=releases,
+            draft_filter=draft_filter,
+            date_filter=target_date,
+            query=query,
+            source_filter=source_filter,
+            source_options=load_sources(config_path),
             region_options=_region_options(config_path),
             selected_regions=selected_regions,
-            region_filter_hidden={},
-            region_reset_url=url_for("press_releases"),
+            region_filter_hidden=region_filter_hidden,
+            region_reset_url=url_for("press_releases", **region_filter_hidden),
+            page_title=_press_releases_page_title(draft_filter, target_date, source_filter, query, config_path),
+            today_iso=datetime.now(LOCAL_TZ).date().isoformat(),
             displayed_count=len(releases),
             has_more=has_more,
             more_url=_load_more_url("press_releases", display_limit + LIST_PAGE_SIZE) if has_more else "",
@@ -4264,15 +4287,40 @@ def _press_release_rows_for_listing(
     store: Store,
     *,
     selected_regions: list[str] | None = None,
+    source_filter: str = "",
+    target_date: date | None = None,
+    draft_filter: str = "",
+    query: str = "",
     limit: int = LIST_PAGE_SIZE,
 ):
     selected_regions = selected_regions or []
     where = []
     params: list[object] = []
+    if source_filter:
+        where.append("pr.source_id = ?")
+        params.append(source_filter)
     if selected_regions:
         region_condition, region_params = _region_sql_condition("pr.region", selected_regions)
         where.append(f"({region_condition})")
         params.extend(region_params)
+    if target_date:
+        where.append(f"{_press_release_date_sql_expr()} = ?")
+        params.append(target_date.isoformat())
+    if draft_filter == "missing":
+        where.append("ad.id IS NULL")
+    elif draft_filter == "drafted":
+        where.append("ad.id IS NOT NULL")
+    for term in [term.casefold() for term in query.split() if term.strip()]:
+        like = f"%{term}%"
+        where.append(
+            "("
+            "LOWER(COALESCE(pr.title, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.source_name, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.region, '')) LIKE ? OR "
+            "LOWER(COALESCE(pr.content, '')) LIKE ?"
+            ")"
+        )
+        params.extend([like] * 4)
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     params.append(limit)
@@ -4291,6 +4339,18 @@ def _press_release_rows_for_listing(
             """,
             tuple(params),
         ).fetchall()
+
+
+def _press_release_date_sql_expr() -> str:
+    return (
+        "REPLACE("
+        "REPLACE("
+        "SUBSTR(TRIM(COALESCE(NULLIF(pr.published_at, ''), pr.collected_at, '')), 1, 10), "
+        "'.', '-'"
+        "), "
+        "'/', '-'"
+        ")"
+    )
 
 
 def _draft_date_sql_expr() -> str:
@@ -5028,6 +5088,30 @@ def _drafts_page_title(
     if status:
         return f"{status_label(status)} 기사"
     return "기사 초안"
+
+
+def _press_releases_page_title(
+    draft_filter: str,
+    target_date: date | None,
+    source_filter: str,
+    query: str,
+    config_path: Path,
+) -> str:
+    parts: list[str] = []
+    if draft_filter == "missing":
+        parts.append("초안 없는 원문")
+    elif draft_filter == "drafted":
+        parts.append("초안 생성 원문")
+    if target_date:
+        parts.append(_date_group_label(target_date, datetime.now(LOCAL_TZ).date()))
+    if source_filter:
+        source = _source_by_id(config_path, source_filter)
+        parts.append(source_display_label(source.name if source else source_filter))
+    if query:
+        parts.append(f"검색 '{query}'")
+    if parts:
+        return " · ".join(parts)
+    return "수집 원문"
 
 
 def _row_value(row, key: str):

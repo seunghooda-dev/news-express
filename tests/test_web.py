@@ -866,6 +866,86 @@ def test_press_releases_page_uses_load_more_pagination(monkeypatch):
     assert "더보기" not in expanded_page
 
 
+def test_press_releases_page_filters_missing_drafts_date_source_and_query(monkeypatch):
+    db_path = Path(f"data/.test_releases_filters_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    today = datetime.now(LOCAL_TZ).date()
+    yesterday = today - timedelta(days=1)
+    missing_today_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="오늘 미변환 원문",
+            url="https://example.com/missing-today",
+            content="특별검색 원문 내용입니다.",
+            published_at=today.isoformat(),
+        )
+    )
+    assert missing_today_id is not None
+    drafted_today_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 기관",
+            region="전남",
+            title="오늘 초안 생성 원문",
+            url="https://example.com/drafted-today",
+            content="초안 생성 내용입니다.",
+            published_at=today.isoformat(),
+        )
+    )
+    assert drafted_today_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=drafted_today_id,
+            title="오늘 생성 초안",
+            body="본문입니다.",
+            review_note="",
+            model="gemini-3.5-flash:gemini",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="other",
+            source_name="다른 기관",
+            region="전남",
+            title="어제 미변환 원문",
+            url="https://example.com/missing-yesterday",
+            content="어제 내용입니다.",
+            published_at=yesterday.isoformat(),
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    missing_page = client.get("/press-releases?draft=missing").data.decode("utf-8")
+    drafted_page = client.get("/press-releases?draft=drafted").data.decode("utf-8")
+    today_missing_page = client.get(f"/press-releases?draft=missing&date={today.isoformat()}").data.decode("utf-8")
+    source_page = client.get("/press-releases?source=other").data.decode("utf-8")
+    query_page = client.get("/press-releases?q=특별검색").data.decode("utf-8")
+
+    assert "초안 없는 원문" in missing_page
+    assert "오늘 미변환 원문" in missing_page
+    assert "어제 미변환 원문" in missing_page
+    assert "오늘 초안 생성 원문" not in missing_page
+    assert "초안 생성 원문" in drafted_page
+    assert "오늘 초안 생성 원문" in drafted_page
+    assert "오늘 미변환 원문" not in drafted_page
+    assert "오늘 미변환 원문" in today_missing_page
+    assert "어제 미변환 원문" not in today_missing_page
+    assert "어제 미변환 원문" in source_page
+    assert "오늘 미변환 원문" not in source_page
+    assert "오늘 미변환 원문" in query_page
+    assert "오늘 초안 생성 원문" not in query_page
+
+
 def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     db_path = Path(f"data/.test_dashboard_source_counts_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
