@@ -4113,6 +4113,52 @@ def test_production_readiness_flags_http_public_url_on_render(monkeypatch):
     assert "공개 URL" in {item["name"] for item in report["issue_items"]}
 
 
+def test_production_readiness_flags_weak_session_secret_on_render(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_session_secret_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", "scrypt:32768:8:1$sample$safe")
+    monkeypatch.delenv("NEWS_SUMMARY_SECRET_KEY", raising=False)
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_source_coverage_report", lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"})
+    monkeypatch.setattr(web_module, "_render_deploy_config_report", lambda: {"auto_deploy_level": "ok", "auto_deploy_label": "커밋 시 자동 배포"})
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+    items = {item["name"]: item for item in report["items"]}
+    assert items["세션 비밀키"]["status_level"] == "error"
+    assert items["세션 비밀키"]["status_label"] == "기본값"
+
+    monkeypatch.setenv("NEWS_SUMMARY_SECRET_KEY", "short-secret")
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+    items = {item["name"]: item for item in report["items"]}
+    assert items["세션 비밀키"]["status_level"] == "error"
+    assert items["세션 비밀키"]["status_label"] == "짧음"
+
+    monkeypatch.setenv("NEWS_SUMMARY_SECRET_KEY", "render-secret-key-with-enough-entropy")
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+    items = {item["name"]: item for item in report["items"]}
+    assert items["세션 비밀키"]["status_level"] == "ok"
+
+
 def test_production_readiness_warns_for_weak_plain_admin_password(monkeypatch):
     db_path = Path(f"data/.test_production_readiness_weak_admin_password_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

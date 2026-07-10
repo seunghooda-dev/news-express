@@ -148,7 +148,7 @@ GEMINI_API_KEY=Gemini API 키
 NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해시
 ```
 
-`NEWS_SUMMARY_SECRET_KEY`는 Render가 자동 생성합니다.
+`NEWS_SUMMARY_SECRET_KEY`는 Render가 자동 생성합니다. 수동 환경변수 설정 과정에서 이 값이 빠지거나 너무 짧으면 로그인 세션 보호가 약해지므로 상용 준비 점검에서 필수 보완 항목으로 표시됩니다.
 
 배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 기본 배포 설정은 로그인 보호가 켜진 상태입니다. 임시 테스트 중에만 비밀번호 없이 접속해야 하면 Render 환경변수에서 `NEWS_SUMMARY_AUTH_DISABLED=1`로 바꿀 수 있지만, 정식 공유 전에는 반드시 다시 `0`으로 되돌리고 `NEWS_SUMMARY_ADMIN_PASSWORD_HASH`를 설정합니다.
 

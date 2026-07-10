@@ -2560,12 +2560,17 @@ def _production_readiness_report(
     if not secret_key or secret_key == "local-news-summary-review":
         add_item(
             "세션 비밀키",
-            "warning" if render_environment else "neutral",
+            "error" if render_environment else "neutral",
             "기본값",
             "운영 환경에서는 NEWS_SUMMARY_SECRET_KEY를 임의의 긴 값으로 설정해야 세션 보안이 안정적입니다.",
         )
     elif len(secret_key) < 24:
-        add_item("세션 비밀키", "warning", "짧음", "세션 비밀키가 짧습니다. 32자 이상 임의 문자열을 권장합니다.")
+        add_item(
+            "세션 비밀키",
+            "error" if render_environment else "warning",
+            "짧음",
+            "세션 비밀키가 짧습니다. 32자 이상 임의 문자열을 권장합니다.",
+        )
     else:
         add_item("세션 비밀키", "ok", "설정됨", "운영 세션용 비밀키가 설정되어 있습니다.")
 
