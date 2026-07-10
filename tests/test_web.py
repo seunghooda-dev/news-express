@@ -2483,9 +2483,42 @@ def test_security_headers_are_applied(monkeypatch):
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Referrer-Policy"] == "same-origin"
     assert "camera=()" in response.headers["Permissions-Policy"]
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
     operations = client.get("/operations")
     assert operations.headers["Cache-Control"] == "no-store"
+
+
+def test_https_security_headers_and_session_cookie_defaults_on_render(monkeypatch):
+    db_path = Path(f"data/.test_render_security_headers_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_SECRET_KEY", "test-secret-key-long-enough-for-session")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/", base_url="https://news-express.example.com")
+    assert response.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
+    assert app.config["SESSION_COOKIE_HTTPONLY"] is True
+    assert app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+    assert app.config["SESSION_COOKIE_SECURE"] is True
+
+    login = client.post(
+        "/login",
+        data={"password": "secret1234", "next": "/"},
+        base_url="https://news-express.example.com",
+    )
+    cookie = login.headers["Set-Cookie"]
+    assert "Secure" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=Lax" in cookie
 
 
 def test_dangerous_operations_render_confirmation_prompts(monkeypatch):

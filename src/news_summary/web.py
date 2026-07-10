@@ -170,6 +170,7 @@ def create_app() -> Flask:
     logger = get_logger("web")
     app = Flask(__name__)
     app.secret_key = os.getenv("NEWS_SUMMARY_SECRET_KEY", "local-news-summary-review")
+    _configure_session_security(app)
     app.jinja_env.globals["status_label"] = status_label
     app.jinja_env.globals["status_badge_class"] = status_badge_class
     app.jinja_env.globals["model_label"] = model_label
@@ -210,6 +211,9 @@ def create_app() -> Flask:
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Content-Security-Policy", _content_security_policy())
+        if _request_is_https():
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         if request.endpoint in {"operations", "ops_logs", "recrawl_status"}:
             response.headers.setdefault("Cache-Control", "no-store")
         try:
@@ -1235,6 +1239,42 @@ def create_app() -> Flask:
         return redirect(url_for("dashboard"))
 
     return app
+
+
+def _configure_session_security(app: Flask) -> None:
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("NEWS_SUMMARY_SESSION_COOKIE_SAMESITE", "Lax")
+    app.config["SESSION_COOKIE_SECURE"] = _secure_cookie_default()
+    app.config.setdefault("PERMANENT_SESSION_LIFETIME", timedelta(hours=12))
+
+
+def _secure_cookie_default() -> bool:
+    if os.getenv("NEWS_SUMMARY_FORCE_SECURE_COOKIES", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if os.getenv("NEWS_SUMMARY_FORCE_INSECURE_COOKIES", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+    return _is_render_environment()
+
+
+def _content_security_policy() -> str:
+    return "; ".join(
+        [
+            "default-src 'self'",
+            "img-src 'self' data: blob: https: http:",
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "connect-src 'self'",
+            "font-src 'self' data:",
+            "frame-ancestors 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+        ]
+    )
+
+
+def _request_is_https() -> bool:
+    forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+    return bool(request.is_secure or forwarded_proto == "https")
 
 
 def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
