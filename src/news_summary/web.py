@@ -20,7 +20,14 @@ from flask import Flask, Response, flash, g, jsonify, redirect, render_template,
 from werkzeug.exceptions import HTTPException
 
 from .asset_filters import is_display_noise_image_asset
-from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, verify_admin_password
+from .auth import (
+    ADMIN_PASSWORD_HASH_KEY,
+    admin_password_strength_message,
+    admin_plain_password_issues,
+    auth_config,
+    set_admin_password,
+    verify_admin_password,
+)
 from .backup import backup_include_env, create_backup, restore_backup, verify_backup
 from .collectors import public_press_release_url
 from .exporter import export_approved
@@ -487,9 +494,9 @@ def create_app() -> Flask:
         if request.method == "POST":
             password = request.form.get("password") or ""
             confirm = request.form.get("confirm_password") or ""
-            password_issues = _admin_plain_password_issues(password)
+            password_issues = admin_plain_password_issues(password)
             if password_issues:
-                flash(_admin_password_strength_message("관리자 비밀번호", password_issues))
+                flash(admin_password_strength_message("관리자 비밀번호", password_issues))
             elif password != confirm:
                 flash("비밀번호 확인이 일치하지 않습니다.")
             else:
@@ -681,8 +688,8 @@ def create_app() -> Flask:
             _auth_rate_limit_record_failure(app, "admin_password_change")
             logger.warning("admin password change failed remote_addr=%s reason=current_password", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
-        elif (password_issues := _admin_plain_password_issues(new_password)):
-            flash(_admin_password_strength_message("새 관리자 비밀번호", password_issues))
+        elif (password_issues := admin_plain_password_issues(new_password)):
+            flash(admin_password_strength_message("새 관리자 비밀번호", password_issues))
         elif new_password != confirm_password:
             flash("새 비밀번호 확인이 일치하지 않습니다.")
         else:
@@ -2615,7 +2622,7 @@ def _admin_password_readiness_item(source: str, render_environment: bool) -> tup
                 "관리자 비밀번호가 평문 환경변수가 아닌 해시 환경변수로 설정되어 있습니다.",
             )
         password = os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD", "")
-        issues = _admin_plain_password_issues(password)
+        issues = admin_plain_password_issues(password)
         if issues:
             return (
                 "관리자 비밀번호",
@@ -2637,30 +2644,6 @@ def _admin_password_readiness_item(source: str, render_environment: bool) -> tup
             "관리자 비밀번호가 DB에 해시로 저장되어 있습니다.",
         )
     return None
-
-
-def _admin_plain_password_issues(password: str) -> list[str]:
-    value = str(password or "")
-    lowered = value.lower()
-    issues: list[str] = []
-    if len(value) < 12:
-        issues.append("12자 미만")
-    if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
-        issues.append("문자/숫자 조합 부족")
-    if not re.search(r"[^A-Za-z0-9]", value):
-        issues.append("기호 없음")
-    common_fragments = ("password", "admin", "news", "express", "kbc", "1234", "0000", "qwer")
-    if any(fragment in lowered for fragment in common_fragments):
-        issues.append("예측 쉬운 단어")
-    return issues
-
-
-def _admin_password_strength_message(label: str, issues: list[str]) -> str:
-    return (
-        f"{label}가 상용 운영 기준에 약합니다: "
-        + ", ".join(issues)
-        + ". 12자 이상, 영문/숫자/기호를 섞은 예측 어려운 값으로 설정하세요."
-    )
 
 
 def _production_readiness_health_payload(report: dict[str, object]) -> dict[str, object]:

@@ -93,7 +93,11 @@ DATABASE_URL=
 
 `NEWS_SUMMARY_RETENTION_HOLIDAYS`에는 추가 공휴일을 `YYYY-MM-DD,YYYY-MM-DD` 형식으로 넣을 수 있습니다. 공휴일과 주말은 최근 3일 계산에서 제외되어 그만큼 보관 범위가 늘어납니다.
 
-`NEWS_SUMMARY_ADMIN_PASSWORD` 값을 설정하면 관리자 로그인이 강제됩니다. 관리자 비밀번호는 12자 이상, 영문/숫자/기호를 섞은 예측 어려운 값으로 설정합니다. 운영 로그는 홈 화면에 표시하지 않고 `/ops-logs` 경로에서 확인합니다.
+`NEWS_SUMMARY_ADMIN_PASSWORD` 또는 `NEWS_SUMMARY_ADMIN_PASSWORD_HASH` 값을 설정하면 관리자 로그인이 강제됩니다. 관리자 비밀번호는 12자 이상, 영문/숫자/기호를 섞은 예측 어려운 값으로 설정합니다. 운영 환경에서는 평문 비밀번호보다 아래 명령으로 만든 해시 값을 `NEWS_SUMMARY_ADMIN_PASSWORD_HASH`에 넣는 방식을 권장합니다. 운영 로그는 홈 화면에 표시하지 않고 `/ops-logs` 경로에서 확인합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m news_summary.cli admin-password-hash
+```
 
 ## PostgreSQL 전환
 
@@ -139,7 +143,7 @@ PostgreSQL 모드에서는 앱 백업 ZIP 안에 `data/postgres_export.json` 논
 ```text
 DATABASE_URL=Neon PostgreSQL 연결 문자열
 GEMINI_API_KEY=Gemini API 키
-NEWS_SUMMARY_ADMIN_PASSWORD=12자 이상 영문/숫자/기호 조합 관리자 비밀번호
+NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해시
 ```
 
 `NEWS_SUMMARY_SECRET_KEY`는 Render가 자동 생성합니다.
