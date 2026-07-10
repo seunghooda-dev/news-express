@@ -3943,7 +3943,10 @@ def test_production_readiness_flags_auth_disabled_on_render(monkeypatch):
     items = {item["name"]: item for item in report["items"]}
     assert items["접근 보호"]["status_level"] == "error"
     assert items["접근 보호"]["status_label"] == "강제 비활성"
+    assert items["상세 헬스체크"]["status_level"] == "error"
+    assert items["상세 헬스체크"]["status_label"] == "공개"
     assert "접근 보호" in {item["name"] for item in report["issue_items"]}
+    assert "상세 헬스체크" in {item["name"] for item in report["issue_items"]}
 
 
 def test_production_readiness_reports_env_backup_policy(monkeypatch):

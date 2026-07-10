@@ -2498,6 +2498,13 @@ def _production_readiness_report(
         add_item("상세 헬스체크", "warning", "공개", "내부 운영 상태가 담긴 /healthz/details가 외부에 공개되어 있습니다.")
     elif auth_state.enabled:
         add_item("상세 헬스체크", "ok", "보호됨", "관리자 로그인 후에만 /healthz/details를 볼 수 있습니다.")
+    elif render_environment:
+        add_item(
+            "상세 헬스체크",
+            "error",
+            "공개",
+            "로그인 보호가 꺼져 있어 내부 운영 상태가 담긴 /healthz/details도 외부에서 볼 수 있습니다.",
+        )
     else:
         add_item("상세 헬스체크", "neutral", "로컬", "관리자 로그인이 꺼져 있어 상세 헬스체크도 공개 상태입니다.")
 
