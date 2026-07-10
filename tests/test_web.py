@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 import json
+import os
 import re
 from pathlib import Path
 from uuid import uuid4
@@ -18,6 +19,7 @@ from news_summary.scheduler import (
 from news_summary.storage import Store
 from news_summary.web import (
     _asset_request_headers,
+    _backup_health_payload,
     _collection_check_coverage_report,
     _date_warning,
     _db_health_report,
@@ -3922,6 +3924,21 @@ def test_service_health_summary_includes_stale_operations_snapshot_warning():
     assert summary["service_status_issues"][0]["component"] == "operations_snapshot"
 
 
+def test_service_health_summary_includes_backup_warning():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "backup_status": "warning",
+            "backup_message": "최근 DB 백업이 31시간 전입니다. 자동 백업 상태를 확인하세요.",
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "최근 DB 백업이 31시간 전입니다. 자동 백업 상태를 확인하세요."
+    assert summary["service_status_issues"][0]["component"] == "backup"
+
+
 def test_operations_snapshot_freshness_warns_when_metadata_is_stale(monkeypatch):
     db_path = Path(f"data/.test_operations_snapshot_stale_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
@@ -7200,6 +7217,39 @@ def test_backup_verify_report_refreshes_stale_metadata(monkeypatch):
     assert report["status_label"] == "검증 정상"
     assert report["backup_name"] == backup_path.name
     assert "SQLite 무결성" in str(report["message"])
+
+
+def test_backup_health_payload_warns_when_latest_backup_is_stale(monkeypatch):
+    db_path = Path(f"data/.test_backup_health_stale_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_backup_health_stale_{uuid4().hex}").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary.backup import create_backup
+
+    backup_path = create_backup(Path.cwd(), db_path, backup_dir)
+    now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
+    stale_timestamp = (now - timedelta(hours=31, minutes=5)).timestamp()
+    backup_path.touch()
+
+    os.utime(backup_path, (stale_timestamp, stale_timestamp))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS", "24")
+
+    payload = _backup_health_payload(
+        backup_dir,
+        {
+            "ok": True,
+            "status_label": "검증 정상",
+            "message": "백업 검증 정상",
+            "backup_name": backup_path.name,
+        },
+        now=now,
+    )
+
+    assert payload["backup_status"] == "warning"
+    assert payload["backup_label"] == "백업 지연"
+    assert payload["backup_age_hours"] == 31
+    assert payload["backup_message"] == "최근 DB 백업이 31시간 전입니다. 자동 백업 상태를 확인하세요."
 
 
 def test_db_health_report_warns_when_backup_dir_is_temporary():

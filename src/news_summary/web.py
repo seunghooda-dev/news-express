@@ -101,6 +101,7 @@ DEFAULT_AUTO_RUNNING_WARN_MINUTES = 180
 DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
 DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
 DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
+DEFAULT_AUTO_BACKUP_MAX_AGE_HOURS = 24
 DEFAULT_OPERATIONS_SNAPSHOT_STALE_MINUTES = 180
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT = 10
@@ -406,6 +407,8 @@ def create_app() -> Flask:
             payload.update(_source_collection_health_payload(store))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
             payload.update(_draft_conversion_coverage_health_payload(store))
+            backup_verify_report = _backup_verify_report(store, backup_dir)
+            payload.update(_backup_health_payload(backup_dir, backup_verify_report))
             payload.update(_operations_snapshot_freshness_payload(store))
             payload.update(_deployment_version_health_payload())
             readiness_report = _production_readiness_report(store, backup_dir, auto_status, config_path)
@@ -1578,6 +1581,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     if gemini_status in {"warning", "error"} and not (gemini_wait_already_counted or gemini_retry_already_counted):
         add_issue(gemini_status, "gemini_queue", payload.get("gemini_queue_message"))
 
+    backup_status = str(payload.get("backup_status") or "")
+    if backup_status in {"warning", "error"}:
+        add_issue(backup_status, "backup", payload.get("backup_message"))
+
     operations_snapshot_status = str(payload.get("operations_snapshot_status") or "")
     if operations_snapshot_status in {"warning", "error"}:
         add_issue(operations_snapshot_status, "operations_snapshot", payload.get("operations_snapshot_message"))
@@ -2450,6 +2457,7 @@ def _operations_cached_report_bundle(
             if cached and now - cached[0] <= ttl_seconds:
                 return dict(cached[1])
 
+    backup_verify_report = _backup_verify_report(store, backup_dir)
     reports = {
         "retention_policy": _retention_policy_summary(),
         "operations_health": _operations_health_report(store, auto_status, pending_queue),
@@ -2470,7 +2478,8 @@ def _operations_cached_report_bundle(
         "deduplicate_report": _deduplicate_report(store),
         "fallback_report": _fallback_url_report(config_path),
         "url_discovery_report": _url_discovery_report(store),
-        "backup_verify_report": _backup_verify_report(store, backup_dir),
+        "backup_verify_report": backup_verify_report,
+        "backup_health_report": _backup_health_payload(backup_dir, backup_verify_report),
         "automation_settings": _automation_settings_report(),
         "cloudflare_tunnel": _cloudflare_quick_tunnel_status(),
         "operations_log_report": _operations_log_summary_report(log_path),
@@ -3551,6 +3560,72 @@ def _backup_verify_report(store: Store, backup_dir: Path) -> dict[str, object]:
         "updated_at": None,
         **result,
     }
+
+
+def _backup_health_payload(
+    backup_dir: Path,
+    backup_verify_report: dict[str, object],
+    now: datetime | None = None,
+) -> dict[str, object]:
+    backups = _backup_files(backup_dir)
+    latest_backup = backups[0] if backups else None
+    max_age_hours = _auto_backup_max_age_hours()
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    storage_warning = _backup_storage_warning(backup_dir)
+    latest_backup_at = latest_backup.get("modified_at") if latest_backup else None
+    backup_age_hours = _backup_age_hours(latest_backup_at, now_utc)
+    verify_ok = bool(backup_verify_report.get("ok"))
+    verify_label = str(backup_verify_report.get("status_label") or "")
+    verify_message = str(backup_verify_report.get("message") or "")
+
+    if not latest_backup:
+        status = "warning"
+        label = "백업 없음"
+        message = "생성된 DB 백업 파일이 없습니다."
+    elif not verify_ok:
+        status = "error"
+        label = verify_label or "검증 실패"
+        message = verify_message or "최신 DB 백업 검증에 실패했습니다."
+    elif backup_age_hours is not None and backup_age_hours > max_age_hours:
+        status = "warning"
+        label = "백업 지연"
+        message = f"최근 DB 백업이 {backup_age_hours}시간 전입니다. 자동 백업 상태를 확인하세요."
+    elif storage_warning:
+        status = "warning"
+        label = "보관 주의"
+        message = storage_warning
+    else:
+        status = "ok"
+        label = "정상"
+        message = "최근 DB 백업과 검증 상태가 정상 범위입니다."
+
+    return {
+        "backup_status": status,
+        "backup_label": label,
+        "backup_message": message,
+        "backup_latest_at": latest_backup_at,
+        "backup_age_hours": backup_age_hours,
+        "backup_count": len(backups),
+        "backup_max_age_hours": max_age_hours,
+        "backup_verify_ok": verify_ok,
+        "backup_verify_label": verify_label,
+        "backup_verify_message": verify_message,
+    }
+
+
+def _auto_backup_max_age_hours() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS", str(DEFAULT_AUTO_BACKUP_MAX_AGE_HOURS))
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return DEFAULT_AUTO_BACKUP_MAX_AGE_HOURS
+
+
+def _backup_age_hours(value: object, now_utc: datetime) -> int | None:
+    parsed = _parse_datetime(value)
+    if not parsed:
+        return None
+    return max(0, int((now_utc - parsed.astimezone(timezone.utc)).total_seconds() // 3600))
 
 
 def _persist_backup_verification_result(store: Store, backup_path: Path) -> None:
@@ -5676,6 +5751,7 @@ def _dashboard_source_cache_seconds() -> int:
 
 OPERATIONS_COMPONENT_CARD_MAP = {
     "database": ("ops-db-backup", "DB 백업"),
+    "backup": ("ops-db-backup", "DB 백업"),
     "auto_collector": ("ops-auto-collect", "자동 수집"),
     "auto_collector_timing": ("ops-auto-collect", "자동 수집"),
     "source_collection": ("ops-recovery-health", "자동 복구 점검"),
@@ -5714,6 +5790,9 @@ def _operations_service_status_report(
     payload.update(_collection_check_coverage_health_payload(store, config_path))
     payload.update(_draft_conversion_coverage_health_payload(store))
     payload.update(_gemini_queue_health_payload(store))
+    backup_health_report = reports.get("backup_health_report")
+    if isinstance(backup_health_report, dict):
+        payload.update(backup_health_report)
     payload.update(_operations_snapshot_freshness_payload(store))
     deployment_report = reports.get("deployment_version")
     if isinstance(deployment_report, dict):
