@@ -2503,6 +2503,10 @@ def _production_readiness_report(
             "현재 비밀번호 없이 접속 가능합니다. 회사 공유 전에는 로그인 보호를 켜는 편이 안전합니다.",
         )
 
+    admin_password_item = _admin_password_readiness_item(auth_state.source, render_environment)
+    if admin_password_item:
+        add_item(*admin_password_item)
+
     if _env_flag("NEWS_SUMMARY_CSRF_DISABLED"):
         add_item("요청 보호", "warning", "꺼짐", "POST 요청 위조 방어가 꺼져 있습니다. 운영 환경에서는 켜진 상태가 안전합니다.")
     else:
@@ -2598,6 +2602,56 @@ def _production_readiness_report(
         "error_count": error_count,
         "warning_count": warning_count,
     }
+
+
+def _admin_password_readiness_item(source: str, render_environment: bool) -> tuple[str, str, str, str] | None:
+    if source == "environment":
+        if os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH"):
+            return (
+                "관리자 비밀번호",
+                "ok",
+                "해시 설정",
+                "관리자 비밀번호가 평문 환경변수가 아닌 해시 환경변수로 설정되어 있습니다.",
+            )
+        password = os.getenv("NEWS_SUMMARY_ADMIN_PASSWORD", "")
+        issues = _admin_plain_password_issues(password)
+        if issues:
+            return (
+                "관리자 비밀번호",
+                "error" if render_environment else "warning",
+                "강도 낮음",
+                "관리자 비밀번호가 " + ", ".join(issues) + " 조건에 해당합니다. 12자 이상, 영문/숫자/기호를 섞은 예측 어려운 값으로 바꾸세요.",
+            )
+        return (
+            "관리자 비밀번호",
+            "ok",
+            "평문 설정",
+            "관리자 비밀번호가 환경변수로 설정되어 있습니다. 가능하면 NEWS_SUMMARY_ADMIN_PASSWORD_HASH 사용도 검토하세요.",
+        )
+    if source == "database":
+        return (
+            "관리자 비밀번호",
+            "ok",
+            "DB 설정",
+            "관리자 비밀번호가 DB에 해시로 저장되어 있습니다.",
+        )
+    return None
+
+
+def _admin_plain_password_issues(password: str) -> list[str]:
+    value = str(password or "")
+    lowered = value.lower()
+    issues: list[str] = []
+    if len(value) < 12:
+        issues.append("12자 미만")
+    if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+        issues.append("문자/숫자 조합 부족")
+    if not re.search(r"[^A-Za-z0-9]", value):
+        issues.append("기호 없음")
+    common_fragments = ("password", "admin", "news", "express", "kbc", "1234", "0000", "qwer")
+    if any(fragment in lowered for fragment in common_fragments):
+        issues.append("예측 쉬운 단어")
+    return issues
 
 
 def _production_readiness_health_payload(report: dict[str, object]) -> dict[str, object]:

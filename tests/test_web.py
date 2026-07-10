@@ -3984,6 +3984,45 @@ def test_production_readiness_flags_http_public_url_on_render(monkeypatch):
     assert "공개 URL" in {item["name"] for item in report["issue_items"]}
 
 
+def test_production_readiness_warns_for_weak_plain_admin_password(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_weak_admin_password_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "news1234")
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_source_coverage_report", lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"})
+    monkeypatch.setattr(web_module, "_render_deploy_config_report", lambda: {"auto_deploy_level": "ok", "auto_deploy_label": "커밋 시 자동 배포"})
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+
+    items = {item["name"]: item for item in report["items"]}
+    assert items["관리자 비밀번호"]["status_level"] == "error"
+    assert items["관리자 비밀번호"]["status_label"] == "강도 낮음"
+    assert "12자 미만" in items["관리자 비밀번호"]["message"]
+    assert "예측 쉬운 단어" in items["관리자 비밀번호"]["message"]
+
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "PressRoom-47-Delta")
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+
+    items = {item["name"]: item for item in report["items"]}
+    assert items["관리자 비밀번호"]["status_level"] == "ok"
+    assert items["관리자 비밀번호"]["status_label"] == "평문 설정"
+
+
 def test_production_readiness_reports_env_backup_policy(monkeypatch):
     db_path = Path(f"data/.test_production_readiness_backup_policy_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
