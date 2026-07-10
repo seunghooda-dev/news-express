@@ -4057,6 +4057,33 @@ def test_production_readiness_flags_disabled_request_protection_on_render(monkey
     assert {"요청 보호", "로그인 시도 제한"} <= {item["name"] for item in report["issue_items"]}
 
 
+def test_production_readiness_flags_public_health_details_on_render(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_public_health_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", "scrypt:32768:8:1$sample$safe")
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_source_coverage_report", lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"})
+    monkeypatch.setattr(web_module, "_render_deploy_config_report", lambda: {"auto_deploy_level": "ok", "auto_deploy_label": "커밋 시 자동 배포"})
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+
+    items = {item["name"]: item for item in report["items"]}
+    assert items["상세 헬스체크"]["status_level"] == "error"
+    assert items["상세 헬스체크"]["status_label"] == "공개"
+    assert "상세 헬스체크" in {item["name"] for item in report["issue_items"]}
+
+
 def test_production_readiness_flags_required_auth_without_password(monkeypatch):
     db_path = Path(f"data/.test_production_readiness_auth_setup_required_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

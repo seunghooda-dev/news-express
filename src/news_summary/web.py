@@ -2543,7 +2543,12 @@ def _production_readiness_report(
         add_item("로그인 시도 제한", "ok", "켜짐", "반복 비밀번호 실패 시 일정 시간 인증 시도를 제한합니다.")
 
     if auth_state.enabled and _public_health_details_enabled():
-        add_item("상세 헬스체크", "warning", "공개", "내부 운영 상태가 담긴 /healthz/details가 외부에 공개되어 있습니다.")
+        add_item(
+            "상세 헬스체크",
+            "error" if render_environment else "warning",
+            "공개",
+            "내부 운영 상태가 담긴 /healthz/details가 외부에 공개되어 있습니다.",
+        )
     elif auth_state.enabled:
         add_item("상세 헬스체크", "ok", "보호됨", "관리자 로그인 후에만 /healthz/details를 볼 수 있습니다.")
     elif render_environment:

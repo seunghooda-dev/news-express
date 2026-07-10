@@ -154,7 +154,7 @@ NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해�
 
 운영 공유 환경에서는 `NEWS_SUMMARY_CSRF_DISABLED`와 `NEWS_SUMMARY_AUTH_RATE_LIMIT_DISABLED`를 설정하지 않습니다. 두 값이 켜져 있으면 관리자 로그인과 상태 변경 요청 보호가 약해져 상용 준비 점검에서 필수 보완 항목으로 표시됩니다.
 
-`/healthz`는 Render가 사용하는 공개 헬스체크입니다. 내부 운영 상태가 더 많이 담긴 `/healthz/details`는 관리자 로그인이 켜진 운영 환경에서는 기본적으로 로그인 뒤에만 볼 수 있습니다. 외부 모니터링 도구가 상세 상태까지 꼭 봐야 할 때만 `NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS=1`을 설정합니다.
+`/healthz`는 Render가 사용하는 공개 헬스체크입니다. 내부 운영 상태가 더 많이 담긴 `/healthz/details`는 관리자 로그인이 켜진 운영 환경에서는 기본적으로 로그인 뒤에만 볼 수 있습니다. 외부 모니터링 도구가 상세 상태까지 꼭 봐야 할 때만 `NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS=1`을 설정합니다. 상용 공유용 Render 환경에서 이 값이 켜져 있으면 내부 상태 노출 위험이 있어 상용 준비 점검에서 필수 보완 항목으로 표시됩니다.
 
 ### Render 자동 배포 보완
 
