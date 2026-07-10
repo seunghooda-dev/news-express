@@ -4089,8 +4089,34 @@ def test_production_readiness_warns_for_weak_plain_admin_password(monkeypatch):
     )
 
     items = {item["name"]: item for item in report["items"]}
-    assert items["관리자 비밀번호"]["status_level"] == "ok"
+    assert items["관리자 비밀번호"]["status_level"] == "warning"
     assert items["관리자 비밀번호"]["status_label"] == "평문 설정"
+
+
+def test_production_readiness_accepts_admin_password_hash_on_render(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_admin_hash_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", "scrypt:32768:8:1$sample$safe")
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_source_coverage_report", lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"})
+    monkeypatch.setattr(web_module, "_render_deploy_config_report", lambda: {"auto_deploy_level": "ok", "auto_deploy_label": "커밋 시 자동 배포"})
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+
+    items = {item["name"]: item for item in report["items"]}
+    assert items["관리자 비밀번호"]["status_level"] == "ok"
+    assert items["관리자 비밀번호"]["status_label"] == "해시 설정"
 
 
 def test_production_readiness_reports_env_backup_policy(monkeypatch):

@@ -2632,9 +2632,9 @@ def _admin_password_readiness_item(source: str, render_environment: bool) -> tup
             )
         return (
             "관리자 비밀번호",
-            "ok",
+            "warning" if render_environment else "ok",
             "평문 설정",
-            "관리자 비밀번호가 환경변수로 설정되어 있습니다. 가능하면 NEWS_SUMMARY_ADMIN_PASSWORD_HASH 사용도 검토하세요.",
+            "관리자 비밀번호가 평문 환경변수로 설정되어 있습니다. 운영 환경에서는 admin-password-hash 명령으로 만든 NEWS_SUMMARY_ADMIN_PASSWORD_HASH 사용을 권장합니다.",
         )
     if source == "database":
         return (
