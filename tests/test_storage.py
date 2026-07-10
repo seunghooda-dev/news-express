@@ -48,6 +48,34 @@ def test_init_db_creates_operational_indexes():
     assert expected_names <= created_names
 
 
+def test_operation_events_are_recorded_newest_first():
+    db_path = Path(f"data/.test_operation_events_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    store.record_operation_event(
+        "backup_created",
+        actor="admin",
+        masked_ip="10.0.*.*",
+        target="older.zip",
+        detail="이전 백업",
+        created_at="2026-07-10T00:00:00+00:00",
+    )
+    store.record_operation_event(
+        "manual_recrawl_requested",
+        actor="admin",
+        masked_ip="10.0.*.*",
+        target="manual_recrawl",
+        detail="collect_limit=30",
+        created_at="2026-07-10T01:00:00+00:00",
+    )
+
+    rows = store.operation_events(limit=2)
+
+    assert [row["event_type"] for row in rows] == ["manual_recrawl_requested", "backup_created"]
+    assert rows[0]["detail"] == "collect_limit=30"
+
+
 def test_postgres_schema_init_uses_transaction_advisory_lock():
     store = Store("postgresql://user:password@example.com/neondb")
     calls = []

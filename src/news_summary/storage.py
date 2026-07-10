@@ -126,6 +126,16 @@ CREATE TABLE IF NOT EXISTS visitor_access_logs (
     user_agent TEXT NOT NULL DEFAULT '',
     visited_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS operation_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT '',
+    masked_ip TEXT NOT NULL DEFAULT '',
+    target TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 """
 
 POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
@@ -233,6 +243,16 @@ CREATE TABLE IF NOT EXISTS visitor_access_logs (
     user_agent TEXT NOT NULL DEFAULT '',
     visited_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS operation_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT '',
+    masked_ip TEXT NOT NULL DEFAULT '',
+    target TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 """
 
 INDEX_STATEMENTS = (
@@ -255,6 +275,8 @@ INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_checked_status ON source_collection_runs(checked_at, status, id)",
     "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_status_id ON source_collection_runs(status, id)",
     "CREATE INDEX IF NOT EXISTS idx_visitor_access_logs_visited ON visitor_access_logs(visited_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_operation_events_created ON operation_events(created_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_operation_events_type_created ON operation_events(event_type, created_at, id)",
 )
 
 
@@ -1843,6 +1865,45 @@ class Store:
             ).fetchone()
             conn.execute("DELETE FROM visitor_access_logs WHERE visited_at < ?", (cutoff_iso,))
         return int(row["count"] or 0)
+
+    def record_operation_event(
+        self,
+        event_type: str,
+        *,
+        actor: str = "",
+        masked_ip: str = "",
+        target: str = "",
+        detail: str = "",
+        created_at: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO operation_events
+                (event_type, actor, masked_ip, target, detail, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_type[:80],
+                    actor[:80],
+                    masked_ip[:80],
+                    target[:200],
+                    detail[:1000],
+                    created_at or _now(),
+                ),
+            )
+
+    def operation_events(self, limit: int = 20) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM operation_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
 
     def _record_draft_history(self, conn: sqlite3.Connection, row: sqlite3.Row, change_type: str) -> None:
         conn.execute(

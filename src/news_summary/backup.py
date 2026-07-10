@@ -23,6 +23,7 @@ POSTGRES_BACKUP_TABLES = (
     "draft_generation_failures",
     "source_collection_runs",
     "visitor_access_logs",
+    "operation_events",
 )
 ALLOWED_RESTORE_ROOTS = (
     ".env",

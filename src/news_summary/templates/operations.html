@@ -72,6 +72,30 @@
     {% endif %}
   </article>
 
+  <article class="ops-card" id="ops-audit-events">
+    <div class="ops-card-head">
+      <h2>최근 운영 변경 이력</h2>
+      <span class="badge {% if operation_events %}badge-neutral{% else %}badge-gemini{% endif %}">
+        {{ operation_events|length }}건
+      </span>
+    </div>
+    {% if operation_events %}
+      <ul class="ops-mini-list">
+        {% for item in operation_events %}
+          <li>
+            <span class="badge badge-neutral">{{ item.label }}</span>
+            {% if item.target %}<strong>{{ item.target }}</strong>{% endif %}
+            {% if item.detail %}<span>{{ item.detail }}</span>{% endif %}
+            <br>
+            <span class="meta">{{ item.created_at|date_label }} · {{ item.actor }} · {{ item.masked_ip }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">아직 기록된 운영 변경 이력이 없습니다.</p>
+    {% endif %}
+  </article>
+
   <article class="ops-card" id="ops-attention-sources">
     <div class="ops-card-head">
       <h2>즉시 확인 기관</h2>

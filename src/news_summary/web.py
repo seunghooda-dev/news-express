@@ -534,6 +534,7 @@ def create_app() -> Flask:
                     "operations_write_unlocked": _operations_write_access_unlocked(store),
                     "operations_write_expires_at": _operations_write_access_expires_at(),
                     "operations_write_unlock_minutes": _operations_write_unlock_minutes(),
+                    "operation_events": _operation_event_items(store),
                 }
                 context.update(
                     _operations_cached_report_bundle(
@@ -565,6 +566,12 @@ def create_app() -> Flask:
         enabled = request.form.get("enabled") == "true"
         auto_collector.set_enabled(enabled)
         _clear_operations_report_cache()
+        _record_operation_event(
+            store,
+            "auto_collect_enabled" if enabled else "auto_collect_disabled",
+            target="auto_collect",
+            detail="자동 수집 켜짐" if enabled else "자동 수집 꺼짐",
+        )
         logger.info("auto collector setting changed enabled=%s", enabled)
         flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
         return redirect(url_for("operations"))
@@ -581,6 +588,12 @@ def create_app() -> Flask:
         if verify_admin_password(store, current_password):
             _auth_rate_limit_clear("operations_write_unlock")
             _unlock_operations_write_session()
+            _record_operation_event(
+                store,
+                "operations_write_unlocked",
+                target="operations",
+                detail=f"운영 변경 잠금 해제 {_operations_write_unlock_minutes()}분",
+            )
             logger.info("operations write access unlocked remote_addr=%s", _masked_request_ip())
             flash("운영 변경 기능 잠금을 해제했습니다.")
         else:
@@ -593,6 +606,7 @@ def create_app() -> Flask:
     def lock_operations_write_access():
         session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
+        _record_operation_event(store, "operations_write_locked", target="operations", detail="운영 변경 잠금")
         flash("운영 변경 기능을 다시 잠갔습니다.")
         return redirect(url_for("operations"))
 
@@ -613,6 +627,12 @@ def create_app() -> Flask:
             _auth_rate_limit_clear("admin_password_unlock")
             session[OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY] = True
             _unlock_operations_write_session()
+            _record_operation_event(
+                store,
+                "admin_password_panel_unlocked",
+                target="admin_password",
+                detail="관리자 비밀번호 변경 패널 잠금 해제",
+            )
             logger.info("admin password panel unlocked remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호 변경 입력칸을 열었습니다.")
         else:
@@ -653,6 +673,12 @@ def create_app() -> Flask:
             session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
             session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
             _clear_operations_report_cache()
+            _record_operation_event(
+                store,
+                "admin_password_changed",
+                target="admin_password",
+                detail="관리자 비밀번호 변경",
+            )
             logger.info("admin password changed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
         return redirect(url_for("operations"))
@@ -665,10 +691,17 @@ def create_app() -> Flask:
             backup_path = create_backup(PROJECT_ROOT, store.path, backup_dir)
         except Exception as exc:  # noqa: BLE001 - backup failures should be visible in operations.
             logger.exception("backup creation failed")
+            _record_operation_event(
+                store,
+                "backup_create_failed",
+                target="backup",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
             flash(f"백업 생성에 실패했습니다: {type(exc).__name__}: {exc}")
             return redirect(url_for("operations"))
         _persist_backup_verification_result(store, backup_path)
         _clear_operations_report_cache()
+        _record_operation_event(store, "backup_created", target=backup_path.name, detail="DB 백업 생성")
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")
         return redirect(url_for("operations"))
@@ -713,6 +746,12 @@ def create_app() -> Flask:
         restored = restore_backup(PROJECT_ROOT, backup_path, dry_run=False)
         store.init_db()
         _clear_operations_report_cache()
+        _record_operation_event(
+            store,
+            "backup_restored",
+            target=backup_path.name,
+            detail=f"복구 항목 {', '.join(restored)} · 안전 백업 {safety_backup.name}",
+        )
         logger.warning(
             "backup restored backup=%s restored=%s safety_backup=%s",
             backup_path,
@@ -735,6 +774,7 @@ def create_app() -> Flask:
     @app.post("/gemini-usage/reset")
     def reset_gemini_usage():
         store.set_app_metadata(GEMINI_USAGE_RESET_AT_KEY, datetime.now(timezone.utc).isoformat())
+        _record_operation_event(store, "gemini_usage_reset", target="gemini_usage", detail="Gemini 로컬 사용량 초기화")
         flash("Gemini 로컬 사용량을 초기화했습니다.")
         return redirect(url_for("gemini_usage"))
 
@@ -1063,9 +1103,11 @@ def create_app() -> Flask:
     def update_writing_settings():
         if request.form.get("action") == "reset":
             save_writing_settings(DEFAULT_WRITING_SETTINGS)
+            _record_operation_event(store, "writing_settings_reset", target="writing_settings", detail="기사 설정 기본값 복원")
             flash("기사 설정을 기본값으로 되돌렸습니다.")
         else:
             save_writing_settings(request.form)
+            _record_operation_event(store, "writing_settings_updated", target="writing_settings", detail="기사 설정 저장")
             flash("기사 설정을 저장했습니다. 다음 Gemini 초안 생성부터 적용됩니다.")
         return redirect(url_for("writing_settings"))
 
@@ -1214,6 +1256,12 @@ def create_app() -> Flask:
         if auto_collector:
             started = auto_collector.run_async_once(collect_limit=limit, draft_limit=draft_limit, label="수동 재수집")
             messages = ["수동 재수집을 시작했습니다."] if started else ["자동 수집이 이미 실행 중입니다."]
+            _record_operation_event(
+                store,
+                "manual_recrawl_requested" if started else "manual_recrawl_skipped",
+                target="manual_recrawl",
+                detail=f"collect_limit={limit}, draft_limit={draft_limit}",
+            )
             logger.info(
                 "manual recrawl requested started=%s collect_limit=%s draft_limit=%s",
                 started,
@@ -1228,6 +1276,12 @@ def create_app() -> Flask:
                 collect_limit=limit,
                 draft_limit=draft_limit,
                 require_gemini=True,
+            )
+            _record_operation_event(
+                store,
+                "manual_recrawl_completed",
+                target="manual_recrawl",
+                detail=f"collect_limit={limit}, draft_limit={draft_limit}, messages={len(messages)}",
             )
         for message in messages:
             flash(message)
@@ -1285,6 +1339,12 @@ def create_app() -> Flask:
             scope,
             markdown_path,
             csv_path,
+        )
+        _record_operation_event(
+            store,
+            "approved_exported",
+            target=str(csv_path.name),
+            detail=f"scope={scope}, count={count}",
         )
         scope_label = {"today": "오늘 승인 기사", "all": "전체 승인 기사"}.get(scope, "미내보내기 승인 기사")
         flash(f"{scope_label} {count}건을 내보냈습니다.")
@@ -4767,6 +4827,62 @@ def _record_visitor_access(store: Store, status_code: int) -> None:
     )
     if _should_prune_visitor_access_logs():
         store.prune_visitor_access_logs(cutoff_iso)
+
+
+OPERATION_EVENT_LABELS = {
+    "auto_collect_enabled": "자동 수집 켜짐",
+    "auto_collect_disabled": "자동 수집 꺼짐",
+    "operations_write_unlocked": "운영 잠금 해제",
+    "operations_write_locked": "운영 잠금",
+    "admin_password_panel_unlocked": "비밀번호 변경 열림",
+    "admin_password_changed": "관리자 비밀번호 변경",
+    "backup_created": "백업 생성",
+    "backup_create_failed": "백업 생성 실패",
+    "backup_restored": "백업 복구",
+    "gemini_usage_reset": "Gemini 사용량 초기화",
+    "writing_settings_reset": "기사 설정 초기화",
+    "writing_settings_updated": "기사 설정 저장",
+    "manual_recrawl_requested": "수동 재수집 요청",
+    "manual_recrawl_skipped": "수동 재수집 대기",
+    "manual_recrawl_completed": "수동 재수집 완료",
+    "approved_exported": "승인 기사 내보내기",
+}
+
+
+def _record_operation_event(
+    store: Store,
+    event_type: str,
+    *,
+    target: str = "",
+    detail: str = "",
+) -> None:
+    actor = "admin" if session.get("admin_authenticated") or session.get(OPERATIONS_WRITE_UNLOCKED_KEY) else "user"
+    try:
+        store.record_operation_event(
+            event_type,
+            actor=actor,
+            masked_ip=_masked_request_ip(),
+            target=target,
+            detail=detail,
+        )
+    except Exception as exc:  # noqa: BLE001 - audit logging must not block the requested operation.
+        logger.warning("operation audit event failed event_type=%s error=%s", event_type, exc)
+
+
+def _operation_event_items(store: Store, limit: int = 8) -> list[dict[str, object]]:
+    return [
+        {
+            "id": row["id"],
+            "event_type": str(row["event_type"] or ""),
+            "label": OPERATION_EVENT_LABELS.get(str(row["event_type"] or ""), str(row["event_type"] or "")),
+            "actor": str(row["actor"] or ""),
+            "masked_ip": str(row["masked_ip"] or ""),
+            "target": str(row["target"] or ""),
+            "detail": str(row["detail"] or ""),
+            "created_at": str(row["created_at"] or ""),
+        }
+        for row in store.operation_events(limit=limit)
+    ]
 
 
 def _should_prune_visitor_access_logs() -> bool:

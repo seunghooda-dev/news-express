@@ -7065,6 +7065,9 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert "최신 백업 다운로드" in operations_html
     assert "최신 백업 복구 대상 확인" in operations_html
     assert f'value="{backup_name}"' in operations_html
+    assert "최근 운영 변경 이력" in operations_html
+    assert "백업 생성" in operations_html
+    assert backup_name in operations_html
 
     preview_response = client.post(
         "/operations/restore",
@@ -7095,6 +7098,8 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert restore_response.status_code == 200
     assert "백업을 복구했습니다" in restore_html
     assert len(list(backup_dir.glob("*.zip"))) >= 2
+    event_types = [row["event_type"] for row in Store(db_path).operation_events(limit=5)]
+    assert "backup_restored" in event_types
 
 
 def test_public_operations_write_access_can_be_locked_again(monkeypatch):
