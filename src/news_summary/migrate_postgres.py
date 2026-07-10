@@ -16,7 +16,10 @@ TABLES = (
     "draft_generation_failures",
     "source_collection_runs",
     "visitor_access_logs",
+    "operation_events",
 )
+
+SEQUENCE_TABLES = tuple(table for table in TABLES if table != "app_metadata")
 
 
 def migrate_sqlite_to_postgres(sqlite_db: Path, database_url: str, *, replace: bool = False) -> dict[str, int]:
@@ -32,12 +35,7 @@ def migrate_sqlite_to_postgres(sqlite_db: Path, database_url: str, *, replace: b
     try:
         with target.connect() as conn:
             if replace:
-                conn.execute(
-                    """
-                    TRUNCATE visitor_access_logs, source_collection_runs, draft_generation_failures, draft_history, article_drafts, app_metadata, press_release_assets, press_releases
-                    RESTART IDENTITY CASCADE
-                    """
-                )
+                conn.execute(_truncate_sql())
             _ensure_target_empty(conn)
             counts = {}
             for table in TABLES:
@@ -74,15 +72,7 @@ def _copy_table(source: sqlite3.Connection, target: Any, table: str) -> int:
 
 
 def _reset_sequences(conn: Any) -> None:
-    for table in (
-        "press_releases",
-        "press_release_assets",
-        "article_drafts",
-        "draft_history",
-        "draft_generation_failures",
-        "source_collection_runs",
-        "visitor_access_logs",
-    ):
+    for table in SEQUENCE_TABLES:
         conn.execute(
             f"""
             SELECT setval(
@@ -92,3 +82,7 @@ def _reset_sequences(conn: Any) -> None:
             )
             """
         )
+
+
+def _truncate_sql() -> str:
+    return f"TRUNCATE {', '.join(reversed(TABLES))} RESTART IDENTITY CASCADE"
