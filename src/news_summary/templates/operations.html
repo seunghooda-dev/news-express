@@ -215,6 +215,33 @@
     {% endif %}
   </article>
 
+  <article class="ops-card" id="ops-production-readiness">
+    <div class="ops-card-head">
+      <h2>상용 준비 점검</h2>
+      <span class="badge {% if production_readiness_report.status_level == 'ok' %}badge-gemini{% elif production_readiness_report.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ production_readiness_report.status_label }}
+      </span>
+    </div>
+    <p class="meta">{{ production_readiness_report.message }}</p>
+    {% if production_readiness_report.issue_items %}
+      <ul class="ops-mini-list">
+        {% for item in production_readiness_report.issue_items %}
+          <li>
+            <span class="badge {% if item.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">{{ item.name }} · {{ item.status_label }}</span>
+            {{ item.message }}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">공개 접속, DB, 자동 수집, 백업, 보안 설정이 상용 운영 기준에 맞습니다.</p>
+    {% endif %}
+    <p class="gemini-models">
+      {% for item in production_readiness_report["items"] %}
+        <span>{{ item.name }} {{ item.status_label }}</span>
+      {% endfor %}
+    </p>
+  </article>
+
   <article class="ops-card" id="ops-recovery-health">
     <div class="ops-card-head">
       <h2>자동 복구 점검</h2>

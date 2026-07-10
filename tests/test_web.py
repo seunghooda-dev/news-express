@@ -3664,11 +3664,71 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     assert "배포 버전" in html
     assert "최신 배포" in html
     assert "자동 배포 커밋 시 자동 배포" in html
+    assert "상용 준비 점검" in html
     assert "GitHub 변경 비교" in html
     assert "런타임 파일:" in html
     assert "src/news_summary/web.py" in html
     assert "백업 자동 생성" in html
     assert "최근 7개 유지" in html
+
+
+def test_production_readiness_report_flags_render_operating_gaps(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("NEWS_SUMMARY_PUBLIC_URL", "https://news-express.example.com")
+    monkeypatch.setenv("NEWS_SUMMARY_LOG_DIR", "/tmp/news-express/logs")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("NEWS_SUMMARY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("NEWS_SUMMARY_SECRET_KEY", raising=False)
+
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "_source_coverage_report",
+        lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"},
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_render_deploy_config_report",
+        lambda: {
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_label": "커밋 시 자동 배포",
+            "auto_deploy_level": "ok",
+        },
+    )
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("/tmp/news-express/backups"),
+        {"enabled": False, "thread_alive": False},
+        Path("config/municipalities.yaml"),
+    )
+
+    assert report["status_level"] == "error"
+    assert report["error_count"] >= 3
+    issue_names = {item["name"] for item in report["issue_items"]}
+    assert {"데이터베이스", "Gemini 키", "자동 수집", "접근 보호", "백업 보관", "운영 로그"} <= issue_names
+
+
+def test_service_health_summary_includes_production_readiness_warning():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "production_readiness_status": "warning",
+            "production_readiness_message": "상용 운영 전 권장 보완 2건이 있습니다.",
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "상용 운영 전 권장 보완 2건이 있습니다."
+    assert summary["service_status_issues"][0]["component"] == "production_readiness"
 
 
 def test_operations_page_shows_attention_source_queue(monkeypatch):

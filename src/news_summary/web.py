@@ -342,6 +342,7 @@ def create_app() -> Flask:
             "commit": _running_commit_short(),
         }
         auto_collector = app.config.get("AUTO_COLLECTOR")
+        auto_status = None
         if auto_collector:
             _ensure_auto_collector_running(auto_collector)
             auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
@@ -369,6 +370,8 @@ def create_app() -> Flask:
             payload.update(_collection_check_coverage_health_payload(store, config_path))
             payload.update(_draft_conversion_coverage_health_payload(store))
             payload.update(_deployment_version_health_payload())
+            readiness_report = _production_readiness_report(store, backup_dir, auto_status, config_path)
+            payload.update(_production_readiness_health_payload(readiness_report))
         else:
             payload["details_url"] = url_for("healthz_details")
         payload.update(_service_health_summary(payload))
@@ -1270,6 +1273,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     if deployment_status in {"warning", "error"}:
         add_issue(deployment_status, "deployment_version", payload.get("deployment_version_message"))
 
+    readiness_status = str(payload.get("production_readiness_status") or "")
+    if readiness_status in {"warning", "error"}:
+        add_issue(readiness_status, "production_readiness", payload.get("production_readiness_message"))
+
     collection_status = str(payload.get("collection_check_coverage_status") or "")
     collection_failed_today = int(payload.get("collection_check_coverage_failed_today") or 0)
     collection_unchecked_count = int(payload.get("collection_check_coverage_unchecked_count") or 0)
@@ -1976,6 +1983,157 @@ def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
     }
 
 
+def _production_readiness_report(
+    store: Store,
+    backup_dir: Path,
+    auto_status: object | None,
+    config_path: Path,
+) -> dict[str, object]:
+    items: list[dict[str, str]] = []
+    render_environment = _is_render_environment()
+
+    def add_item(name: str, level: str, label: str, message: str) -> None:
+        items.append(
+            {
+                "name": name,
+                "status_level": level,
+                "status_label": label,
+                "message": message,
+            }
+        )
+
+    public_url = os.getenv("NEWS_SUMMARY_PUBLIC_URL", "").strip()
+    if not public_url:
+        add_item(
+            "공개 URL",
+            "warning" if render_environment else "neutral",
+            "확인 필요" if render_environment else "로컬",
+            "외부 사용자에게 안내할 고정 공개 URL이 설정되지 않았습니다.",
+        )
+    elif ".trycloudflare.com" in public_url:
+        add_item("공개 URL", "warning", "임시 주소", "trycloudflare 임시 주소는 재실행 때 바뀔 수 있습니다.")
+    elif public_url.startswith(("https://", "http://")):
+        add_item("공개 URL", "ok", "설정됨", public_url)
+    else:
+        add_item("공개 URL", "warning", "형식 확인", "공개 URL은 http:// 또는 https://로 시작해야 합니다.")
+
+    if store.is_postgres:
+        add_item("데이터베이스", "ok", "PostgreSQL", "Render 재시작과 별개로 데이터를 유지할 수 있습니다.")
+    elif render_environment:
+        add_item("데이터베이스", "error", "SQLite", "Render에서 SQLite를 쓰면 재배포나 재시작 때 데이터 유실 위험이 큽니다.")
+    else:
+        add_item("데이터베이스", "warning", "SQLite", "로컬 단독 운영에는 가능하지만 여러 사람이 쓰는 상용 운영에는 PostgreSQL이 안전합니다.")
+
+    if os.getenv("GEMINI_API_KEY", "").strip():
+        add_item("Gemini 키", "ok", "설정됨", "자동 초안 생성에 필요한 Gemini 키가 설정되어 있습니다.")
+    else:
+        add_item(
+            "Gemini 키",
+            "error" if render_environment else "warning",
+            "미설정",
+            "Gemini 키가 없으면 새 원문을 AI 초안으로 변환할 수 없습니다.",
+        )
+
+    if bool(_auto_status_value(auto_status, "enabled")):
+        if _auto_status_value(auto_status, "thread_alive") is False:
+            add_item("자동 수집", "error", "중단", "자동 수집이 켜져 있지만 실행 스레드가 살아있지 않습니다.")
+        else:
+            add_item("자동 수집", "ok", "켜짐", "매시간 수집과 Gemini 대기열 처리를 실행할 수 있습니다.")
+    else:
+        add_item("자동 수집", "error" if render_environment else "warning", "꺼짐", "자동 수집이 꺼져 있으면 새 보도자료가 누락됩니다.")
+
+    auth_state = auth_config(store)
+    if auth_state.enabled:
+        add_item("접근 보호", "ok", "사용 중", "관리자 로그인 또는 비밀번호 설정이 적용되어 있습니다.")
+    else:
+        add_item("접근 보호", "warning", "비활성", "현재 비밀번호 없이 접속 가능합니다. 회사 공유 전에는 로그인 보호를 켜는 편이 안전합니다.")
+
+    secret_key = os.getenv("NEWS_SUMMARY_SECRET_KEY", "").strip()
+    if not secret_key or secret_key == "local-news-summary-review":
+        add_item(
+            "세션 비밀키",
+            "warning" if render_environment else "neutral",
+            "기본값",
+            "운영 환경에서는 NEWS_SUMMARY_SECRET_KEY를 임의의 긴 값으로 설정해야 세션 보안이 안정적입니다.",
+        )
+    elif len(secret_key) < 24:
+        add_item("세션 비밀키", "warning", "짧음", "세션 비밀키가 짧습니다. 32자 이상 임의 문자열을 권장합니다.")
+    else:
+        add_item("세션 비밀키", "ok", "설정됨", "운영 세션용 비밀키가 설정되어 있습니다.")
+
+    backup_warning = _backup_storage_warning(backup_dir)
+    if backup_warning:
+        add_item("백업 보관", "warning", "임시 경로", backup_warning)
+    else:
+        add_item("백업 보관", "ok", "영구 경로", "앱 백업 파일을 임시 폴더 밖에 보관하도록 설정되어 있습니다.")
+
+    source_coverage = _source_coverage_report(config_path)
+    if source_coverage.get("status_level") == "ok":
+        add_item("수집 대상", "ok", "정상", str(source_coverage.get("message") or "필수 기관 설정 정상"))
+    else:
+        add_item("수집 대상", "warning", "확인 필요", str(source_coverage.get("message") or "수집 설정 확인 필요"))
+
+    deploy_config = _render_deploy_config_report()
+    if deploy_config.get("auto_deploy_level") == "ok":
+        add_item("배포 자동화", "ok", "켜짐", str(deploy_config.get("auto_deploy_label") or "자동 배포 설정됨"))
+    else:
+        add_item("배포 자동화", "warning", "확인 필요", str(deploy_config.get("auto_deploy_label") or "자동 배포 설정 확인 필요"))
+
+    log_dir = os.getenv("NEWS_SUMMARY_LOG_DIR", "data/logs").strip()
+    if render_environment and _path_looks_temporary(log_dir):
+        add_item("운영 로그", "warning", "임시 보관", "앱 내부 로그 파일은 재시작 때 사라질 수 있습니다. 장기 보관은 Render 로그 또는 외부 로그 저장소를 확인해야 합니다.")
+    else:
+        add_item("운영 로그", "ok", "기록 중", "운영 로그 경로가 설정되어 있습니다.")
+
+    issue_items = [item for item in items if item["status_level"] in {"warning", "error"}]
+    error_count = sum(1 for item in items if item["status_level"] == "error")
+    warning_count = sum(1 for item in items if item["status_level"] == "warning")
+    if error_count:
+        status_level = "error"
+        status_label = "보완 필요"
+        message = f"상용 운영 전 필수 보완 {error_count}건, 권장 보완 {warning_count}건이 있습니다."
+    elif warning_count:
+        status_level = "warning"
+        status_label = "점검 필요"
+        message = f"상용 운영 전 권장 보완 {warning_count}건이 있습니다."
+    else:
+        status_level = "ok"
+        status_label = "준비 양호"
+        message = "핵심 상용 운영 조건이 정상 범위입니다."
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "message": message,
+        "items": items,
+        "issue_items": issue_items,
+        "error_count": error_count,
+        "warning_count": warning_count,
+    }
+
+
+def _production_readiness_health_payload(report: dict[str, object]) -> dict[str, object]:
+    return {
+        "production_readiness_status": report.get("status_level"),
+        "production_readiness_label": report.get("status_label"),
+        "production_readiness_message": report.get("message"),
+        "production_readiness_error_count": report.get("error_count"),
+        "production_readiness_warning_count": report.get("warning_count"),
+    }
+
+
+def _is_render_environment() -> bool:
+    return bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+
+
+def _path_looks_temporary(value: str) -> bool:
+    normalized = value.strip().replace("\\", "/").lower()
+    return (
+        normalized.startswith(("/tmp", "/var/tmp", "/temp"))
+        or bool(re.match(r"^[a-z]:/(tmp|temp)(/|$)", normalized))
+        or "/appdata/local/temp" in normalized
+    )
+
+
 def _backup_storage_warning(backup_dir: Path) -> str:
     raw = backup_dir.as_posix().lower()
     resolved = backup_dir if backup_dir.is_absolute() else (PROJECT_ROOT / backup_dir)
@@ -2018,6 +2176,7 @@ def _operations_cached_report_bundle(
         "recovery_candidate_report": _recovery_candidate_report(store, config_path),
         "deployment_version": _deployment_version_report(),
         "db_health": _db_health_report(store, backup_dir),
+        "production_readiness_report": _production_readiness_report(store, backup_dir, auto_status, config_path),
         "date_issue_report": _date_issue_report(store),
         "daily_report": _daily_operations_report(store),
         "operations_summary": _operations_summary_report(store),
@@ -5164,6 +5323,7 @@ OPERATIONS_COMPONENT_CARD_MAP = {
     "auto_collector_timing": ("ops-auto-collect", "자동 수집"),
     "source_collection": ("ops-recovery-health", "자동 복구 점검"),
     "deployment_version": ("ops-deployment-version", "배포 버전"),
+    "production_readiness": ("ops-production-readiness", "상용 준비 점검"),
     "collection_check_coverage": ("ops-collection-coverage", "오늘 수집 점검 커버리지"),
     "draft_conversion_coverage": ("ops-draft-conversion", "오늘 초안 변환 커버리지"),
     "gemini_queue": ("ops-gemini-retry-queue", "Gemini 재처리 대기열"),
@@ -5201,6 +5361,9 @@ def _operations_service_status_report(
         payload.update(_deployment_version_health_payload_from_report(deployment_report))
     else:
         payload.update(_deployment_version_health_payload())
+    readiness_report = reports.get("production_readiness_report")
+    if isinstance(readiness_report, dict):
+        payload.update(_production_readiness_health_payload(readiness_report))
     summary = _service_health_summary(payload)
     issues = []
     for issue in summary.get("service_status_issues") or []:
