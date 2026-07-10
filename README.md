@@ -146,6 +146,8 @@ NEWS_SUMMARY_ADMIN_PASSWORD=테스트 사용자에게 공유할 관리자 비밀
 
 배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 임시 테스트 중에는 비밀번호 없이 접속하도록 `NEWS_SUMMARY_AUTH_DISABLED=1`을 사용할 수 있습니다. 정식 공유 전에는 다시 로그인 보호 또는 Cloudflare Access 같은 접근 제한을 켜는 것을 권장합니다.
 
+`/healthz`는 Render가 사용하는 공개 헬스체크입니다. 내부 운영 상태가 더 많이 담긴 `/healthz/details`는 관리자 로그인이 켜진 운영 환경에서는 기본적으로 로그인 뒤에만 볼 수 있습니다. 외부 모니터링 도구가 상세 상태까지 꼭 봐야 할 때만 `NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS=1`을 설정합니다.
+
 ### Render 자동 배포 보완
 
 Render의 `Auto-Deploy`가 `On Commit`인데도 GitHub 푸시가 자동 배포로 이어지지 않으면 GitHub Actions 보완 배포를 사용합니다. 저장소에는 `.github/workflows/render-deploy.yml`이 포함되어 있으며, `codex/news-express` 브랜치에서 운영 영향 경로가 바뀔 때만 Render Deploy Hook을 호출합니다.

@@ -5087,6 +5087,44 @@ def test_healthz_reports_database_status(monkeypatch):
         assert "auto_collector_thread_alive" in payload
 
 
+def test_healthz_details_requires_login_when_auth_is_enabled(monkeypatch):
+    db_path = Path(f"data/.test_healthz_details_auth_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    health = client.get("/healthz")
+    details = client.get("/healthz/details", follow_redirects=False)
+
+    assert health.status_code == 200
+    assert details.status_code == 302
+    assert "/login" in details.headers["Location"]
+
+
+def test_healthz_details_can_be_explicitly_public_for_external_monitoring(monkeypatch):
+    db_path = Path(f"data/.test_healthz_details_public_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["database"] == "ok"
+    assert payload["ok"] is True
+    assert "gemini_queue_status" in payload
+
+
 def test_healthz_details_reports_deployment_version_warning(monkeypatch):
     db_path = Path(f"data/.test_healthz_deployment_version_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

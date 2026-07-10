@@ -74,7 +74,7 @@ DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
-AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "healthz_details", "login", "logout", "admin_setup", "static"}
+AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
 CSRF_SESSION_KEY = "_csrf_token"
 CSRF_FORM_FIELD = "_csrf_token"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
@@ -287,7 +287,7 @@ def create_app() -> Flask:
     @app.before_request
     def require_admin_login():
         endpoint = request.endpoint or ""
-        if endpoint in AUTH_EXEMPT_ENDPOINTS:
+        if _auth_exempt_endpoint(endpoint):
             return None
         config = auth_config(store)
         if not config.enabled:
@@ -1299,6 +1299,16 @@ def _csrf_token() -> str:
     return str(token)
 
 
+def _auth_exempt_endpoint(endpoint: str) -> bool:
+    if endpoint in AUTH_EXEMPT_ENDPOINTS:
+        return True
+    return endpoint == "healthz_details" and _public_health_details_enabled()
+
+
+def _public_health_details_enabled() -> bool:
+    return _env_flag("NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS")
+
+
 def _csrf_protection_enabled(app: Flask) -> bool:
     if _env_flag("NEWS_SUMMARY_CSRF_DISABLED"):
         return False
@@ -2280,6 +2290,13 @@ def _production_readiness_report(
         add_item("로그인 시도 제한", "warning", "꺼짐", "반복 비밀번호 입력 제한이 꺼져 있습니다.")
     else:
         add_item("로그인 시도 제한", "ok", "켜짐", "반복 비밀번호 실패 시 일정 시간 인증 시도를 제한합니다.")
+
+    if auth_state.enabled and _public_health_details_enabled():
+        add_item("상세 헬스체크", "warning", "공개", "내부 운영 상태가 담긴 /healthz/details가 외부에 공개되어 있습니다.")
+    elif auth_state.enabled:
+        add_item("상세 헬스체크", "ok", "보호됨", "관리자 로그인 후에만 /healthz/details를 볼 수 있습니다.")
+    else:
+        add_item("상세 헬스체크", "neutral", "로컬", "관리자 로그인이 꺼져 있어 상세 헬스체크도 공개 상태입니다.")
 
     secret_key = os.getenv("NEWS_SUMMARY_SECRET_KEY", "").strip()
     if not secret_key or secret_key == "local-news-summary-review":
