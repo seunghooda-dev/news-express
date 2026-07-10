@@ -2499,7 +2499,15 @@ def test_security_headers_are_applied(monkeypatch):
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
     operations = client.get("/operations")
-    assert operations.headers["Cache-Control"] == "no-store"
+    assert operations.headers["Cache-Control"] == "no-store, max-age=0"
+    assert operations.headers["Pragma"] == "no-cache"
+    assert operations.headers["Expires"] == "0"
+
+    gemini_usage = client.get("/gemini-usage")
+    assert gemini_usage.headers["Cache-Control"] == "no-store, max-age=0"
+
+    health_details = client.get("/healthz/details")
+    assert health_details.headers["Cache-Control"] == "no-store, max-age=0"
 
 
 def test_request_id_header_accepts_safe_incoming_value(monkeypatch):

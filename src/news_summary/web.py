@@ -75,6 +75,16 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
+NO_STORE_ENDPOINTS = {
+    "admin_setup",
+    "download_backup",
+    "gemini_usage",
+    "healthz_details",
+    "login",
+    "operations",
+    "ops_logs",
+    "recrawl_status",
+}
 CSRF_SESSION_KEY = "_csrf_token"
 CSRF_FORM_FIELD = "_csrf_token"
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -233,8 +243,10 @@ def create_app() -> Flask:
         response.headers.setdefault("Content-Security-Policy", _content_security_policy())
         if _request_is_https():
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-        if request.endpoint in {"operations", "ops_logs", "recrawl_status"}:
-            response.headers.setdefault("Cache-Control", "no-store")
+        if request.endpoint in NO_STORE_ENDPOINTS:
+            response.headers.setdefault("Cache-Control", "no-store, max-age=0")
+            response.headers.setdefault("Pragma", "no-cache")
+            response.headers.setdefault("Expires", "0")
         try:
             _record_visitor_access(store, response.status_code)
         except Exception as exc:  # noqa: BLE001 - access logging must never block the page response.
