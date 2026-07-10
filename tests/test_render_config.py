@@ -28,7 +28,11 @@ def test_render_auth_defaults_are_production_safe():
     assert env["NEWS_SUMMARY_AUTH_REQUIRED"]["value"] == "1"
     assert env["NEWS_SUMMARY_AUTH_DISABLED"]["value"] == "0"
     assert env["NEWS_SUMMARY_ADMIN_PASSWORD_HASH"]["sync"] is False
+    assert env["NEWS_SUMMARY_SECRET_KEY"]["generateValue"] is True
     assert "NEWS_SUMMARY_ADMIN_PASSWORD" not in env
+    assert "NEWS_SUMMARY_CSRF_DISABLED" not in env
+    assert "NEWS_SUMMARY_AUTH_RATE_LIMIT_DISABLED" not in env
+    assert "NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS" not in env
 
 
 def test_render_deploy_fallback_only_runs_for_runtime_paths():
