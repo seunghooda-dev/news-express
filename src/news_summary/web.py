@@ -2508,6 +2508,16 @@ def _production_readiness_report(
     else:
         add_item("백업 보관", "ok", "영구 경로", "앱 백업 파일을 임시 폴더 밖에 보관하도록 설정되어 있습니다.")
 
+    if backup_include_env():
+        add_item(
+            "백업 보안",
+            "warning" if render_environment else "neutral",
+            ".env 포함",
+            "백업 ZIP에 .env가 포함될 수 있습니다. 운영 환경에서는 NEWS_SUMMARY_BACKUP_INCLUDE_ENV=0 설정을 권장합니다.",
+        )
+    else:
+        add_item("백업 보안", "ok", ".env 제외", "새 백업 ZIP에서 .env 설정 파일을 제외합니다.")
+
     source_coverage = _source_coverage_report(config_path)
     if source_coverage.get("status_level") == "ok":
         add_item("수집 대상", "ok", "정상", str(source_coverage.get("message") or "필수 기관 설정 정상"))
