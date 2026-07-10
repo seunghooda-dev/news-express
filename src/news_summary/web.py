@@ -2469,8 +2469,20 @@ def _production_readiness_report(
     auth_state = auth_config(store)
     if auth_state.enabled:
         add_item("접근 보호", "ok", "사용 중", "관리자 로그인 또는 비밀번호 설정이 적용되어 있습니다.")
+    elif auth_state.source == "disabled":
+        add_item(
+            "접근 보호",
+            "error" if render_environment else "warning",
+            "강제 비활성",
+            "NEWS_SUMMARY_AUTH_DISABLED=1로 로그인 보호가 꺼져 있습니다. 테스트가 끝나면 운영 환경에서는 반드시 해제하세요.",
+        )
     else:
-        add_item("접근 보호", "warning", "비활성", "현재 비밀번호 없이 접속 가능합니다. 회사 공유 전에는 로그인 보호를 켜는 편이 안전합니다.")
+        add_item(
+            "접근 보호",
+            "error" if render_environment else "warning",
+            "비활성",
+            "현재 비밀번호 없이 접속 가능합니다. 회사 공유 전에는 로그인 보호를 켜는 편이 안전합니다.",
+        )
 
     if _env_flag("NEWS_SUMMARY_CSRF_DISABLED"):
         add_item("요청 보호", "warning", "꺼짐", "POST 요청 위조 방어가 꺼져 있습니다. 운영 환경에서는 켜진 상태가 안전합니다.")
