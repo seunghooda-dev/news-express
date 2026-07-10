@@ -2523,12 +2523,22 @@ def _production_readiness_report(
         add_item(*admin_password_item)
 
     if _env_flag("NEWS_SUMMARY_CSRF_DISABLED"):
-        add_item("요청 보호", "warning", "꺼짐", "POST 요청 위조 방어가 꺼져 있습니다. 운영 환경에서는 켜진 상태가 안전합니다.")
+        add_item(
+            "요청 보호",
+            "error" if render_environment else "warning",
+            "꺼짐",
+            "POST 요청 위조 방어가 꺼져 있습니다. 운영 환경에서는 켜진 상태가 안전합니다.",
+        )
     else:
         add_item("요청 보호", "ok", "켜짐", "상태 변경 요청에 CSRF 토큰 검증이 적용됩니다.")
 
     if _env_flag("NEWS_SUMMARY_AUTH_RATE_LIMIT_DISABLED"):
-        add_item("로그인 시도 제한", "warning", "꺼짐", "반복 비밀번호 입력 제한이 꺼져 있습니다.")
+        add_item(
+            "로그인 시도 제한",
+            "error" if render_environment else "warning",
+            "꺼짐",
+            "반복 비밀번호 입력 제한이 꺼져 있습니다.",
+        )
     else:
         add_item("로그인 시도 제한", "ok", "켜짐", "반복 비밀번호 실패 시 일정 시간 인증 시도를 제한합니다.")
 

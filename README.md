@@ -152,6 +152,8 @@ NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해�
 
 배포 후 Render가 제공하는 `https://news-express.onrender.com` 형태의 주소로 접속합니다. 기본 배포 설정은 로그인 보호가 켜진 상태입니다. 임시 테스트 중에만 비밀번호 없이 접속해야 하면 Render 환경변수에서 `NEWS_SUMMARY_AUTH_DISABLED=1`로 바꿀 수 있지만, 정식 공유 전에는 반드시 다시 `0`으로 되돌리고 `NEWS_SUMMARY_ADMIN_PASSWORD_HASH`를 설정합니다.
 
+운영 공유 환경에서는 `NEWS_SUMMARY_CSRF_DISABLED`와 `NEWS_SUMMARY_AUTH_RATE_LIMIT_DISABLED`를 설정하지 않습니다. 두 값이 켜져 있으면 관리자 로그인과 상태 변경 요청 보호가 약해져 상용 준비 점검에서 필수 보완 항목으로 표시됩니다.
+
 `/healthz`는 Render가 사용하는 공개 헬스체크입니다. 내부 운영 상태가 더 많이 담긴 `/healthz/details`는 관리자 로그인이 켜진 운영 환경에서는 기본적으로 로그인 뒤에만 볼 수 있습니다. 외부 모니터링 도구가 상세 상태까지 꼭 봐야 할 때만 `NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS=1`을 설정합니다.
 
 ### Render 자동 배포 보완
