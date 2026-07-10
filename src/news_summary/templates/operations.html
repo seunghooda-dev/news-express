@@ -865,6 +865,12 @@
     {% if backup_verify_report.backup_name %}
       <p class="meta">검증 대상 {{ backup_verify_report.backup_name }}</p>
     {% endif %}
+    {% if backup_verify_report.sensitive_config_keys %}
+      <p class="meta auto-status-error">
+        백업 ZIP에 민감 설정 키 {{ backup_verify_report.sensitive_config_keys|length }}개가 포함되어 있습니다.
+        값은 표시하지 않으며, 다운로드 파일은 외부 공유하지 마세요.
+      </p>
+    {% endif %}
     {% if backup_verify_report.checked_sqlite or backup_verify_report.checked_database_export %}
       <p class="gemini-models">
         검증 항목:

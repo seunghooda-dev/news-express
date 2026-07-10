@@ -31,6 +31,33 @@ def test_create_backup_includes_sqlite_and_config_files(tmp_path):
     verification = verify_backup(backup_path)
     assert verification["ok"] is True
     assert verification["checked_sqlite"] is True
+    assert verification["sensitive_config_keys"] == ["GEMINI_API_KEY"]
+
+
+def test_verify_backup_reports_sensitive_env_keys(tmp_path):
+    project_root = tmp_path
+    db_path = project_root / "data" / "news_summary.sqlite"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE sample (value TEXT)")
+    conn.commit()
+    conn.close()
+    (project_root / ".env").write_text(
+        "\n".join(
+            [
+                "GEMINI_API_KEY=test",
+                "NEWS_SUMMARY_ADMIN_PASSWORD=secret",
+                "NEWS_SUMMARY_PUBLIC_URL=https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    backup_path = create_backup(project_root, Path("data/news_summary.sqlite"), Path("data/backups"))
+    verification = verify_backup(backup_path)
+
+    assert verification["ok"] is True
+    assert verification["sensitive_config_keys"] == ["GEMINI_API_KEY", "NEWS_SUMMARY_ADMIN_PASSWORD"]
 
 
 def test_create_backup_includes_postgres_json_export(monkeypatch, tmp_path):

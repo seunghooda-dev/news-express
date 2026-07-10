@@ -3712,6 +3712,7 @@ def _backup_verify_report(store: Store, backup_dir: Path) -> dict[str, object]:
                 "message": str(payload.get("message") or ""),
                 "checked_sqlite": bool(payload.get("checked_sqlite")),
                 "checked_database_export": bool(payload.get("checked_database_export")),
+                "sensitive_config_keys": list(payload.get("sensitive_config_keys") or []),
                 "backup_name": str(payload.get("backup_name") or ""),
                 "updated_at": payload.get("updated_at"),
             }
@@ -3722,6 +3723,7 @@ def _backup_verify_report(store: Store, backup_dir: Path) -> dict[str, object]:
             "message": "검증할 백업 파일이 없습니다.",
             "checked_sqlite": False,
             "checked_database_export": False,
+            "sensitive_config_keys": [],
             "backup_name": "",
             "updated_at": None,
         }
@@ -3748,6 +3750,7 @@ def _backup_health_payload(
     verify_ok = bool(backup_verify_report.get("ok"))
     verify_label = str(backup_verify_report.get("status_label") or "")
     verify_message = str(backup_verify_report.get("message") or "")
+    sensitive_config_keys = list(backup_verify_report.get("sensitive_config_keys") or [])
 
     if not latest_backup:
         status = "warning"
@@ -3761,6 +3764,10 @@ def _backup_health_payload(
         status = "warning"
         label = "백업 지연"
         message = f"최근 DB 백업이 {backup_age_hours}시간 전입니다. 자동 백업 상태를 확인하세요."
+    elif sensitive_config_keys:
+        status = "warning"
+        label = "보안 주의"
+        message = "최신 백업 ZIP에 민감 설정값이 포함되어 있습니다. 다운로드 파일 공유와 보관 위치를 제한하세요."
     elif storage_warning:
         status = "warning"
         label = "보관 주의"
@@ -3781,6 +3788,7 @@ def _backup_health_payload(
         "backup_verify_ok": verify_ok,
         "backup_verify_label": verify_label,
         "backup_verify_message": verify_message,
+        "backup_sensitive_config_keys": sensitive_config_keys,
     }
 
 

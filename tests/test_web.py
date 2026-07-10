@@ -7332,6 +7332,28 @@ def test_backup_health_payload_warns_when_latest_backup_is_stale(monkeypatch):
     assert payload["backup_message"] == "최근 DB 백업이 31시간 전입니다. 자동 백업 상태를 확인하세요."
 
 
+def test_backup_health_payload_warns_when_backup_contains_sensitive_config_keys():
+    backup_dir = Path(f"data/tmp/test_backup_health_sensitive_{uuid4().hex}").resolve()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / "news-express-sensitive.zip"
+    backup_path.write_text("placeholder", encoding="utf-8")
+
+    payload = _backup_health_payload(
+        backup_dir,
+        {
+            "ok": True,
+            "status_label": "검증 정상",
+            "message": "압축과 SQLite 무결성을 확인했습니다.",
+            "sensitive_config_keys": ["GEMINI_API_KEY"],
+        },
+        now=datetime.now(timezone.utc),
+    )
+
+    assert payload["backup_status"] == "warning"
+    assert payload["backup_label"] == "보안 주의"
+    assert payload["backup_sensitive_config_keys"] == ["GEMINI_API_KEY"]
+
+
 def test_db_health_report_warns_when_backup_dir_is_temporary():
     db_path = Path(f"data/.test_db_health_temp_backup_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

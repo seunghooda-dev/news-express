@@ -33,6 +33,7 @@ ALLOWED_RESTORE_ROOTS = (
     "exports/",
 )
 ALLOWED_DATA_SUFFIXES = (".sqlite", ".json")
+SENSITIVE_ENV_KEY_TOKENS = ("KEY", "SECRET", "PASSWORD", "TOKEN", "DATABASE_URL")
 
 
 def create_backup(
@@ -68,6 +69,7 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
             "status_label": "백업 없음",
             "message": "검증할 백업 파일이 없습니다.",
             "checked_sqlite": False,
+            "sensitive_config_keys": [],
         }
 
     try:
@@ -81,7 +83,9 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
                         "status_label": "백업 손상",
                         "message": f"압축 파일 안의 {bad_member} 항목이 손상됐습니다.",
                         "checked_sqlite": False,
+                        "sensitive_config_keys": [],
                     }
+                sensitive_config_keys = _sensitive_backup_config_keys(archive)
                 sqlite_members = [
                     member
                     for member in archive.infolist()
@@ -102,6 +106,7 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
                         "status_label": "검증 정상",
                         "message": f"{backup_path.name} 압축과 SQLite 무결성을 확인했습니다.",
                         "checked_sqlite": True,
+                        "sensitive_config_keys": sensitive_config_keys,
                     }
                 for member in postgres_members[:1]:
                     with archive.open(member) as source:
@@ -113,6 +118,7 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
                         "message": f"{backup_path.name} 압축과 PostgreSQL JSON 덤프 구조를 확인했습니다.",
                         "checked_sqlite": False,
                         "checked_database_export": True,
+                        "sensitive_config_keys": sensitive_config_keys,
                     }
                 return {
                     "ok": True,
@@ -120,6 +126,7 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
                     "message": f"{backup_path.name} 압축 파일을 확인했습니다.",
                     "checked_sqlite": False,
                     "checked_database_export": False,
+                    "sensitive_config_keys": sensitive_config_keys,
                 }
     except (OSError, sqlite3.Error, zipfile.BadZipFile, json.JSONDecodeError, ValueError) as exc:
         return {
@@ -127,6 +134,7 @@ def verify_backup(backup_path: Path) -> dict[str, object]:
             "status_label": "백업 확인 필요",
             "message": f"{type(exc).__name__}: {exc}",
             "checked_sqlite": False,
+            "sensitive_config_keys": [],
         }
 
 
@@ -241,6 +249,35 @@ def _verify_postgres_export_payload(payload: object) -> None:
     for table, rows in tables.items():
         if not isinstance(rows, list):
             raise ValueError(f"PostgreSQL 덤프 테이블 형식이 올바르지 않습니다: {table}")
+
+
+def _sensitive_backup_config_keys(archive: zipfile.ZipFile) -> list[str]:
+    env_member = next(
+        (
+            member
+            for member in archive.infolist()
+            if not member.is_dir() and member.filename.replace("\\", "/").strip("/") == ".env"
+        ),
+        None,
+    )
+    if not env_member:
+        return []
+    if env_member.file_size > 512 * 1024:
+        return ["ENV_FILE_TOO_LARGE"]
+    with archive.open(env_member) as source:
+        text = source.read().decode("utf-8", errors="replace")
+    keys: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if not key:
+            continue
+        upper_key = key.upper()
+        if any(token in upper_key for token in SENSITIVE_ENV_KEY_TOKENS):
+            keys.append(key)
+    return sorted(set(keys))
 
 
 def _add_file_if_exists(archive: zipfile.ZipFile, project_root: Path, relative: str) -> None:
