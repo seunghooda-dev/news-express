@@ -7153,6 +7153,7 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
 
     assert "복구 대상:" in preview_html
     assert "data/.test_operations_backup_" in preview_html
+    assert "주의: 설정 파일도 덮어씁니다" in preview_html
 
     blocked_response = client.post(
         "/operations/restore",
@@ -7163,9 +7164,23 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
 
     assert "확인 체크박스" in blocked_html
 
-    restore_response = client.post(
+    config_blocked_response = client.post(
         "/operations/restore",
         data={"backup_name": backup_name, "action": "restore", "confirm_restore": "yes"},
+        follow_redirects=True,
+    )
+    config_blocked_html = config_blocked_response.data.decode("utf-8")
+
+    assert "설정 파일 덮어쓰기 확인 체크박스" in config_blocked_html
+
+    restore_response = client.post(
+        "/operations/restore",
+        data={
+            "backup_name": backup_name,
+            "action": "restore",
+            "confirm_restore": "yes",
+            "confirm_config_restore": "yes",
+        },
         follow_redirects=True,
     )
     restore_html = restore_response.data.decode("utf-8")

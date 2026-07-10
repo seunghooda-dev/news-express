@@ -979,6 +979,10 @@
       <input type="checkbox" name="confirm_restore" value="yes">
       현재 운영 데이터를 선택한 백업 내용으로 덮어쓰는 것을 확인했습니다.
     </label>
+    <label class="check-line">
+      <input type="checkbox" name="confirm_config_restore" value="yes">
+      백업에 .env 또는 수집 설정이 포함된 경우 해당 설정 파일도 덮어쓰는 것을 확인했습니다.
+    </label>
     <div class="actions">
       <button class="secondary" type="submit" name="action" value="preview" {% if not operations_write_unlocked %}disabled{% endif %}>복구 대상 확인</button>
       <button type="submit" name="action" value="restore" {% if not operations_write_unlocked %}disabled{% endif %}>선택 백업 복구</button>

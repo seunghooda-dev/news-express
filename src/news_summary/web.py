@@ -81,6 +81,7 @@ REQUEST_ID_HEADER = "X-Request-ID"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
+SENSITIVE_RESTORE_TARGETS = {".env", "config/municipalities.yaml"}
 LIST_PAGE_SIZE = 50
 MAX_LIST_LIMIT = 500
 DASHBOARD_PENDING_LIMIT = 20
@@ -737,12 +738,18 @@ def create_app() -> Flask:
             return redirect(url_for("operations"))
 
         action = request.form.get("action") or "preview"
+        sensitive_targets = _sensitive_restore_targets(restored)
         if action == "preview":
             flash("복구 대상: " + ", ".join(restored))
+            if sensitive_targets:
+                flash("주의: 설정 파일도 덮어씁니다: " + ", ".join(sensitive_targets))
             return redirect(url_for("operations"))
 
         if request.form.get("confirm_restore") != "yes":
             flash("복구를 실행하려면 확인 체크박스를 선택해야 합니다.")
+            return redirect(url_for("operations"))
+        if sensitive_targets and request.form.get("confirm_config_restore") != "yes":
+            flash("설정 파일 복구를 실행하려면 설정 파일 덮어쓰기 확인 체크박스를 선택해야 합니다.")
             return redirect(url_for("operations"))
 
         auto_collector = app.config.get("AUTO_COLLECTOR")
@@ -4757,6 +4764,10 @@ def _require_operations_write_access(store: Store):
         return redirect(url_for("admin_setup"))
     flash("운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다.")
     return redirect(url_for("operations"))
+
+
+def _sensitive_restore_targets(targets: list[str]) -> list[str]:
+    return [target for target in targets if target in SENSITIVE_RESTORE_TARGETS]
 
 
 def _safe_next(default_endpoint: str = "dashboard") -> str:
