@@ -5226,6 +5226,29 @@ def test_healthz_details_can_be_explicitly_public_for_external_monitoring(monkey
     assert payload["database"] == "ok"
     assert payload["ok"] is True
     assert "gemini_queue_status" in payload
+    assert payload["database_schema_status"] == "ok"
+    assert payload["database_schema_missing_tables"] == []
+    assert payload["database_schema_missing_indexes"] == []
+
+
+def test_healthz_details_warns_when_database_index_is_missing(monkeypatch):
+    db_path = Path(f"data/.test_healthz_missing_index_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.storage import Store
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    with Store(db_path).connect() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_operation_events_created")
+
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["database"] == "ok"
+    assert payload["database_schema_status"] == "warning"
+    assert "idx_operation_events_created" in payload["database_schema_missing_indexes"]
+    assert any(issue["component"] == "database_schema" for issue in payload["service_status_issues"])
 
 
 def test_healthz_details_reports_deployment_version_warning(monkeypatch):

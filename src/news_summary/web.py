@@ -57,7 +57,7 @@ from .service import (
     retention_holidays,
 )
 from .settings import PROJECT_ROOT, env_database, env_path, load_environment, load_sources
-from .storage import Store
+from .storage import INDEX_STATEMENTS, SCHEMA, Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
 from .writer import GeminiRefineError, current_gemini_models, refine_draft_with_gemini
 
@@ -88,6 +88,11 @@ DASHBOARD_RELEASE_LIMIT = 10
 FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
 DEFAULT_MAX_ASSET_DOWNLOAD_BYTES = 25 * 1024 * 1024
+REQUIRED_DB_TABLES = tuple(re.findall(r"CREATE TABLE IF NOT EXISTS\s+([a-z_]+)", SCHEMA))
+REQUIRED_DB_INDEXES = tuple(
+    statement.removeprefix("CREATE INDEX IF NOT EXISTS ").split(" ", 1)[0]
+    for statement in INDEX_STATEMENTS
+)
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 12 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
@@ -403,6 +408,7 @@ def create_app() -> Flask:
         else:
             payload["auto_collector"] = "unavailable"
         if include_details:
+            payload.update(_database_schema_health_payload(store))
             payload.update(_gemini_queue_health_payload(store))
             payload.update(_source_collection_health_payload(store))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
@@ -1578,6 +1584,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     if payload.get("database") == "error" or payload.get("ok") is False:
         add_issue("error", "database", "DB 연결 확인 필요")
 
+    database_schema_status = str(payload.get("database_schema_status") or "")
+    if database_schema_status in {"warning", "error"}:
+        add_issue(database_schema_status, "database_schema", payload.get("database_schema_message"))
+
     auto_collector = str(payload.get("auto_collector") or "")
     if auto_collector == "stopped":
         add_issue("error", "auto_collector", payload.get("auto_collector_health_message") or "자동 수집 스레드 중단")
@@ -2311,6 +2321,81 @@ def _db_health_report(store: Store, backup_dir: Path) -> dict[str, object]:
         "latest_backup": latest_backup,
         "backup_count": len(backups),
         "note": note,
+    }
+
+
+def _database_schema_health_payload(store: Store) -> dict[str, object]:
+    try:
+        with store.connect() as conn:
+            if store.is_postgres:
+                table_rows = conn.execute(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                      AND table_type = 'BASE TABLE'
+                    """
+                ).fetchall()
+                index_rows = conn.execute(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                    """
+                ).fetchall()
+                existing_tables = {str(row["table_name"]) for row in table_rows}
+                existing_indexes = {str(row["indexname"]) for row in index_rows}
+            else:
+                table_rows = conn.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'table'
+                      AND name NOT LIKE 'sqlite_%'
+                    """
+                ).fetchall()
+                index_rows = conn.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index'
+                    """
+                ).fetchall()
+                existing_tables = {str(row["name"]) for row in table_rows}
+                existing_indexes = {str(row["name"]) for row in index_rows}
+    except Exception as exc:  # noqa: BLE001 - health diagnostics should report schema inspection failures.
+        return {
+            "database_schema_status": "error",
+            "database_schema_label": "확인 실패",
+            "database_schema_message": f"DB 스키마 점검 실패: {type(exc).__name__}: {exc}",
+            "database_schema_missing_tables": [],
+            "database_schema_missing_indexes": [],
+            "database_schema_table_count": 0,
+            "database_schema_index_count": 0,
+        }
+
+    missing_tables = sorted(set(REQUIRED_DB_TABLES) - existing_tables)
+    missing_indexes = sorted(set(REQUIRED_DB_INDEXES) - existing_indexes)
+    if missing_tables:
+        status = "error"
+        label = "테이블 누락"
+        message = f"필수 DB 테이블 {len(missing_tables)}개가 누락됐습니다."
+    elif missing_indexes:
+        status = "warning"
+        label = "인덱스 누락"
+        message = f"필수 DB 인덱스 {len(missing_indexes)}개가 누락됐습니다. 조회 성능이 저하될 수 있습니다."
+    else:
+        status = "ok"
+        label = "정상"
+        message = "필수 DB 테이블과 인덱스가 모두 확인됐습니다."
+    return {
+        "database_schema_status": status,
+        "database_schema_label": label,
+        "database_schema_message": message,
+        "database_schema_missing_tables": missing_tables,
+        "database_schema_missing_indexes": missing_indexes,
+        "database_schema_table_count": len(existing_tables),
+        "database_schema_index_count": len(existing_indexes),
     }
 
 
@@ -5867,6 +5952,7 @@ def _dashboard_source_cache_seconds() -> int:
 
 OPERATIONS_COMPONENT_CARD_MAP = {
     "database": ("ops-db-backup", "DB 백업"),
+    "database_schema": ("ops-db-backup", "DB 백업"),
     "backup": ("ops-db-backup", "DB 백업"),
     "auto_collector": ("ops-auto-collect", "자동 수집"),
     "auto_collector_timing": ("ops-auto-collect", "자동 수집"),
@@ -5893,6 +5979,7 @@ def _operations_service_status_report(
     if isinstance(reports.get("db_health"), dict) and reports["db_health"].get("status_level") != "ok":
         payload["database"] = "error"
         payload["ok"] = False
+    payload.update(_database_schema_health_payload(store))
     if auto_status is not None:
         payload["auto_collector"] = _auto_collector_health_label(auto_status)
         timing_health = _auto_collector_timing_health(auto_status)
