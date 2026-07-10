@@ -2479,6 +2479,41 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     assert logout.status_code == 302
 
 
+def test_sensitive_routes_require_login_when_auth_is_enabled(monkeypatch):
+    db_path = Path(f"data/.test_sensitive_route_auth_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    protected_get_paths = [
+        "/",
+        "/drafts",
+        "/press-releases",
+        "/gemini-usage",
+        "/ops-logs",
+        "/operations",
+        "/operations/backups/example.zip",
+        "/healthz/details",
+    ]
+    for path in protected_get_paths:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 302, path
+        assert "/login" in response.headers["Location"], path
+
+    reset_response = client.post("/gemini-usage/reset", follow_redirects=False)
+    assert reset_response.status_code == 302
+    assert "/login" in reset_response.headers["Location"]
+
+    health_response = client.get("/healthz", follow_redirects=False)
+    assert health_response.status_code == 200
+
+
 def test_security_headers_are_applied(monkeypatch):
     db_path = Path(f"data/.test_security_headers_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
