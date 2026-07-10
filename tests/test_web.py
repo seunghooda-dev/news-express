@@ -7245,6 +7245,13 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert "백업 생성" in operations_html
     assert backup_name in operations_html
 
+    download_response = client.get(f"/operations/backups/{backup_name}")
+    assert download_response.status_code == 200
+    assert download_response.headers["Cache-Control"] == "no-store, max-age=0"
+    assert download_response.headers["Pragma"] == "no-cache"
+    assert download_response.headers["Expires"] == "0"
+    assert f"filename={backup_name}" in download_response.headers["Content-Disposition"]
+
     preview_response = client.post(
         "/operations/restore",
         data={"backup_name": backup_name, "action": "preview"},

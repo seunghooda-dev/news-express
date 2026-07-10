@@ -244,9 +244,9 @@ def create_app() -> Flask:
         if _request_is_https():
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         if request.endpoint in NO_STORE_ENDPOINTS:
-            response.headers.setdefault("Cache-Control", "no-store, max-age=0")
-            response.headers.setdefault("Pragma", "no-cache")
-            response.headers.setdefault("Expires", "0")
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         try:
             _record_visitor_access(store, response.status_code)
         except Exception as exc:  # noqa: BLE001 - access logging must never block the page response.
