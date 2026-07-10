@@ -21,7 +21,7 @@ from werkzeug.exceptions import HTTPException
 
 from .asset_filters import is_display_noise_image_asset
 from .auth import ADMIN_PASSWORD_HASH_KEY, auth_config, set_admin_password, verify_admin_password
-from .backup import create_backup, restore_backup, verify_backup
+from .backup import backup_include_env, create_backup, restore_backup, verify_backup
 from .collectors import public_press_release_url
 from .exporter import export_approved
 from .ops_logging import configure_logging, get_logger
@@ -3758,6 +3758,7 @@ def _backup_health_payload(
     verify_label = str(backup_verify_report.get("status_label") or "")
     verify_message = str(backup_verify_report.get("message") or "")
     sensitive_config_keys = list(backup_verify_report.get("sensitive_config_keys") or [])
+    include_env_in_backups = backup_include_env()
 
     if not latest_backup:
         status = "warning"
@@ -3796,6 +3797,13 @@ def _backup_health_payload(
         "backup_verify_label": verify_label,
         "backup_verify_message": verify_message,
         "backup_sensitive_config_keys": sensitive_config_keys,
+        "backup_include_env": include_env_in_backups,
+        "backup_env_policy_label": ".env 포함" if include_env_in_backups else ".env 제외",
+        "backup_env_policy_message": (
+            "새 백업 ZIP에 .env 설정 파일을 포함합니다."
+            if include_env_in_backups
+            else "새 백업 ZIP에서 .env 설정 파일을 제외합니다."
+        ),
     }
 
 

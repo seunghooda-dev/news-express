@@ -7369,6 +7369,42 @@ def test_backup_health_payload_warns_when_backup_contains_sensitive_config_keys(
     assert payload["backup_sensitive_config_keys"] == ["GEMINI_API_KEY"]
 
 
+def test_backup_health_payload_reports_env_backup_policy(monkeypatch):
+    backup_dir = Path(f"data/tmp/test_backup_health_policy_{uuid4().hex}").resolve()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", "0")
+    payload = _backup_health_payload(
+        backup_dir,
+        {
+            "ok": False,
+            "status_label": "백업 없음",
+            "message": "검증할 백업 파일이 없습니다.",
+            "sensitive_config_keys": [],
+        },
+        now=datetime.now(timezone.utc),
+    )
+
+    assert payload["backup_include_env"] is False
+    assert payload["backup_env_policy_label"] == ".env 제외"
+    assert ".env 설정 파일을 제외" in payload["backup_env_policy_message"]
+
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", "1")
+    payload = _backup_health_payload(
+        backup_dir,
+        {
+            "ok": False,
+            "status_label": "백업 없음",
+            "message": "검증할 백업 파일이 없습니다.",
+            "sensitive_config_keys": [],
+        },
+        now=datetime.now(timezone.utc),
+    )
+
+    assert payload["backup_include_env"] is True
+    assert payload["backup_env_policy_label"] == ".env 포함"
+
+
 def test_db_health_report_warns_when_backup_dir_is_temporary():
     db_path = Path(f"data/.test_db_health_temp_backup_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

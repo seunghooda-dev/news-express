@@ -862,6 +862,7 @@
     <p class="meta">최근 백업 {{ db_health.latest_backup.modified_at|date_label if db_health.latest_backup else '없음' }}</p>
     <p class="meta">{{ db_health.note }}</p>
     <p class="meta">자동 검증 {{ backup_verify_report.status_label }} · {{ backup_verify_report.message }}</p>
+    <p class="meta">백업 정책 {{ backup_health_report.backup_env_policy_label }} · {{ backup_health_report.backup_env_policy_message }}</p>
     {% if backup_verify_report.backup_name %}
       <p class="meta">검증 대상 {{ backup_verify_report.backup_name }}</p>
     {% endif %}
