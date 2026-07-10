@@ -76,6 +76,21 @@ def test_operation_events_are_recorded_newest_first():
     assert rows[0]["detail"] == "collect_limit=30"
 
 
+def test_prune_operation_events_removes_old_rows_only():
+    db_path = Path(f"data/.test_operation_events_prune_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    store.record_operation_event("backup_created", created_at="2026-01-01T00:00:00+00:00")
+    store.record_operation_event("backup_restored", created_at="2026-07-10T00:00:00+00:00")
+
+    deleted = store.prune_operation_events("2026-07-01T00:00:00+00:00")
+    rows = store.operation_events(limit=10)
+
+    assert deleted == 1
+    assert [row["event_type"] for row in rows] == ["backup_restored"]
+
+
 def test_postgres_schema_init_uses_transaction_advisory_lock():
     store = Store("postgresql://user:password@example.com/neondb")
     calls = []

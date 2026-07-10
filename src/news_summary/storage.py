@@ -1905,6 +1905,15 @@ class Store:
                 (limit,),
             ).fetchall()
 
+    def prune_operation_events(self, cutoff_iso: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM operation_events WHERE created_at < ?",
+                (cutoff_iso,),
+            ).fetchone()
+            conn.execute("DELETE FROM operation_events WHERE created_at < ?", (cutoff_iso,))
+        return int(row["count"] or 0)
+
     def _record_draft_history(self, conn: sqlite3.Connection, row: sqlite3.Row, change_type: str) -> None:
         conn.execute(
             """

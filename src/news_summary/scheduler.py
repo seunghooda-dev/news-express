@@ -57,6 +57,8 @@ AUTO_BACKUP_CREATE_ENV = "NEWS_SUMMARY_AUTO_BACKUP_CREATE"
 AUTO_BACKUP_MAX_AGE_HOURS_ENV = "NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS"
 AUTO_BACKUP_KEEP_COUNT_ENV = "NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
+OPERATION_EVENT_RETENTION_DAYS_ENV = "NEWS_SUMMARY_OPERATION_EVENT_RETENTION_DAYS"
+DEFAULT_OPERATION_EVENT_RETENTION_DAYS = 180
 PUBLIC_URL_ENV = "NEWS_SUMMARY_PUBLIC_URL"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
 AUTO_QUEUE_DRAIN_STATUS_KEY = "auto_queue_drain_status_snapshot"
@@ -515,6 +517,9 @@ class AutoCollector:
         draft_failure_cleanup_message = self._cleanup_stale_draft_failures_once()
         if draft_failure_cleanup_message:
             messages.append(draft_failure_cleanup_message)
+        operation_event_prune_message = self._prune_old_operation_events_once(now)
+        if operation_event_prune_message:
+            messages.append(operation_event_prune_message)
         asset_cleanup = prune_decorative_press_release_assets(self.store)
         if asset_cleanup["deleted"]:
             messages.append(f"보도자료 장식 이미지 {asset_cleanup['deleted']}건 정리")
@@ -628,6 +633,18 @@ class AutoCollector:
         if total <= 0:
             return None
         return f"초안 실패 기록 자동 정리 {total}건"
+
+    def _prune_old_operation_events_once(self, now: datetime) -> str | None:
+        retention_days = env_int(
+            OPERATION_EVENT_RETENTION_DAYS_ENV,
+            DEFAULT_OPERATION_EVENT_RETENTION_DAYS,
+            minimum=1,
+        )
+        cutoff = (now - timedelta(days=retention_days)).isoformat()
+        deleted = self.store.prune_operation_events(cutoff)
+        if deleted <= 0:
+            return None
+        return f"운영 변경 이력 {deleted}건 자동 정리"
 
     def _recover_failed_sources_once(self) -> list[str]:
         limit = env_int(AUTO_RECOVERY_LIMIT_ENV, 5, minimum=0)

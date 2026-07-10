@@ -881,6 +881,32 @@ def test_auto_maintenance_prunes_old_backups_and_verifies_latest(monkeypatch):
     assert any("오래된 백업 자동 정리 1개" in message for message in daily_report["messages"])
 
 
+def test_auto_maintenance_prunes_old_operation_events(monkeypatch):
+    db_path = Path(f"data/.test_auto_operation_event_prune_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.record_operation_event("backup_created", created_at="2026-01-01T00:00:00+00:00")
+    store.record_operation_event("backup_restored", created_at="2026-07-10T00:00:00+00:00")
+
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATION_EVENT_RETENTION_DAYS", "30")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_CREATE", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_BACKUP_VERIFY", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_QUEUE_DRAIN", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RECOVERY_LIMIT", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_DEDUPLICATE", "0")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT", "0")
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True, require_gemini=True)
+    collector._execute_maintenance_once(datetime(2026, 7, 10, 3, 0, tzinfo=timezone.utc))
+
+    rows = store.operation_events(limit=10)
+    daily_report = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
+
+    assert [row["event_type"] for row in rows] == ["backup_restored"]
+    assert any("운영 변경 이력 1건 자동 정리" in message for message in daily_report["messages"])
+
+
 def test_auto_maintenance_recovers_failed_sources(monkeypatch):
     db_path = Path(f"data/.test_auto_source_recovery_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
