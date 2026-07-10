@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import os
+import secrets
 import subprocess
 import time
 from collections import Counter, OrderedDict
@@ -74,6 +75,8 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "healthz_details", "login", "logout", "admin_setup", "static"}
+CSRF_SESSION_KEY = "_csrf_token"
+CSRF_FORM_FIELD = "_csrf_token"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
@@ -203,6 +206,7 @@ def create_app() -> Flask:
         return {
             "auth_state": auth_config(store),
             "admin_authenticated": bool(session.get("admin_authenticated")),
+            "csrf_token": _csrf_token,
         }
 
     @app.after_request
@@ -257,6 +261,23 @@ def create_app() -> Flask:
         else:
             scope.__exit__(type(exc), exc, exc.__traceback__)
         return None
+
+    @app.before_request
+    def protect_state_changing_requests():
+        if not _csrf_protection_enabled(app) or request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return None
+        expected = session.get(CSRF_SESSION_KEY)
+        provided = request.form.get(CSRF_FORM_FIELD) or request.headers.get("X-CSRF-Token") or ""
+        if expected and provided and secrets.compare_digest(str(expected), str(provided)):
+            return None
+        logger.warning(
+            "csrf validation failed method=%s path=%s endpoint=%s remote_addr=%s",
+            request.method,
+            request.path,
+            request.endpoint,
+            _masked_request_ip(),
+        )
+        return Response("요청 보안 토큰이 유효하지 않습니다. 페이지를 새로고침한 뒤 다시 시도하세요.", 400)
 
     @app.before_request
     def require_admin_login():
@@ -1248,12 +1269,33 @@ def _configure_session_security(app: Flask) -> None:
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", timedelta(hours=12))
 
 
+def _csrf_token() -> str:
+    token = session.get(CSRF_SESSION_KEY)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session[CSRF_SESSION_KEY] = token
+    return str(token)
+
+
+def _csrf_protection_enabled(app: Flask) -> bool:
+    if _env_flag("NEWS_SUMMARY_CSRF_DISABLED"):
+        return False
+    test_enabled = _env_flag("NEWS_SUMMARY_TEST_CSRF")
+    if app.testing and not test_enabled:
+        return False
+    return True
+
+
 def _secure_cookie_default() -> bool:
-    if os.getenv("NEWS_SUMMARY_FORCE_SECURE_COOKIES", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if _env_flag("NEWS_SUMMARY_FORCE_SECURE_COOKIES"):
         return True
-    if os.getenv("NEWS_SUMMARY_FORCE_INSECURE_COOKIES", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if _env_flag("NEWS_SUMMARY_FORCE_INSECURE_COOKIES"):
         return False
     return _is_render_environment()
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _content_security_policy() -> str:
@@ -2087,6 +2129,11 @@ def _production_readiness_report(
         add_item("접근 보호", "ok", "사용 중", "관리자 로그인 또는 비밀번호 설정이 적용되어 있습니다.")
     else:
         add_item("접근 보호", "warning", "비활성", "현재 비밀번호 없이 접속 가능합니다. 회사 공유 전에는 로그인 보호를 켜는 편이 안전합니다.")
+
+    if _env_flag("NEWS_SUMMARY_CSRF_DISABLED"):
+        add_item("요청 보호", "warning", "꺼짐", "POST 요청 위조 방어가 꺼져 있습니다. 운영 환경에서는 켜진 상태가 안전합니다.")
+    else:
+        add_item("요청 보호", "ok", "켜짐", "상태 변경 요청에 CSRF 토큰 검증이 적용됩니다.")
 
     secret_key = os.getenv("NEWS_SUMMARY_SECRET_KEY", "").strip()
     if not secret_key or secret_key == "local-news-summary-review":

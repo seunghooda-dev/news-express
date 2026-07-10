@@ -47,6 +47,7 @@
     </section>
   {% endif %}
   <form class="manual-recrawl" method="post" action="{{ url_for('recrawl') }}" data-confirm="수동 재수집을 시작할까요? 실행 중에는 시간이 걸릴 수 있습니다.">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <button type="submit" aria-label="수동 재수집"><span>수동</span><span>재수집</span></button>
   </form>
 </section>

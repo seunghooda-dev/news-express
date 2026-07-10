@@ -35,6 +35,7 @@
   </details>
 
   <form id="draft-editor" class="editor" method="post" action="{{ url_for('update_draft', draft_id=draft.id) }}" data-refine-url="{{ url_for('refine_draft', draft_id=draft.id) }}" data-initial-url="{{ url_for('restore_initial_draft', draft_id=draft.id) }}" data-gemini-cooldown-until="{{ gemini_cooldown_until.isoformat() if gemini_cooldown_until else '' }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <label for="title">제목</label>
     <input id="title" name="title" value="{{ draft.title }}">
 

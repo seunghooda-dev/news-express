@@ -127,11 +127,13 @@
         {% if operations_write_expires_at %}{{ operations_write_expires_at|date_label }}까지 유지됩니다.{% endif %}
       </p>
       <form class="inline-actions" method="post" action="{{ url_for('lock_operations_write_access') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button class="secondary" type="submit">다시 잠그기</button>
       </form>
     {% elif admin_password_configured %}
       <p class="meta">운영 변경 기능은 관리자 비밀번호 확인 후 {{ operations_write_unlock_minutes }}분 동안 사용할 수 있습니다.</p>
       <form class="ops-form" method="post" action="{{ url_for('unlock_operations_write_access') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="username" value="admin" autocomplete="username">
         <label for="operations_unlock_password">관리자 비밀번호</label>
         <input id="operations_unlock_password" name="current_password" type="password" autocomplete="current-password" required>
@@ -165,6 +167,7 @@
       <p class="meta">자동 수집 컨트롤러가 준비되지 않았습니다.</p>
     {% endif %}
     <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}" data-confirm="자동 수집 설정을 변경할까요?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       {% if auto_collector_status and auto_collector_status.enabled %}
         <input type="hidden" name="enabled" value="false">
         <button class="secondary" type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 끄기</button>
@@ -852,12 +855,14 @@
     <p class="meta">현재 DB: {{ db_path }}</p>
     <p class="meta">백업 폴더: {{ backup_dir }}</p>
     <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>지금 백업 생성</button>
     </form>
     {% if latest_backup and operations_write_unlocked %}
       <div class="inline-actions">
         <a class="source-link" href="{{ url_for('download_backup', filename=latest_backup.name) }}">최신 백업 다운로드</a>
         <form method="post" action="{{ url_for('restore_backup_route') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="backup_name" value="{{ latest_backup.name }}">
           <button class="secondary" type="submit" name="action" value="preview">최신 백업 복구 대상 확인</button>
         </form>
@@ -881,6 +886,7 @@
     {% elif not admin_password_unlocked %}
       <p class="meta">현재 관리자 비밀번호를 입력하면 변경 입력칸이 표시됩니다.</p>
       <form class="ops-form" method="post" action="{{ url_for('unlock_admin_password_panel') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="username" value="admin" autocomplete="username">
         <label for="unlock_current_password">현재 비밀번호</label>
         <input id="unlock_current_password" name="current_password" type="password" autocomplete="current-password" required>
@@ -889,6 +895,7 @@
     {% else %}
       <p class="meta">현재 비밀번호 확인 후 새 비밀번호를 저장합니다.</p>
       <form class="ops-form" method="post" action="{{ url_for('change_admin_password') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="username" value="admin" autocomplete="username">
         <label for="new_password">새 비밀번호</label>
         <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="8" required>
@@ -930,6 +937,7 @@
 <section class="ops-log-view">
   <h2>백업 복구</h2>
   <form class="restore-form" method="post" action="{{ url_for('restore_backup_route') }}" data-confirm="백업 복구 작업을 진행할까요? 복구 실행은 운영 데이터에 영향을 줄 수 있습니다.">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <label for="backup_name">복구할 백업</label>
     <select id="backup_name" name="backup_name" required>
       <option value="">백업 선택</option>

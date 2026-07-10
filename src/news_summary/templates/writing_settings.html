@@ -7,6 +7,7 @@
 
 <section class="settings-grid">
   <form class="settings-form" method="post">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <label for="tone">어조</label>
     <textarea id="tone" name="tone" rows="3">{{ settings.tone }}</textarea>
 

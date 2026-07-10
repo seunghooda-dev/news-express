@@ -3,6 +3,7 @@
 <section class="auth-panel">
   <h1>관리자 로그인</h1>
   <form method="post" action="{{ url_for('login') }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="next" value="{{ next_url }}">
     <input type="hidden" name="username" value="admin" autocomplete="username">
     <label for="password">관리자 비밀번호</label>

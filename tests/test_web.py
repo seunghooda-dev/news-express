@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 import json
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -2519,6 +2520,52 @@ def test_https_security_headers_and_session_cookie_defaults_on_render(monkeypatc
     assert "Secure" in cookie
     assert "HttpOnly" in cookie
     assert "SameSite=Lax" in cookie
+
+
+def test_csrf_protection_rejects_missing_token_when_enabled(monkeypatch):
+    db_path = Path(f"data/.test_csrf_missing_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_CSRF", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.post("/login", data={"password": "secret1234"}, follow_redirects=False)
+
+    assert response.status_code == 400
+    assert "요청 보안 토큰이 유효하지 않습니다." in response.data.decode("utf-8")
+
+
+def test_csrf_protection_accepts_rendered_token_when_enabled(monkeypatch):
+    db_path = Path(f"data/.test_csrf_valid_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_CSRF", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    page = client.get("/login")
+    token_match = re.search(r'name="_csrf_token" value="([^"]+)"', page.data.decode("utf-8"))
+    assert token_match
+
+    response = client.post(
+        "/login",
+        data={"password": "secret1234", "next": "/", "_csrf_token": token_match.group(1)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
 
 
 def test_dangerous_operations_render_confirmation_prompts(monkeypatch):

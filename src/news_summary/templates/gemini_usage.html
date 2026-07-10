@@ -4,6 +4,7 @@
   <h1>Gemini 사용량</h1>
   <div class="section-actions">
     <form method="post" action="{{ url_for('reset_gemini_usage') }}" data-confirm="로컬 Gemini 사용량 기록을 초기화할까요?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <button class="secondary" type="submit">사용량 초기화</button>
     </form>
     <a class="source-link" href="https://aistudio.google.com/rate-limit?timeRange=last-28-days" target="_blank" rel="noopener noreferrer">Google AI Studio 사용량 확인</a>
