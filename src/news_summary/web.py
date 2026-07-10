@@ -101,6 +101,7 @@ DEFAULT_AUTO_RUNNING_WARN_MINUTES = 180
 DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
 DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
 DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
+DEFAULT_OPERATIONS_SNAPSHOT_STALE_MINUTES = 180
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT = 10
 DEFAULT_AUTH_RATE_LIMIT_MAX_FAILURES = 5
@@ -405,6 +406,7 @@ def create_app() -> Flask:
             payload.update(_source_collection_health_payload(store))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
             payload.update(_draft_conversion_coverage_health_payload(store))
+            payload.update(_operations_snapshot_freshness_payload(store))
             payload.update(_deployment_version_health_payload())
             readiness_report = _production_readiness_report(store, backup_dir, auto_status, config_path)
             payload.update(_production_readiness_health_payload(readiness_report))
@@ -1575,6 +1577,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     )
     if gemini_status in {"warning", "error"} and not (gemini_wait_already_counted or gemini_retry_already_counted):
         add_issue(gemini_status, "gemini_queue", payload.get("gemini_queue_message"))
+
+    operations_snapshot_status = str(payload.get("operations_snapshot_status") or "")
+    if operations_snapshot_status in {"warning", "error"}:
+        add_issue(operations_snapshot_status, "operations_snapshot", payload.get("operations_snapshot_message"))
 
     if any(issue["level"] == "error" for issue in issues):
         level = "error"
@@ -3226,6 +3232,82 @@ def _operations_summary_report(store: Store) -> dict[str, object]:
             "messages": [],
         },
     )
+
+
+OPERATIONS_SNAPSHOT_FRESHNESS_KEYS = (
+    (AUTO_DAILY_REPORT_KEY, "daily_report", "일일 운영 리포트"),
+    (AUTO_OPERATIONS_SUMMARY_STATUS_KEY, "operations_summary", "운영 요약"),
+    (AUTO_QUEUE_DRAIN_STATUS_KEY, "queue_drain", "Gemini 큐 점검"),
+    (AUTO_COLLECTION_ANOMALY_STATUS_KEY, "collection_anomaly", "수집 이상치 점검"),
+    (AUTO_SERVER_HEALTH_STATUS_KEY, "server_health", "서버 상태 점검"),
+)
+
+
+def _operations_snapshot_freshness_payload(store: Store, now: datetime | None = None) -> dict[str, object]:
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    stale_minutes = _operations_snapshot_stale_minutes()
+    checks = []
+    missing = []
+    stale = []
+    for key, component, label in OPERATIONS_SNAPSHOT_FRESHNESS_KEYS:
+        report = _metadata_json_report(store, key, {"updated_at": None})
+        updated_at = report.get("updated_at")
+        age_minutes = _age_minutes(updated_at, now_utc)
+        item = {
+            "component": component,
+            "label": label,
+            "updated_at": updated_at,
+            "age_minutes": age_minutes,
+        }
+        checks.append(item)
+        if age_minutes is None:
+            missing.append(item)
+        elif age_minutes > stale_minutes:
+            stale.append(item)
+
+    checked = [item for item in checks if item["age_minutes"] is not None]
+    if stale:
+        worst = max(stale, key=lambda item: int(item["age_minutes"] or 0))
+        status = "warning"
+        message = f"운영 스냅샷 갱신 지연: {worst['label']} {worst['age_minutes']}분 전"
+    elif checked:
+        status = "ok"
+        message = "운영 스냅샷 갱신 정상"
+    else:
+        status = "neutral"
+        message = "자동 유지보수 스냅샷 기록이 아직 없습니다."
+
+    return {
+        "operations_snapshot_status": status,
+        "operations_snapshot_message": message,
+        "operations_snapshot_stale_count": len(stale),
+        "operations_snapshot_missing_count": len(missing),
+        "operations_snapshot_oldest_age_minutes": max(
+            [int(item["age_minutes"] or 0) for item in checked],
+            default=None,
+        ),
+        "operations_snapshot_stale_after_minutes": stale_minutes,
+        "operations_snapshot_checks": checks,
+    }
+
+
+def _operations_snapshot_stale_minutes() -> int:
+    raw_value = os.getenv(
+        "NEWS_SUMMARY_OPERATIONS_SNAPSHOT_STALE_MINUTES",
+        str(DEFAULT_OPERATIONS_SNAPSHOT_STALE_MINUTES),
+    )
+    try:
+        minutes = int(raw_value)
+    except ValueError:
+        return DEFAULT_OPERATIONS_SNAPSHOT_STALE_MINUTES
+    return max(60, minutes)
+
+
+def _age_minutes(value: object, now_utc: datetime) -> int | None:
+    parsed = _parse_datetime(value)
+    if not parsed:
+        return None
+    return max(0, int((now_utc - parsed.astimezone(timezone.utc)).total_seconds() // 60))
 
 
 def _server_health_report(store: Store) -> dict[str, object]:
@@ -5602,6 +5684,7 @@ OPERATIONS_COMPONENT_CARD_MAP = {
     "collection_check_coverage": ("ops-collection-coverage", "오늘 수집 점검 커버리지"),
     "draft_conversion_coverage": ("ops-draft-conversion", "오늘 초안 변환 커버리지"),
     "gemini_queue": ("ops-gemini-retry-queue", "Gemini 재처리 대기열"),
+    "operations_snapshot": ("ops-service-status", "운영 스냅샷"),
 }
 
 
@@ -5631,6 +5714,7 @@ def _operations_service_status_report(
     payload.update(_collection_check_coverage_health_payload(store, config_path))
     payload.update(_draft_conversion_coverage_health_payload(store))
     payload.update(_gemini_queue_health_payload(store))
+    payload.update(_operations_snapshot_freshness_payload(store))
     deployment_report = reports.get("deployment_version")
     if isinstance(deployment_report, dict):
         payload.update(_deployment_version_health_payload_from_report(deployment_report))

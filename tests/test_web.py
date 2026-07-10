@@ -7,7 +7,14 @@ from uuid import uuid4
 import httpx
 
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, Source
-from news_summary.scheduler import AutoCollectorStatus
+from news_summary.scheduler import (
+    AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+    AUTO_DAILY_REPORT_KEY,
+    AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+    AUTO_QUEUE_DRAIN_STATUS_KEY,
+    AUTO_SERVER_HEALTH_STATUS_KEY,
+    AutoCollectorStatus,
+)
 from news_summary.storage import Store
 from news_summary.web import (
     _asset_request_headers,
@@ -20,6 +27,7 @@ from news_summary.web import (
     _filter_drafts_by_query,
     _group_drafts_by_recent_dates,
     _max_asset_preview_bytes,
+    _operations_snapshot_freshness_payload,
     _recovery_candidate_report,
     _service_health_summary,
     _source_coverage_report,
@@ -3897,6 +3905,50 @@ def test_service_health_summary_includes_production_readiness_warning():
     assert summary["service_status_level"] == "warning"
     assert summary["service_status_message"] == "상용 운영 전 권장 보완 2건이 있습니다."
     assert summary["service_status_issues"][0]["component"] == "production_readiness"
+
+
+def test_service_health_summary_includes_stale_operations_snapshot_warning():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "operations_snapshot_status": "warning",
+            "operations_snapshot_message": "운영 스냅샷 갱신 지연: Gemini 큐 점검 241분 전",
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_message"] == "운영 스냅샷 갱신 지연: Gemini 큐 점검 241분 전"
+    assert summary["service_status_issues"][0]["component"] == "operations_snapshot"
+
+
+def test_operations_snapshot_freshness_warns_when_metadata_is_stale(monkeypatch):
+    db_path = Path(f"data/.test_operations_snapshot_stale_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
+    stale_at = (now - timedelta(hours=4, minutes=1)).isoformat()
+    fresh_at = (now - timedelta(minutes=20)).isoformat()
+
+    for key in (
+        AUTO_DAILY_REPORT_KEY,
+        AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+        AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+        AUTO_SERVER_HEALTH_STATUS_KEY,
+    ):
+        store.set_app_metadata(key, json.dumps({"updated_at": fresh_at}, ensure_ascii=False))
+    store.set_app_metadata(
+        AUTO_QUEUE_DRAIN_STATUS_KEY,
+        json.dumps({"updated_at": stale_at}, ensure_ascii=False),
+    )
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATIONS_SNAPSHOT_STALE_MINUTES", "180")
+
+    payload = _operations_snapshot_freshness_payload(store, now=now)
+
+    assert payload["operations_snapshot_status"] == "warning"
+    assert payload["operations_snapshot_stale_count"] == 1
+    assert payload["operations_snapshot_oldest_age_minutes"] == 241
+    assert payload["operations_snapshot_message"] == "운영 스냅샷 갱신 지연: Gemini 큐 점검 241분 전"
 
 
 def test_operations_page_shows_attention_source_queue(monkeypatch):
