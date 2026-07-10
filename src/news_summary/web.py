@@ -59,7 +59,7 @@ from .service import (
 from .settings import PROJECT_ROOT, env_database, env_path, load_environment, load_sources
 from .storage import INDEX_STATEMENTS, SCHEMA, Store
 from .writing_settings import DEFAULT_WRITING_SETTINGS, custom_prompt_section, load_writing_settings, save_writing_settings
-from .writer import GeminiRefineError, current_gemini_models, refine_draft_with_gemini
+from .writer import GEMINI_FLASH_MODELS, GeminiRefineError, current_gemini_models, refine_draft_with_gemini
 
 
 VALID_STATUSES = {"needs_review", "approved", "rejected"}
@@ -2440,7 +2440,7 @@ def _production_readiness_report(
     else:
         add_item("데이터베이스", "warning", "SQLite", "로컬 단독 운영에는 가능하지만 여러 사람이 쓰는 상용 운영에는 PostgreSQL이 안전합니다.")
 
-    if os.getenv("GEMINI_API_KEY", "").strip():
+    if _gemini_api_key_configured():
         add_item("Gemini 키", "ok", "설정됨", "자동 초안 생성에 필요한 Gemini 키가 설정되어 있습니다.")
     else:
         add_item(
@@ -2449,6 +2449,7 @@ def _production_readiness_report(
             "미설정",
             "Gemini 키가 없으면 새 원문을 AI 초안으로 변환할 수 없습니다.",
         )
+    add_item(*_gemini_model_readiness_item())
 
     if bool(_auto_status_value(auto_status, "enabled")):
         if _auto_status_value(auto_status, "thread_alive") is False:
@@ -2552,6 +2553,31 @@ def _production_readiness_health_payload(report: dict[str, object]) -> dict[str,
         "production_readiness_error_count": report.get("error_count"),
         "production_readiness_warning_count": report.get("warning_count"),
     }
+
+
+def _gemini_api_key_configured() -> bool:
+    return bool((os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip())
+
+
+def _gemini_model_readiness_item() -> tuple[str, str, str, str]:
+    models = current_gemini_models()
+    if not models:
+        return ("Gemini 모델", "error", "미설정", "사용 가능한 Gemini 모델이 없습니다.")
+    flash_models = [model for model in models if model in GEMINI_FLASH_MODELS or ("flash" in model and "lite" not in model)]
+    if not flash_models:
+        return (
+            "Gemini 모델",
+            "warning",
+            "Flash 없음",
+            "현재 Gemini 모델 목록에 Flash 계열이 없어 복잡한 보도자료 초안 품질이 떨어질 수 있습니다.",
+        )
+    if any("lite" in model for model in models):
+        label = "스마트 선택"
+        message = f"복잡한 원문은 Flash, 단순 원문은 Lite까지 활용합니다. 현재 모델: {', '.join(models)}"
+    else:
+        label = "Flash 중심"
+        message = f"초안 품질을 우선해 Flash 계열 모델을 사용합니다. 현재 모델: {', '.join(models)}"
+    return ("Gemini 모델", "ok", label, message)
 
 
 def _is_render_environment() -> bool:

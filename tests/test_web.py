@@ -3894,6 +3894,58 @@ def test_production_readiness_report_flags_render_operating_gaps(monkeypatch):
     assert {"데이터베이스", "Gemini 키", "자동 수집", "접근 보호", "백업 보관", "운영 로그"} <= issue_names
 
 
+def test_production_readiness_accepts_google_api_key_and_reports_gemini_models(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_google_key_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "_source_coverage_report", lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"})
+    monkeypatch.setattr(web_module, "_render_deploy_config_report", lambda: {"auto_deploy_level": "ok", "auto_deploy_label": "커밋 시 자동 배포"})
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+
+    items = {item["name"]: item for item in report["items"]}
+    assert items["Gemini 키"]["status_level"] == "ok"
+    assert items["Gemini 모델"]["status_level"] == "ok"
+    assert items["Gemini 모델"]["status_label"] == "스마트 선택"
+
+
+def test_production_readiness_warns_when_gemini_flash_model_is_missing(monkeypatch):
+    db_path = Path(f"data/.test_production_readiness_gemini_model_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(web_module, "current_gemini_models", lambda: ["gemini-3.1-flash-lite"])
+    monkeypatch.setattr(web_module, "_source_coverage_report", lambda config_path: {"status_level": "ok", "message": "필수 기관 설정 정상"})
+    monkeypatch.setattr(web_module, "_render_deploy_config_report", lambda: {"auto_deploy_level": "ok", "auto_deploy_label": "커밋 시 자동 배포"})
+
+    report = web_module._production_readiness_report(
+        store,
+        Path("data/backups"),
+        {"enabled": True, "thread_alive": True},
+        Path("config/municipalities.yaml"),
+    )
+
+    items = {item["name"]: item for item in report["items"]}
+    assert items["Gemini 모델"]["status_level"] == "warning"
+    assert items["Gemini 모델"]["status_label"] == "Flash 없음"
+    assert "Gemini 모델" in {item["name"] for item in report["issue_items"]}
+
+
 def test_service_health_summary_includes_production_readiness_warning():
     summary = _service_health_summary(
         {
