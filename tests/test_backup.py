@@ -4,17 +4,13 @@ import sqlite3
 import zipfile
 
 from news_summary.backup import POSTGRES_BACKUP_TABLES, POSTGRES_EXPORT_ARCHIVE_NAME, create_backup, restore_backup, verify_backup
+from news_summary.storage import Store
 
 
 def test_create_backup_includes_sqlite_and_config_files(tmp_path):
     project_root = tmp_path
     db_path = project_root / "data" / "news_summary.sqlite"
-    db_path.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE sample (value TEXT)")
-    conn.execute("INSERT INTO sample VALUES ('ok')")
-    conn.commit()
-    conn.close()
+    Store(db_path).init_db()
     (project_root / ".env").write_text("GEMINI_API_KEY=test\n", encoding="utf-8")
     (project_root / "config").mkdir()
     (project_root / "config" / "municipalities.yaml").write_text("sources: []\n", encoding="utf-8")
@@ -37,11 +33,7 @@ def test_create_backup_includes_sqlite_and_config_files(tmp_path):
 def test_verify_backup_reports_sensitive_env_keys(tmp_path):
     project_root = tmp_path
     db_path = project_root / "data" / "news_summary.sqlite"
-    db_path.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE sample (value TEXT)")
-    conn.commit()
-    conn.close()
+    Store(db_path).init_db()
     (project_root / ".env").write_text(
         "\n".join(
             [
@@ -58,6 +50,24 @@ def test_verify_backup_reports_sensitive_env_keys(tmp_path):
 
     assert verification["ok"] is True
     assert verification["sensitive_config_keys"] == ["GEMINI_API_KEY", "NEWS_SUMMARY_ADMIN_PASSWORD"]
+
+
+def test_verify_backup_rejects_sqlite_missing_required_tables(tmp_path):
+    backup_path = tmp_path / "missing-tables.zip"
+    db_path = tmp_path / "broken.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE press_releases (id INTEGER PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+
+    with zipfile.ZipFile(backup_path, "w") as archive:
+        archive.write(db_path, "data/news_summary.sqlite")
+
+    verification = verify_backup(backup_path)
+
+    assert verification["ok"] is False
+    assert verification["status_label"] == "백업 확인 필요"
+    assert "필수 테이블 누락" in verification["message"]
 
 
 def test_create_backup_includes_postgres_json_export(monkeypatch, tmp_path):

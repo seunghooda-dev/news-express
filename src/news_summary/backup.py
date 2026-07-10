@@ -10,10 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .storage import SCHEMA
+
 
 DEFAULT_BACKUP_DIR = Path("data/backups")
 BACKUP_FILE_PREFIX = "news-express"
 POSTGRES_EXPORT_ARCHIVE_NAME = "data/postgres_export.json"
+REQUIRED_SQLITE_BACKUP_TABLES = tuple(
+    line.split("CREATE TABLE IF NOT EXISTS ", 1)[1].split(" ", 1)[0]
+    for line in SCHEMA.splitlines()
+    if line.startswith("CREATE TABLE IF NOT EXISTS ")
+)
 POSTGRES_BACKUP_TABLES = (
     "press_releases",
     "press_release_assets",
@@ -153,11 +160,25 @@ def _verify_sqlite_database(path: Path) -> None:
     conn = sqlite3.connect(path)
     try:
         result = conn.execute("PRAGMA integrity_check").fetchone()
+        existing_tables = {
+            str(row[0])
+            for row in conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name NOT LIKE 'sqlite_%'
+                """
+            ).fetchall()
+        }
     finally:
         conn.close()
     if not result or str(result[0]).lower() != "ok":
         detail = result[0] if result else "결과 없음"
         raise sqlite3.DatabaseError(f"SQLite integrity_check 실패: {detail}")
+    missing_tables = sorted(set(REQUIRED_SQLITE_BACKUP_TABLES) - existing_tables)
+    if missing_tables:
+        raise sqlite3.DatabaseError("SQLite 백업 필수 테이블 누락: " + ", ".join(missing_tables))
 
 
 def restore_backup(
