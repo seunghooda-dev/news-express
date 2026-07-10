@@ -2568,6 +2568,60 @@ def test_csrf_protection_accepts_rendered_token_when_enabled(monkeypatch):
     assert response.headers["Location"].endswith("/")
 
 
+def test_auth_rate_limit_blocks_repeated_failed_login(monkeypatch):
+    db_path = Path(f"data/.test_auth_rate_limit_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_MAX_FAILURES", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_LOCK_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary import web as web_module
+
+    web_module._auth_rate_limit_attempts.clear()
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    first = client.post("/login", data={"password": "wrong"}, follow_redirects=False)
+    second = client.post("/login", data={"password": "wrong-again"}, follow_redirects=False)
+    blocked = client.post("/login", data={"password": "secret1234", "next": "/"}, follow_redirects=False)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert blocked.status_code == 429
+    assert "비밀번호 입력 시도가 많아 잠시 제한했습니다." in blocked.data.decode("utf-8")
+
+
+def test_auth_rate_limit_success_clears_failed_login_count(monkeypatch):
+    db_path = Path(f"data/.test_auth_rate_limit_clear_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_MAX_FAILURES", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_LOCK_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary import web as web_module
+
+    web_module._auth_rate_limit_attempts.clear()
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    client.post("/login", data={"password": "wrong"}, follow_redirects=False)
+    first_success = client.post("/login", data={"password": "secret1234", "next": "/"}, follow_redirects=False)
+    client.post("/logout", follow_redirects=False)
+    client.post("/login", data={"password": "wrong"}, follow_redirects=False)
+    second_success = client.post("/login", data={"password": "secret1234", "next": "/"}, follow_redirects=False)
+
+    assert first_success.status_code == 302
+    assert second_success.status_code == 302
+
+
 def test_dangerous_operations_render_confirmation_prompts(monkeypatch):
     db_path = Path(f"data/.test_operation_confirmations_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

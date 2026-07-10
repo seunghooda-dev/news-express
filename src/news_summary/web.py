@@ -102,6 +102,9 @@ DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
 DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
 DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT = 10
+DEFAULT_AUTH_RATE_LIMIT_MAX_FAILURES = 5
+DEFAULT_AUTH_RATE_LIMIT_WINDOW_SECONDS = 10 * 60
+DEFAULT_AUTH_RATE_LIMIT_LOCK_SECONDS = 15 * 60
 RUNTIME_DEPLOY_PATH_PREFIXES = ("config/", "scripts/", "src/", "templates/")
 RUNTIME_DEPLOY_PATHS = ("pyproject.toml", "render.yaml")
 RECOVERY_REASON_LABELS = {
@@ -150,6 +153,8 @@ _dashboard_source_summary_cache: dict[tuple[str, str], tuple[float, list[dict[st
 _dashboard_source_summary_cache_lock = RLock()
 _visitor_access_prune_lock = RLock()
 _visitor_access_last_pruned_at = 0.0
+_auth_rate_limit_lock = RLock()
+_auth_rate_limit_attempts: dict[tuple[str, str], dict[str, object]] = {}
 
 
 class AssetDownloadError(RuntimeError):
@@ -419,11 +424,15 @@ def create_app() -> Flask:
         if config.setup_required:
             return redirect(url_for("admin_setup", next=_safe_next()))
         if request.method == "POST":
+            if blocked_response := _auth_rate_limit_response(app, "admin_login", "login"):
+                return blocked_response
             password = request.form.get("password") or ""
             if verify_admin_password(store, password):
+                _auth_rate_limit_clear("admin_login")
                 session["admin_authenticated"] = True
                 logger.info("admin login succeeded remote_addr=%s", _masked_request_ip())
                 return redirect(_safe_next())
+            _auth_rate_limit_record_failure(app, "admin_login")
             logger.warning("admin login failed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호가 올바르지 않습니다.")
         return render_template("login.html", next_url=_safe_next())
@@ -556,11 +565,15 @@ def create_app() -> Flask:
             flash("운영 변경 기능을 사용하려면 관리자 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup"))
         current_password = request.form.get("current_password") or ""
+        if blocked_response := _auth_rate_limit_response(app, "operations_write_unlock", "operations"):
+            return blocked_response
         if verify_admin_password(store, current_password):
+            _auth_rate_limit_clear("operations_write_unlock")
             _unlock_operations_write_session()
             logger.info("operations write access unlocked remote_addr=%s", _masked_request_ip())
             flash("운영 변경 기능 잠금을 해제했습니다.")
         else:
+            _auth_rate_limit_record_failure(app, "operations_write_unlock")
             logger.warning("operations write access unlock failed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호가 올바르지 않습니다.")
         return redirect(url_for("operations"))
@@ -583,12 +596,16 @@ def create_app() -> Flask:
             return redirect(url_for("admin_setup"))
 
         current_password = request.form.get("current_password") or ""
+        if blocked_response := _auth_rate_limit_response(app, "admin_password_unlock", "operations"):
+            return blocked_response
         if verify_admin_password(store, current_password):
+            _auth_rate_limit_clear("admin_password_unlock")
             session[OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY] = True
             _unlock_operations_write_session()
             logger.info("admin password panel unlocked remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호 변경 입력칸을 열었습니다.")
         else:
+            _auth_rate_limit_record_failure(app, "admin_password_unlock")
             logger.warning("admin password panel unlock failed remote_addr=%s", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
         return redirect(url_for("operations"))
@@ -606,7 +623,11 @@ def create_app() -> Flask:
         current_password = request.form.get("current_password") or ""
         new_password = request.form.get("new_password") or ""
         confirm_password = request.form.get("confirm_password") or ""
-        if not session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY) and not verify_admin_password(store, current_password):
+        current_password_required = not session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
+        if current_password_required and (blocked_response := _auth_rate_limit_response(app, "admin_password_change", "operations")):
+            return blocked_response
+        if current_password_required and not verify_admin_password(store, current_password):
+            _auth_rate_limit_record_failure(app, "admin_password_change")
             logger.warning("admin password change failed remote_addr=%s reason=current_password", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
         elif len(new_password) < 8:
@@ -614,6 +635,7 @@ def create_app() -> Flask:
         elif new_password != confirm_password:
             flash("새 비밀번호 확인이 일치하지 않습니다.")
         else:
+            _auth_rate_limit_clear("admin_password_change")
             set_admin_password(store, new_password)
             session["admin_authenticated"] = True
             session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
@@ -1286,6 +1308,117 @@ def _csrf_protection_enabled(app: Flask) -> bool:
     return True
 
 
+def _auth_rate_limit_enabled(app: Flask) -> bool:
+    if _env_flag("NEWS_SUMMARY_AUTH_RATE_LIMIT_DISABLED"):
+        return False
+    test_enabled = _env_flag("NEWS_SUMMARY_TEST_AUTH_RATE_LIMIT")
+    if app.testing and not test_enabled:
+        return False
+    return True
+
+
+def _auth_rate_limit_response(app: Flask, scope: str, fallback_endpoint: str):
+    status = _auth_rate_limit_status(app, scope)
+    if not status["blocked"]:
+        return None
+    message = _auth_rate_limit_message(int(status["retry_after_seconds"] or 0))
+    logger.warning(
+        "auth rate limit blocked scope=%s remote_addr=%s retry_after_seconds=%s",
+        scope,
+        _masked_request_ip(),
+        status["retry_after_seconds"],
+    )
+    flash(message)
+    if fallback_endpoint == "login":
+        return render_template("login.html", next_url=_safe_next()), 429
+    return redirect(url_for(fallback_endpoint))
+
+
+def _auth_rate_limit_status(app: Flask, scope: str) -> dict[str, object]:
+    if not _auth_rate_limit_enabled(app):
+        return {"blocked": False, "retry_after_seconds": 0}
+    now = time.monotonic()
+    window_seconds = _auth_rate_limit_window_seconds()
+    key = _auth_rate_limit_key(scope)
+    with _auth_rate_limit_lock:
+        entry = _auth_rate_limit_attempts.get(key)
+        if not entry:
+            return {"blocked": False, "retry_after_seconds": 0}
+        locked_until = float(entry.get("locked_until") or 0)
+        if locked_until > now:
+            return {"blocked": True, "retry_after_seconds": max(1, int(locked_until - now))}
+        failures = [
+            float(value)
+            for value in entry.get("failures", [])
+            if isinstance(value, (int, float)) and now - float(value) <= window_seconds
+        ]
+        if failures:
+            entry["failures"] = failures
+            entry["locked_until"] = 0.0
+        else:
+            _auth_rate_limit_attempts.pop(key, None)
+    return {"blocked": False, "retry_after_seconds": 0}
+
+
+def _auth_rate_limit_record_failure(app: Flask, scope: str) -> None:
+    if not _auth_rate_limit_enabled(app):
+        return
+    now = time.monotonic()
+    key = _auth_rate_limit_key(scope)
+    window_seconds = _auth_rate_limit_window_seconds()
+    max_failures = _auth_rate_limit_max_failures()
+    with _auth_rate_limit_lock:
+        entry = _auth_rate_limit_attempts.setdefault(key, {"failures": [], "locked_until": 0.0})
+        failures = [
+            float(value)
+            for value in entry.get("failures", [])
+            if isinstance(value, (int, float)) and now - float(value) <= window_seconds
+        ]
+        failures.append(now)
+        entry["failures"] = failures
+        if len(failures) >= max_failures:
+            entry["locked_until"] = now + _auth_rate_limit_lock_seconds()
+
+
+def _auth_rate_limit_clear(scope: str) -> None:
+    key = _auth_rate_limit_key(scope)
+    with _auth_rate_limit_lock:
+        _auth_rate_limit_attempts.pop(key, None)
+
+
+def _auth_rate_limit_key(scope: str) -> tuple[str, str]:
+    raw_identity = f"{_client_ip()}|{request.headers.get('User-Agent', '')}"
+    identity_hash = hashlib.sha256(raw_identity.encode("utf-8", errors="ignore")).hexdigest()[:20]
+    return scope, identity_hash
+
+
+def _auth_rate_limit_message(retry_after_seconds: int) -> str:
+    minutes = max(1, (retry_after_seconds + 59) // 60)
+    return f"비밀번호 입력 시도가 많아 잠시 제한했습니다. 약 {minutes}분 뒤 다시 시도하세요."
+
+
+def _auth_rate_limit_max_failures() -> int:
+    return _env_int("NEWS_SUMMARY_AUTH_RATE_LIMIT_MAX_FAILURES", DEFAULT_AUTH_RATE_LIMIT_MAX_FAILURES, minimum=1, maximum=50)
+
+
+def _auth_rate_limit_window_seconds() -> int:
+    return _env_int(
+        "NEWS_SUMMARY_AUTH_RATE_LIMIT_WINDOW_SECONDS",
+        DEFAULT_AUTH_RATE_LIMIT_WINDOW_SECONDS,
+        minimum=60,
+        maximum=24 * 3600,
+    )
+
+
+def _auth_rate_limit_lock_seconds() -> int:
+    return _env_int(
+        "NEWS_SUMMARY_AUTH_RATE_LIMIT_LOCK_SECONDS",
+        DEFAULT_AUTH_RATE_LIMIT_LOCK_SECONDS,
+        minimum=60,
+        maximum=24 * 3600,
+    )
+
+
 def _secure_cookie_default() -> bool:
     if _env_flag("NEWS_SUMMARY_FORCE_SECURE_COOKIES"):
         return True
@@ -1296,6 +1429,14 @@ def _secure_cookie_default() -> bool:
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
 
 
 def _content_security_policy() -> str:
@@ -2134,6 +2275,11 @@ def _production_readiness_report(
         add_item("요청 보호", "warning", "꺼짐", "POST 요청 위조 방어가 꺼져 있습니다. 운영 환경에서는 켜진 상태가 안전합니다.")
     else:
         add_item("요청 보호", "ok", "켜짐", "상태 변경 요청에 CSRF 토큰 검증이 적용됩니다.")
+
+    if _env_flag("NEWS_SUMMARY_AUTH_RATE_LIMIT_DISABLED"):
+        add_item("로그인 시도 제한", "warning", "꺼짐", "반복 비밀번호 입력 제한이 꺼져 있습니다.")
+    else:
+        add_item("로그인 시도 제한", "ok", "켜짐", "반복 비밀번호 실패 시 일정 시간 인증 시도를 제한합니다.")
 
     secret_key = os.getenv("NEWS_SUMMARY_SECRET_KEY", "").strip()
     if not secret_key or secret_key == "local-news-summary-review":
