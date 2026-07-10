@@ -86,5 +86,7 @@ services:
         value: /tmp/news-express/logs
       - key: NEWS_SUMMARY_BACKUP_DIR
         value: /tmp/news-express/backups
+      - key: NEWS_SUMMARY_BACKUP_INCLUDE_ENV
+        value: "0"
       - key: NEWS_SUMMARY_CONFIG
         value: config/municipalities.yaml

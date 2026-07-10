@@ -3,7 +3,14 @@ import json
 import sqlite3
 import zipfile
 
-from news_summary.backup import POSTGRES_BACKUP_TABLES, POSTGRES_EXPORT_ARCHIVE_NAME, create_backup, restore_backup, verify_backup
+from news_summary.backup import (
+    POSTGRES_BACKUP_TABLES,
+    POSTGRES_EXPORT_ARCHIVE_NAME,
+    backup_include_env,
+    create_backup,
+    restore_backup,
+    verify_backup,
+)
 from news_summary.storage import Store
 
 
@@ -28,6 +35,41 @@ def test_create_backup_includes_sqlite_and_config_files(tmp_path):
     assert verification["ok"] is True
     assert verification["checked_sqlite"] is True
     assert verification["sensitive_config_keys"] == ["GEMINI_API_KEY"]
+
+
+def test_create_backup_can_exclude_env_file(tmp_path):
+    project_root = tmp_path
+    db_path = project_root / "data" / "news_summary.sqlite"
+    Store(db_path).init_db()
+    (project_root / ".env").write_text("GEMINI_API_KEY=test\n", encoding="utf-8")
+    (project_root / "config").mkdir()
+    (project_root / "config" / "municipalities.yaml").write_text("sources: []\n", encoding="utf-8")
+
+    backup_path = create_backup(
+        project_root,
+        Path("data/news_summary.sqlite"),
+        Path("data/backups"),
+        include_env=False,
+    )
+
+    restored_names = restore_backup(project_root, backup_path, dry_run=True)
+    assert "data/news_summary.sqlite" in restored_names
+    assert ".env" not in restored_names
+    assert "config/municipalities.yaml" in restored_names
+    verification = verify_backup(backup_path)
+    assert verification["ok"] is True
+    assert verification["sensitive_config_keys"] == []
+
+
+def test_backup_include_env_reads_environment(monkeypatch):
+    monkeypatch.delenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", raising=False)
+    assert backup_include_env() is True
+
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", "0")
+    assert backup_include_env() is False
+
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", "yes")
+    assert backup_include_env() is True
 
 
 def test_verify_backup_reports_sensitive_env_keys(tmp_path):

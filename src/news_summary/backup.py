@@ -41,18 +41,21 @@ ALLOWED_RESTORE_ROOTS = (
 )
 ALLOWED_DATA_SUFFIXES = (".sqlite", ".json")
 SENSITIVE_ENV_KEY_TOKENS = ("KEY", "SECRET", "PASSWORD", "TOKEN", "DATABASE_URL")
+BACKUP_INCLUDE_ENV_ENV = "NEWS_SUMMARY_BACKUP_INCLUDE_ENV"
 
 
 def create_backup(
     project_root: Path,
     db_path: Path | str,
     backup_dir: Path = DEFAULT_BACKUP_DIR,
+    include_env: bool | None = None,
 ) -> Path:
     project_root = project_root.resolve()
     backup_dir = _resolve_backup_dir(project_root, backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_path = _unique_backup_path(backup_dir, timestamp)
+    should_include_env = backup_include_env() if include_env is None else include_env
 
     with tempfile.TemporaryDirectory() as tmp:
         temp_root = Path(tmp)
@@ -61,11 +64,21 @@ def create_backup(
                 _add_postgres_export(archive, str(db_path))
             else:
                 _add_sqlite_backup(archive, temp_root, project_root, _resolve_under(project_root, Path(db_path)))
-            for relative in (".env", "data/writing_settings.json", "config/municipalities.yaml"):
+            config_files = ["data/writing_settings.json", "config/municipalities.yaml"]
+            if should_include_env:
+                config_files.insert(0, ".env")
+            for relative in config_files:
                 _add_file_if_exists(archive, project_root, relative)
             _add_directory_if_exists(archive, project_root, "exports")
 
     return backup_path
+
+
+def backup_include_env(default: bool = True) -> bool:
+    value = os.getenv(BACKUP_INCLUDE_ENV_ENV)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", "n"}
 
 
 def verify_backup(backup_path: Path) -> dict[str, object]:

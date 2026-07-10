@@ -209,7 +209,8 @@ Secret이 아직 없으면 워크플로는 실패하지 않고 보완 배포를 
 .\scripts\install_startup_task.ps1
 ```
 
-- 백업 대상: SQLite DB 또는 PostgreSQL JSON 덤프, 기사 설정, 수집 설정, `.env`, `exports/`
+- 백업 대상: SQLite DB 또는 PostgreSQL JSON 덤프, 기사 설정, 수집 설정, `exports/`
+- 기본 로컬 백업에는 `.env`가 포함됩니다. 운영 환경처럼 비밀값을 환경변수로 관리하는 경우 `NEWS_SUMMARY_BACKUP_INCLUDE_ENV=0`을 설정하면 `.env`를 백업에서 제외합니다.
 - `install_startup_task.ps1`은 Windows 작업 스케줄러에 5분마다 서버 생존 확인 작업을 등록합니다.
 
 ## 검수 화면
