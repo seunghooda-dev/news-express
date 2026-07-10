@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import getpass
 import os
+import sys
 import time
 
 from .ops_logging import configure_logging, get_logger
@@ -58,7 +59,7 @@ def main() -> None:
     migrate_pg.add_argument("--replace", action="store_true", help="대상 PostgreSQL 데이터를 비우고 다시 이관합니다.")
 
     admin_hash = sub.add_parser("admin-password-hash", help="Render 환경변수에 넣을 관리자 비밀번호 해시를 생성합니다.")
-    admin_hash.add_argument("password", nargs="?", help="해시할 관리자 비밀번호. 생략하면 화면에 표시하지 않고 입력합니다.")
+    admin_hash.add_argument("password", nargs="?", help="해시할 관리자 비밀번호. 운영용은 생략하고 화면에 표시하지 않고 입력합니다.")
     admin_hash.add_argument("--allow-weak", action="store_true", help="상용 기준에 약한 비밀번호도 해시를 생성합니다.")
 
     serve = sub.add_parser("serve", help="로컬 검수 화면을 실행합니다.")
@@ -112,7 +113,7 @@ def main() -> None:
         database_url = args.database_url or os.getenv("DATABASE_URL") or os.getenv("NEWS_SUMMARY_DATABASE_URL")
         migrate_sqlite_to_postgres_command(sqlite_db, database_url, replace=args.replace)
     elif args.command == "admin-password-hash":
-        admin_password_hash_command(args.password, allow_weak=args.allow_weak)
+        admin_password_hash_command(args.password, allow_weak=args.allow_weak, password_from_argument=args.password is not None)
     elif args.command == "serve":
         logger.info("serve command host=%s port=%s", args.host, args.port)
         serve_command(args.host, args.port)
@@ -263,7 +264,7 @@ def migrate_sqlite_to_postgres_command(sqlite_db, database_url: str | None, *, r
         print(f"- {table}: {count}건")
 
 
-def admin_password_hash_command(password: str | None, *, allow_weak: bool = False) -> None:
+def admin_password_hash_command(password: str | None, *, allow_weak: bool = False, password_from_argument: bool = False) -> None:
     from .auth import admin_password_hash, admin_password_strength_message, admin_plain_password_issues
 
     if password is None:
@@ -271,6 +272,11 @@ def admin_password_hash_command(password: str | None, *, allow_weak: bool = Fals
         confirm = getpass.getpass("관리자 비밀번호 확인: ")
         if password != confirm:
             raise SystemExit("비밀번호 확인이 일치하지 않습니다.")
+    elif password_from_argument:
+        print(
+            "주의: 명령 인자로 입력한 비밀번호는 셸 기록에 남을 수 있습니다. 운영용은 비밀번호 인자 없이 실행하세요.",
+            file=sys.stderr,
+        )
     issues = admin_plain_password_issues(password)
     if issues and not allow_weak:
         raise SystemExit(admin_password_strength_message("관리자 비밀번호", issues) + " 그래도 생성하려면 --allow-weak 옵션을 사용하세요.")

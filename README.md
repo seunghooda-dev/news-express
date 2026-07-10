@@ -99,6 +99,8 @@ DATABASE_URL=
 .\.venv\Scripts\python.exe -m news_summary.cli admin-password-hash
 ```
 
+운영용 해시는 위처럼 비밀번호 인자 없이 실행해 화면에 표시되지 않게 입력합니다. 비밀번호를 명령어 뒤에 직접 붙이면 PowerShell 기록에 남을 수 있습니다.
+
 ## PostgreSQL 전환
 
 기본값은 기존처럼 SQLite 파일(`NEWS_SUMMARY_DB`)입니다. 클라우드 PostgreSQL을 사용하려면 `.env`에 `DATABASE_URL`을 추가합니다.
