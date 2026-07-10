@@ -2494,7 +2494,14 @@ def _production_readiness_report(
         add_item("자동 수집", "error" if render_environment else "warning", "꺼짐", "자동 수집이 꺼져 있으면 새 보도자료가 누락됩니다.")
 
     auth_state = auth_config(store)
-    if auth_state.enabled:
+    if auth_state.setup_required:
+        add_item(
+            "접근 보호",
+            "error" if render_environment else "warning",
+            "설정 필요",
+            "로그인 보호는 요구되지만 관리자 비밀번호가 아직 설정되지 않았습니다. 운영 공개 전 NEWS_SUMMARY_ADMIN_PASSWORD_HASH를 설정하세요.",
+        )
+    elif auth_state.enabled:
         add_item("접근 보호", "ok", "사용 중", "관리자 로그인 또는 비밀번호 설정이 적용되어 있습니다.")
     elif auth_state.source == "disabled":
         add_item(
