@@ -487,8 +487,9 @@ def create_app() -> Flask:
         if request.method == "POST":
             password = request.form.get("password") or ""
             confirm = request.form.get("confirm_password") or ""
-            if len(password) < 8:
-                flash("관리자 비밀번호는 8자 이상이어야 합니다.")
+            password_issues = _admin_plain_password_issues(password)
+            if password_issues:
+                flash(_admin_password_strength_message("관리자 비밀번호", password_issues))
             elif password != confirm:
                 flash("비밀번호 확인이 일치하지 않습니다.")
             else:
@@ -680,8 +681,8 @@ def create_app() -> Flask:
             _auth_rate_limit_record_failure(app, "admin_password_change")
             logger.warning("admin password change failed remote_addr=%s reason=current_password", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
-        elif len(new_password) < 8:
-            flash("새 관리자 비밀번호는 8자 이상이어야 합니다.")
+        elif (password_issues := _admin_plain_password_issues(new_password)):
+            flash(_admin_password_strength_message("새 관리자 비밀번호", password_issues))
         elif new_password != confirm_password:
             flash("새 비밀번호 확인이 일치하지 않습니다.")
         else:
@@ -2652,6 +2653,14 @@ def _admin_plain_password_issues(password: str) -> list[str]:
     if any(fragment in lowered for fragment in common_fragments):
         issues.append("예측 쉬운 단어")
     return issues
+
+
+def _admin_password_strength_message(label: str, issues: list[str]) -> str:
+    return (
+        f"{label}가 상용 운영 기준에 약합니다: "
+        + ", ".join(issues)
+        + ". 12자 이상, 영문/숫자/기호를 섞은 예측 어려운 값으로 설정하세요."
+    )
 
 
 def _production_readiness_health_payload(report: dict[str, object]) -> dict[str, object]:

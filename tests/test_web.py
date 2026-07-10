@@ -2744,7 +2744,7 @@ def test_admin_setup_enables_login_without_env_password(monkeypatch):
 
     setup = client.post(
         "/admin/setup",
-        data={"password": "secret1234", "confirm_password": "secret1234"},
+        data={"password": "PressRoom-47-Delta", "confirm_password": "PressRoom-47-Delta"},
         follow_redirects=True,
     )
     assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
@@ -2775,10 +2775,38 @@ def test_admin_setup_is_accessible_when_auth_required_without_password(monkeypat
 
     setup = client.post(
         "/admin/setup",
-        data={"password": "secret1234", "confirm_password": "secret1234"},
+        data={"password": "PressRoom-48-Delta", "confirm_password": "PressRoom-48-Delta"},
         follow_redirects=True,
     )
     assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
+
+
+def test_admin_setup_rejects_weak_password(monkeypatch):
+    db_path = Path(f"data/.test_admin_setup_weak_password_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD_HASH", raising=False)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.post(
+        "/admin/setup",
+        data={"password": "news1234", "confirm_password": "news1234"},
+        follow_redirects=True,
+    )
+
+    html = response.data.decode("utf-8")
+    assert "관리자 비밀번호가 상용 운영 기준에 약합니다" in html
+    assert "12자 미만" in html
+    assert "예측 쉬운 단어" in html
+
+    protected = client.get("/", follow_redirects=False)
+    assert protected.status_code == 200
 
 
 def test_operations_page_changes_database_admin_password(monkeypatch):
@@ -2824,9 +2852,16 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     assert "비밀번호 변경" in unlocked_html
     assert "new_password" in unlocked_html
 
-    changed = client.post(
+    weak_change = client.post(
         "/operations/admin-password",
         data={"new_password": "newpass123", "confirm_password": "newpass123"},
+        follow_redirects=True,
+    )
+    assert "새 관리자 비밀번호가 상용 운영 기준에 약합니다" in weak_change.data.decode("utf-8")
+
+    changed = client.post(
+        "/operations/admin-password",
+        data={"new_password": "NextPass-48!", "confirm_password": "NextPass-48!"},
         follow_redirects=True,
     )
     assert "관리자 비밀번호를 변경했습니다." in changed.data.decode("utf-8")
@@ -2835,7 +2870,7 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     old_login = client.post("/login", data={"password": "oldpass123"}, follow_redirects=True)
     assert "관리자 비밀번호가 올바르지 않습니다." in old_login.data.decode("utf-8")
 
-    new_login = client.post("/login", data={"password": "newpass123", "next": "/"}, follow_redirects=True)
+    new_login = client.post("/login", data={"password": "NextPass-48!", "next": "/"}, follow_redirects=True)
     assert "로그아웃" in new_login.data.decode("utf-8")
 
 

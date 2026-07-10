@@ -929,9 +929,9 @@
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="username" value="admin" autocomplete="username">
         <label for="new_password">새 비밀번호</label>
-        <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="8" required>
+        <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="12" required>
         <label for="confirm_password">새 비밀번호 확인</label>
-        <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
+        <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="12" required>
         <button type="submit">비밀번호 변경</button>
       </form>
     {% endif %}
