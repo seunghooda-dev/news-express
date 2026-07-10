@@ -2447,7 +2447,14 @@ def _production_readiness_report(
         )
     elif ".trycloudflare.com" in public_url:
         add_item("공개 URL", "warning", "임시 주소", "trycloudflare 임시 주소는 재실행 때 바뀔 수 있습니다.")
-    elif public_url.startswith(("https://", "http://")):
+    elif public_url.startswith("http://"):
+        add_item(
+            "공개 URL",
+            "error" if render_environment else "warning",
+            "HTTP",
+            "공개 URL이 암호화되지 않은 http:// 주소입니다. 운영 공유에는 https:// 주소를 사용하세요.",
+        )
+    elif public_url.startswith("https://"):
         add_item("공개 URL", "ok", "설정됨", public_url)
     else:
         add_item("공개 URL", "warning", "형식 확인", "공개 URL은 http:// 또는 https://로 시작해야 합니다.")
