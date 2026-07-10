@@ -235,6 +235,28 @@ CREATE TABLE IF NOT EXISTS visitor_access_logs (
 );
 """
 
+INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS idx_article_drafts_press_release_id ON article_drafts(press_release_id)",
+    "CREATE INDEX IF NOT EXISTS idx_article_drafts_status_updated ON article_drafts(status, updated_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_article_drafts_updated ON article_drafts(updated_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_article_drafts_model_dates ON article_drafts(model, created_at, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_article_drafts_status_exported_updated ON article_drafts(status, exported_at, updated_at, created_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_press_releases_title ON press_releases(title)",
+    "CREATE INDEX IF NOT EXISTS idx_press_releases_published_collected ON press_releases(published_at, collected_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_press_releases_source_published ON press_releases(source_id, published_at, collected_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_press_releases_region_published ON press_releases(region, published_at, collected_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_press_release_assets_release ON press_release_assets(press_release_id, sort_order, id)",
+    "CREATE INDEX IF NOT EXISTS idx_press_release_assets_image ON press_release_assets(is_image, id)",
+    "CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_press_release ON draft_generation_failures(press_release_id, resolved_at, next_retry_at)",
+    "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_retry ON draft_generation_failures(resolved_at, next_retry_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_checked ON source_collection_runs(source_id, checked_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_checked_status ON source_collection_runs(checked_at, status, id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_status_id ON source_collection_runs(status, id)",
+    "CREATE INDEX IF NOT EXISTS idx_visitor_access_logs_visited ON visitor_access_logs(visited_at, id)",
+)
+
 
 class _PostgresCursor:
     def __init__(self, cursor: Any, lastrowid: int | None = None) -> None:
@@ -494,22 +516,7 @@ class Store:
             conn.execute("SELECT pg_advisory_xact_lock(?)", (POSTGRES_SCHEMA_INIT_LOCK_ID,))
 
     def _ensure_indexes(self, conn: Any) -> None:
-        index_statements = [
-            "CREATE INDEX IF NOT EXISTS idx_article_drafts_press_release_id ON article_drafts(press_release_id)",
-            "CREATE INDEX IF NOT EXISTS idx_article_drafts_status_updated ON article_drafts(status, updated_at, id)",
-            "CREATE INDEX IF NOT EXISTS idx_article_drafts_updated ON article_drafts(updated_at, id)",
-            "CREATE INDEX IF NOT EXISTS idx_article_drafts_model_dates ON article_drafts(model, created_at, updated_at)",
-            "CREATE INDEX IF NOT EXISTS idx_press_releases_title ON press_releases(title)",
-            "CREATE INDEX IF NOT EXISTS idx_press_releases_source_published ON press_releases(source_id, published_at, collected_at, id)",
-            "CREATE INDEX IF NOT EXISTS idx_press_releases_region_published ON press_releases(region, published_at, collected_at, id)",
-            "CREATE INDEX IF NOT EXISTS idx_press_release_assets_release ON press_release_assets(press_release_id, sort_order, id)",
-            "CREATE INDEX IF NOT EXISTS idx_draft_history_draft_id ON draft_history(draft_id, id)",
-            "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_press_release ON draft_generation_failures(press_release_id, resolved_at, next_retry_at)",
-            "CREATE INDEX IF NOT EXISTS idx_draft_generation_failures_retry ON draft_generation_failures(resolved_at, next_retry_at, id)",
-            "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_id ON source_collection_runs(source_id, id)",
-            "CREATE INDEX IF NOT EXISTS idx_visitor_access_logs_visited ON visitor_access_logs(visited_at, id)",
-        ]
-        for statement in index_statements:
+        for statement in INDEX_STATEMENTS:
             conn.execute(statement)
 
     def _ensure_column(self, conn: Any, table: str, column: str, definition: str) -> None:
