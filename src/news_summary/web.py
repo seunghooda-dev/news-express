@@ -77,6 +77,7 @@ GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
 CSRF_SESSION_KEY = "_csrf_token"
 CSRF_FORM_FIELD = "_csrf_token"
+REQUEST_ID_HEADER = "X-Request-ID"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
@@ -216,6 +217,7 @@ def create_app() -> Flask:
 
     @app.after_request
     def add_security_headers(response: Response):
+        response.headers.setdefault(REQUEST_ID_HEADER, _current_request_id())
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
@@ -228,14 +230,15 @@ def create_app() -> Flask:
         try:
             _record_visitor_access(store, response.status_code)
         except Exception as exc:  # noqa: BLE001 - access logging must never block the page response.
-            logger.warning("visitor access log failed path=%s error=%s", request.path, exc)
+            logger.warning("visitor access log failed request_id=%s path=%s error=%s", _current_request_id(), request.path, exc)
         started_at = getattr(g, "request_started_at", None)
         if started_at is not None:
             elapsed = time.perf_counter() - started_at
             threshold = _slow_request_threshold_seconds()
             if elapsed >= threshold:
                 logger.warning(
-                    "slow web request method=%s path=%s endpoint=%s status=%s elapsed=%.3fs threshold=%.3fs",
+                    "slow web request request_id=%s method=%s path=%s endpoint=%s status=%s elapsed=%.3fs threshold=%.3fs",
+                    _current_request_id(),
                     request.method,
                     request.path,
                     request.endpoint,
@@ -247,6 +250,7 @@ def create_app() -> Flask:
 
     @app.before_request
     def open_store_connection_scope():
+        g.request_id = _request_id_from_header()
         g.request_started_at = time.perf_counter()
         endpoint = request.endpoint or ""
         if endpoint == "static":
@@ -276,7 +280,8 @@ def create_app() -> Flask:
         if expected and provided and secrets.compare_digest(str(expected), str(provided)):
             return None
         logger.warning(
-            "csrf validation failed method=%s path=%s endpoint=%s remote_addr=%s",
+            "csrf validation failed request_id=%s method=%s path=%s endpoint=%s remote_addr=%s",
+            _current_request_id(),
             request.method,
             request.path,
             request.endpoint,
@@ -302,8 +307,9 @@ def create_app() -> Flask:
     def handle_unexpected_error(exc: Exception):
         if isinstance(exc, HTTPException):
             return exc
-        logger.exception("unhandled web error method=%s path=%s", request.method, request.path)
-        return "서버 오류가 발생했습니다. 운영 로그를 확인하세요.", 500
+        request_id = _current_request_id()
+        logger.exception("unhandled web error request_id=%s method=%s path=%s", request_id, request.method, request.path)
+        return f"서버 오류가 발생했습니다. 운영 로그를 확인하세요. 요청 ID: {request_id}", 500
 
     @app.get("/")
     def dashboard():
@@ -1289,6 +1295,25 @@ def _configure_session_security(app: Flask) -> None:
     app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("NEWS_SUMMARY_SESSION_COOKIE_SAMESITE", "Lax")
     app.config["SESSION_COOKIE_SECURE"] = _secure_cookie_default()
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", timedelta(hours=12))
+
+
+def _request_id_from_header() -> str:
+    incoming = (request.headers.get(REQUEST_ID_HEADER) or "").strip()
+    if _valid_request_id(incoming):
+        return incoming
+    return secrets.token_hex(8)
+
+
+def _valid_request_id(value: str) -> bool:
+    return bool(value) and len(value) <= 64 and re.fullmatch(r"[A-Za-z0-9._:-]+", value) is not None
+
+
+def _current_request_id() -> str:
+    request_id = getattr(g, "request_id", "")
+    if not request_id:
+        request_id = secrets.token_hex(8)
+        g.request_id = request_id
+    return str(request_id)
 
 
 def _csrf_token() -> str:

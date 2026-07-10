@@ -2480,6 +2480,7 @@ def test_security_headers_are_applied(monkeypatch):
     client = app.test_client()
 
     response = client.get("/")
+    assert response.headers["X-Request-ID"]
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Referrer-Policy"] == "same-origin"
@@ -2489,6 +2490,39 @@ def test_security_headers_are_applied(monkeypatch):
 
     operations = client.get("/operations")
     assert operations.headers["Cache-Control"] == "no-store"
+
+
+def test_request_id_header_accepts_safe_incoming_value(monkeypatch):
+    db_path = Path(f"data/.test_request_id_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    response = app.test_client().get("/", headers={"X-Request-ID": "support-case-123"})
+
+    assert response.headers["X-Request-ID"] == "support-case-123"
+
+
+def test_unhandled_error_response_includes_request_id(monkeypatch):
+    db_path = Path(f"data/.test_request_id_error_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+
+    @app.get("/boom")
+    def boom():
+        raise RuntimeError("forced failure")
+
+    response = app.test_client().get("/boom", headers={"X-Request-ID": "support-case-500"})
+
+    assert response.status_code == 500
+    assert response.headers["X-Request-ID"] == "support-case-500"
+    assert "요청 ID: support-case-500" in response.data.decode("utf-8")
 
 
 def test_https_security_headers_and_session_cookie_defaults_on_render(monkeypatch):
