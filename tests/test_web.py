@@ -2514,6 +2514,68 @@ def test_sensitive_routes_require_login_when_auth_is_enabled(monkeypatch):
     assert health_response.status_code == 200
 
 
+def test_operations_page_requires_password_when_site_auth_is_disabled(monkeypatch):
+    db_path = Path(f"data/.test_operations_access_auth_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    dashboard = client.get("/")
+    assert dashboard.status_code == 200
+
+    blocked = client.get("/operations", follow_redirects=False)
+    assert blocked.status_code == 302
+    assert "/operations/login" in blocked.headers["Location"]
+
+    log_blocked = client.get("/ops-logs", follow_redirects=False)
+    assert log_blocked.status_code == 302
+    assert "/operations/login" in log_blocked.headers["Location"]
+
+    wrong = client.post(
+        "/operations/login",
+        data={"password": "wrong", "next": "/operations"},
+        follow_redirects=True,
+    )
+    assert "관리자 비밀번호가 올바르지 않습니다." in wrong.data.decode("utf-8")
+
+    right = client.post(
+        "/operations/login",
+        data={"password": "secret1234", "next": "/operations"},
+        follow_redirects=True,
+    )
+    right_html = right.data.decode("utf-8")
+    assert "운영 관리" in right_html
+    assert "서비스 상태 요약" in right_html
+
+    logs = client.get("/ops-logs")
+    assert logs.status_code == 200
+
+
+def test_operations_page_redirects_to_admin_setup_when_password_is_missing(monkeypatch):
+    db_path = Path(f"data/.test_operations_access_setup_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/operations", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert "/admin/setup" in response.headers["Location"]
+
+
 def test_security_headers_are_applied(monkeypatch):
     db_path = Path(f"data/.test_security_headers_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -5367,7 +5429,7 @@ def test_visitor_access_prune_is_throttled(monkeypatch):
 
     from news_summary import web as web_module
 
-    monkeypatch.setattr(web_module, "_visitor_access_last_pruned_at", 0.0)
+    monkeypatch.setattr(web_module, "_visitor_access_last_pruned_at", -web_module.VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS)
     prune_calls = []
 
     def fake_prune(self, cutoff_iso):

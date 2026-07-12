@@ -81,13 +81,26 @@ DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
-AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "static"}
+AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "operations_login", "static"}
+OPERATIONS_ACCESS_ENDPOINTS = {
+    "operations",
+    "ops_logs",
+    "update_auto_collect",
+    "unlock_operations_write_access",
+    "lock_operations_write_access",
+    "unlock_admin_password_panel",
+    "change_admin_password",
+    "create_backup_route",
+    "download_backup",
+    "restore_backup_route",
+}
 NO_STORE_ENDPOINTS = {
     "admin_setup",
     "download_backup",
     "gemini_usage",
     "healthz_details",
     "login",
+    "operations_login",
     "operations",
     "ops_logs",
     "recrawl_status",
@@ -95,6 +108,7 @@ NO_STORE_ENDPOINTS = {
 CSRF_SESSION_KEY = "_csrf_token"
 CSRF_FORM_FIELD = "_csrf_token"
 REQUEST_ID_HEADER = "X-Request-ID"
+OPERATIONS_ACCESS_UNLOCKED_KEY = "operations_access_unlocked"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
@@ -330,6 +344,18 @@ def create_app() -> Flask:
             return None
         return redirect(url_for("login", next=_current_next_path()))
 
+    @app.before_request
+    def require_operations_access():
+        endpoint = request.endpoint or ""
+        if not _operations_access_protected_endpoint(endpoint):
+            return None
+        if _operations_access_unlocked(app):
+            return None
+        if not _configured_admin_password_source(store):
+            flash("운영 관리에 접속하려면 관리자 비밀번호를 먼저 설정하세요.")
+            return redirect(url_for("admin_setup", next=_current_next_path()))
+        return redirect(url_for("operations_login", next=_current_next_path()))
+
     @app.errorhandler(Exception)
     def handle_unexpected_error(exc: Exception):
         if isinstance(exc, HTTPException):
@@ -477,6 +503,7 @@ def create_app() -> Flask:
     @app.post("/logout")
     def logout():
         session.pop("admin_authenticated", None)
+        session.pop(OPERATIONS_ACCESS_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
@@ -506,6 +533,30 @@ def create_app() -> Flask:
                 flash("관리자 로그인을 활성화했습니다.")
                 return redirect(url_for("dashboard"))
         return render_template("admin_setup.html", auth_state=config, next_url=_safe_next())
+
+    @app.route("/operations/login", methods=["GET", "POST"])
+    def operations_login():
+        if _operations_access_unlocked(app):
+            return redirect(_safe_next("operations"))
+        if not _configured_admin_password_source(store):
+            flash("운영 관리에 접속하려면 관리자 비밀번호를 먼저 설정하세요.")
+            return redirect(url_for("admin_setup", next=_safe_next("operations")))
+        if request.method == "POST":
+            if blocked_response := _auth_rate_limit_response(app, "operations_access_login", "operations_login"):
+                return blocked_response
+            password = request.form.get("password") or ""
+            if verify_admin_password(store, password):
+                _auth_rate_limit_clear("operations_access_login")
+                session[OPERATIONS_ACCESS_UNLOCKED_KEY] = True
+                if auth_config(store).enabled:
+                    session["admin_authenticated"] = True
+                _record_operation_event(store, "operations_access_unlocked", target="operations", detail="운영 관리 접속")
+                logger.info("operations access unlocked remote_addr=%s", _masked_request_ip())
+                return redirect(_safe_next("operations"))
+            _auth_rate_limit_record_failure(app, "operations_access_login")
+            logger.warning("operations access unlock failed remote_addr=%s", _masked_request_ip())
+            flash("관리자 비밀번호가 올바르지 않습니다.")
+        return render_template("operations_login.html", next_url=_safe_next("operations"))
 
     @app.get("/ops-logs")
     def ops_logs():
@@ -1426,6 +1477,16 @@ def _auth_exempt_endpoint(endpoint: str) -> bool:
     if endpoint in AUTH_EXEMPT_ENDPOINTS:
         return True
     return endpoint == "healthz_details" and _public_health_details_enabled()
+
+
+def _operations_access_protected_endpoint(endpoint: str) -> bool:
+    return endpoint in OPERATIONS_ACCESS_ENDPOINTS
+
+
+def _operations_access_unlocked(app: Flask) -> bool:
+    if app.testing and not _env_flag("NEWS_SUMMARY_TEST_OPERATIONS_AUTH"):
+        return True
+    return bool(session.get("admin_authenticated") or session.get(OPERATIONS_ACCESS_UNLOCKED_KEY))
 
 
 def _public_health_details_enabled() -> bool:
@@ -5091,6 +5152,7 @@ def _record_visitor_access(store: Store, status_code: int) -> None:
 OPERATION_EVENT_LABELS = {
     "auto_collect_enabled": "자동 수집 켜짐",
     "auto_collect_disabled": "자동 수집 꺼짐",
+    "operations_access_unlocked": "운영 관리 접속",
     "operations_write_unlocked": "운영 잠금 해제",
     "operations_write_locked": "운영 잠금",
     "admin_password_panel_unlocked": "비밀번호 변경 열림",

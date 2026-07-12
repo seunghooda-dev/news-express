@@ -94,6 +94,7 @@ DATABASE_URL=
 `NEWS_SUMMARY_RETENTION_HOLIDAYS`에는 추가 공휴일을 `YYYY-MM-DD,YYYY-MM-DD` 형식으로 넣을 수 있습니다. 공휴일과 주말은 최근 3일 계산에서 제외되어 그만큼 보관 범위가 늘어납니다.
 
 `NEWS_SUMMARY_ADMIN_PASSWORD` 또는 `NEWS_SUMMARY_ADMIN_PASSWORD_HASH` 값을 설정하면 관리자 로그인이 강제됩니다. 관리자 비밀번호는 12자 이상, 영문/숫자/기호를 섞은 예측 어려운 값으로 설정합니다. 운영 환경에서는 평문 비밀번호보다 아래 명령으로 만든 해시 값을 `NEWS_SUMMARY_ADMIN_PASSWORD_HASH`에 넣는 방식을 권장합니다. 운영 로그는 홈 화면에 표시하지 않고 `/ops-logs` 경로에서 확인합니다.
+전체 사이트를 임시로 비밀번호 없이 열어두더라도 `/operations` 운영 관리와 `/ops-logs` 운영 로그는 관리자 비밀번호 확인 후에만 볼 수 있습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m news_summary.cli admin-password-hash
