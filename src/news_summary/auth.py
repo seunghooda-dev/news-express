@@ -48,6 +48,26 @@ def verify_admin_password(store: Store, password: str) -> bool:
     return False
 
 
+def operations_password_configured() -> bool:
+    return bool(
+        os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH")
+        or os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD")
+    )
+
+
+def verify_operations_password(store: Store, password: str) -> bool:
+    configured_hash = os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH")
+    if configured_hash:
+        return check_password_hash(configured_hash, password)
+
+    configured_password = os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD")
+    if configured_password:
+        return hmac.compare_digest(configured_password, password)
+
+    # 운영 전용 비밀번호가 없으면 기존 동작대로 관리자 비밀번호로 확인한다.
+    return verify_admin_password(store, password)
+
+
 def set_admin_password(store: Store, password: str) -> None:
     store.set_app_metadata(ADMIN_PASSWORD_HASH_KEY, generate_password_hash(password))
 

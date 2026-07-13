@@ -6,6 +6,7 @@ from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit, urlun
 from xml.etree import ElementTree
 
 import httpx
+from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 from bs4 import BeautifulSoup, Tag
 
 from .asset_filters import image_asset_looks_decorative
@@ -204,7 +205,8 @@ def collect_rss(source: Source, limit: int = 10) -> list[PressRelease]:
         response = client.get(source.feed_url)
         response.raise_for_status()
 
-    root = ElementTree.fromstring(response.content)
+    # 외부 엔티티/DTD 확장 공격을 막기 위해 defusedxml로 파싱한다.
+    root = safe_xml_fromstring(response.content)
     items = root.findall(".//item")[:limit]
     releases = []
     for item in items:

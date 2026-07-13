@@ -5,6 +5,7 @@ description = "광주·전남 지자체 보도자료를 수집하고 방송 단�
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12.3",
+    "defusedxml>=0.7.1",
     "flask>=3.0.3",
     "google-genai>=1.0.0",
     "gunicorn>=22.0.0",

@@ -25,8 +25,10 @@ from .auth import (
     admin_password_strength_message,
     admin_plain_password_issues,
     auth_config,
+    operations_password_configured,
     set_admin_password,
     verify_admin_password,
+    verify_operations_password,
 )
 from .backup import backup_include_env, create_backup, restore_backup, verify_backup
 from .collectors import public_press_release_url
@@ -351,7 +353,7 @@ def create_app() -> Flask:
             return None
         if _operations_access_unlocked(app):
             return None
-        if not _configured_admin_password_source(store):
+        if not _operations_password_available(store):
             flash("운영 관리에 접속하려면 관리자 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup", next=_current_next_path()))
         return redirect(url_for("operations_login", next=_current_next_path()))
@@ -538,14 +540,14 @@ def create_app() -> Flask:
     def operations_login():
         if _operations_access_unlocked(app):
             return redirect(_safe_next("operations"))
-        if not _configured_admin_password_source(store):
+        if not _operations_password_available(store):
             flash("운영 관리에 접속하려면 관리자 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup", next=_safe_next("operations")))
         if request.method == "POST":
             if blocked_response := _auth_rate_limit_response(app, "operations_access_login", "operations_login"):
                 return blocked_response
             password = request.form.get("password") or ""
-            if verify_admin_password(store, password):
+            if verify_operations_password(store, password):
                 _auth_rate_limit_clear("operations_access_login")
                 session[OPERATIONS_ACCESS_UNLOCKED_KEY] = True
                 if auth_config(store).enabled:
@@ -1486,7 +1488,13 @@ def _operations_access_protected_endpoint(endpoint: str) -> bool:
 def _operations_access_unlocked(app: Flask) -> bool:
     if app.testing and not _env_flag("NEWS_SUMMARY_TEST_OPERATIONS_AUTH"):
         return True
-    return bool(session.get("admin_authenticated") or session.get(OPERATIONS_ACCESS_UNLOCKED_KEY))
+    if session.get(OPERATIONS_ACCESS_UNLOCKED_KEY):
+        return True
+    # 운영 전용 비밀번호가 설정돼 있으면 관리자 로그인만으로는 통과시키지 않고
+    # 운영 관리 진입 시 항상 비밀번호를 다시 확인한다.
+    if operations_password_configured():
+        return False
+    return bool(session.get("admin_authenticated"))
 
 
 def _public_health_details_enabled() -> bool:
@@ -2661,6 +2669,23 @@ def _production_readiness_report(
         add_item("수집 대상", "ok", "정상", str(source_coverage.get("message") or "필수 기관 설정 정상"))
     else:
         add_item("수집 대상", "warning", "확인 필요", str(source_coverage.get("message") or "수집 설정 확인 필요"))
+
+    try:
+        ssl_disabled_sources = [
+            source for source in load_sources(config_path) if source.enabled and not source.verify_ssl
+        ]
+    except Exception:  # noqa: BLE001 - 자체 점검은 설정 로드 실패와 무관하게 계속 제공한다.
+        ssl_disabled_sources = []
+    if ssl_disabled_sources:
+        add_item(
+            "수집 SSL 검증",
+            "warning",
+            f"{len(ssl_disabled_sources)}개 꺼짐",
+            "SSL 인증서 검증이 꺼진 수집 소스가 있어 중간자 공격에 노출될 수 있습니다: "
+            + ", ".join(source.id for source in ssl_disabled_sources[:5]),
+        )
+    else:
+        add_item("수집 SSL 검증", "ok", "켜짐", "모든 수집 소스가 SSL 인증서를 검증합니다.")
 
     deploy_config = _render_deploy_config_report()
     if deploy_config.get("auto_deploy_level") == "ok":
@@ -4909,6 +4934,11 @@ def _configured_admin_password_source(store: Store) -> str:
     if store.get_app_metadata(ADMIN_PASSWORD_HASH_KEY):
         return "database"
     return ""
+
+
+def _operations_password_available(store: Store) -> bool:
+    # 운영 전용 비밀번호나 관리자 비밀번호 중 하나라도 있으면 운영 로그인으로 확인할 수 있다.
+    return operations_password_configured() or bool(_configured_admin_password_source(store))
 
 
 def _operations_write_access_unlocked(store: Store) -> bool:

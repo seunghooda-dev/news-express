@@ -2558,6 +2558,48 @@ def test_operations_page_requires_password_when_site_auth_is_disabled(monkeypatc
     assert logs.status_code == 200
 
 
+def test_operations_requires_dedicated_password_even_when_admin_logged_in(monkeypatch):
+    from werkzeug.security import generate_password_hash
+
+    db_path = Path(f"data/.test_operations_dedicated_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "adminpass1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
+    monkeypatch.delenv("NEWS_SUMMARY_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv(
+        "NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH", generate_password_hash("opspass9999")
+    )
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 관리자 로그인만으로는 운영 관리에 바로 들어갈 수 없다.
+    client.post("/login", data={"password": "adminpass1234", "next": "/operations"})
+    blocked = client.get("/operations", follow_redirects=False)
+    assert blocked.status_code == 302
+    assert "/operations/login" in blocked.headers["Location"]
+
+    # 관리자 비밀번호로는 운영 전용 게이트를 통과하지 못한다.
+    wrong = client.post(
+        "/operations/login",
+        data={"password": "adminpass1234", "next": "/operations"},
+        follow_redirects=True,
+    )
+    assert "관리자 비밀번호가 올바르지 않습니다." in wrong.data.decode("utf-8")
+
+    # 운영 전용 비밀번호로만 진입할 수 있다.
+    right = client.post(
+        "/operations/login",
+        data={"password": "opspass9999", "next": "/operations"},
+        follow_redirects=True,
+    )
+    assert "운영 관리" in right.data.decode("utf-8")
+
+
 def test_operations_page_redirects_to_admin_setup_when_password_is_missing(monkeypatch):
     db_path = Path(f"data/.test_operations_access_setup_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

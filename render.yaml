@@ -26,6 +26,9 @@ services:
         generateValue: true
       - key: NEWS_SUMMARY_ADMIN_PASSWORD_HASH
         sync: false
+      # 운영 관리 진입 전용 비밀번호(해시). Render 대시보드에서 직접 입력한다.
+      - key: NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH
+        sync: false
       - key: NEWS_SUMMARY_AUTH_REQUIRED
         value: "1"
       - key: NEWS_SUMMARY_AUTH_DISABLED
