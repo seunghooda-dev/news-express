@@ -49,6 +49,17 @@ def test_render_deploy_fallback_only_runs_for_runtime_paths():
     ]
 
 
+def test_render_deploy_fallback_fails_loudly_when_hook_secret_missing():
+    # 시크릿이 없을 때 조용히 skip하면 배포가 멈춰도 초록불이라 알아채기 어렵다.
+    # 이 경우 워크플로가 명시적으로 실패(exit 1)하도록 강제한다.
+    workflow = yaml.safe_load(Path(".github/workflows/render-deploy.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["deploy"]["steps"]
+    guard = next(
+        step for step in steps if step.get("if") == "env.RENDER_DEPLOY_HOOK_URL == ''"
+    )
+    assert "exit 1" in guard["run"]
+
+
 def test_operations_deployment_report_reads_render_auto_deploy_config():
     from news_summary.web import _render_deploy_config_report
 

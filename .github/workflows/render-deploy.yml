@@ -24,10 +24,11 @@ jobs:
     env:
       RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
     steps:
-      - name: Skip when deploy hook secret is not configured
+      - name: Fail when deploy hook secret is not configured
         if: env.RENDER_DEPLOY_HOOK_URL == ''
         run: |
-          echo "::notice::RENDER_DEPLOY_HOOK_URL secret is not configured. Render deploy fallback was skipped."
+          echo "::error::RENDER_DEPLOY_HOOK_URL secret is not configured, so Render was NOT deployed. Set it in Settings → Secrets and variables → Actions (value: Render Deploy Hook URL)."
+          exit 1
 
       - name: Trigger Render deploy
         if: env.RENDER_DEPLOY_HOOK_URL != ''
