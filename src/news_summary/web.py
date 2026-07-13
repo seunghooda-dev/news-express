@@ -612,6 +612,7 @@ def create_app() -> Flask:
                         admin_password_configured and session.get(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY)
                     ),
                     "operations_write_unlocked": _operations_write_access_unlocked(store),
+                    "operations_write_password_configured": _operations_password_available(store),
                     "operations_write_expires_at": _operations_write_access_expires_at(),
                     "operations_write_unlock_minutes": _operations_write_unlock_minutes(),
                     "operation_events": _operation_event_items(store),
@@ -658,14 +659,13 @@ def create_app() -> Flask:
 
     @app.post("/operations/write-access/unlock")
     def unlock_operations_write_access():
-        source = _configured_admin_password_source(store)
-        if not source:
-            flash("운영 변경 기능을 사용하려면 관리자 비밀번호를 먼저 설정하세요.")
+        if not _operations_password_available(store):
+            flash("운영 변경 기능을 사용하려면 운영 관리 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup"))
         current_password = request.form.get("current_password") or ""
         if blocked_response := _auth_rate_limit_response(app, "operations_write_unlock", "operations"):
             return blocked_response
-        if verify_admin_password(store, current_password):
+        if verify_operations_password(store, current_password):
             _auth_rate_limit_clear("operations_write_unlock")
             _unlock_operations_write_session()
             _record_operation_event(
@@ -4942,7 +4942,7 @@ def _operations_password_available(store: Store) -> bool:
 
 
 def _operations_write_access_unlocked(store: Store) -> bool:
-    if not _configured_admin_password_source(store) or not session.get(OPERATIONS_WRITE_UNLOCKED_KEY):
+    if not _operations_password_available(store) or not session.get(OPERATIONS_WRITE_UNLOCKED_KEY):
         return False
     expires_at = _operations_write_access_expires_at()
     if not expires_at or datetime.now(LOCAL_TZ) >= expires_at:

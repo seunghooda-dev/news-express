@@ -7760,6 +7760,41 @@ def test_operations_write_access_expires_automatically(monkeypatch):
     assert len(list(backup_dir.glob("*.zip"))) == 1
 
 
+def test_operations_write_access_unlocks_with_operations_password(monkeypatch):
+    from werkzeug.security import generate_password_hash
+
+    db_path = Path(f"data/.test_operations_write_opspw_{uuid4().hex}.sqlite").resolve()
+    backup_dir = Path(f"data/tmp/test_operations_write_opspw_{uuid4().hex}").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv(
+        "NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH", generate_password_hash("opspass9999")
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 관리자 비밀번호가 없어도 운영 전용 비밀번호가 있으면 잠금 해제 폼이 보인다.
+    locked_html = client.get("/operations").data.decode("utf-8")
+    assert "운영 관리 비밀번호 확인 후" in locked_html
+
+    # 운영 전용 비밀번호로 쓰기 작업 잠금을 해제할 수 있다.
+    unlocked = client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "opspass9999"},
+        follow_redirects=True,
+    )
+    assert "해제됨" in unlocked.data.decode("utf-8")
+
+    created = client.post("/operations/backup", follow_redirects=True)
+    assert "백업을 생성했습니다" in created.data.decode("utf-8")
+    assert len(list(backup_dir.glob("*.zip"))) == 1
+
+
 def test_backup_verify_report_refreshes_stale_metadata(monkeypatch):
     db_path = Path(f"data/.test_backup_verify_stale_{uuid4().hex}.sqlite").resolve()
     backup_dir = Path(f"data/tmp/test_backup_verify_stale_{uuid4().hex}").resolve()
