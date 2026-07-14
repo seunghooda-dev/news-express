@@ -2741,3 +2741,24 @@ h3 {
     font-size: 22px;
   }
 }
+
+/* 모바일 터치 영역(≥44px)과 액션 간격 다듬기 */
+@media (max-width: 820px) {
+  .source-link,
+  .export-actions button,
+  .draft-history button,
+  .section-actions button,
+  .region-filter-actions button {
+    min-height: 44px;
+  }
+
+  .asset-actions a {
+    min-height: 40px;
+    padding: 7px 12px;
+  }
+
+  .export-actions,
+  .asset-actions {
+    gap: 8px;
+  }
+}
