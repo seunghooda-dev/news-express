@@ -736,6 +736,44 @@ def test_auto_maintenance_failure_is_recorded_without_raising(monkeypatch):
     assert snapshot.progress_message == "자동 유지보수 재시도 대기 중"
 
 
+def test_auto_maintenance_step_failure_does_not_abort_remaining_steps(monkeypatch):
+    db_path = Path(f"data/.test_auto_maint_isolation_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    monkeypatch.setattr(collector, "_persist_server_health_snapshot", lambda now: {"status_level": "ok"})
+    monkeypatch.setattr(collector, "_persist_collection_anomaly_snapshot", lambda now: {"issue_count": 0})
+
+    def boom():
+        raise RuntimeError("dedupe exploded")
+
+    monkeypatch.setattr(collector, "_deduplicate_press_releases_once", boom)
+    monkeypatch.setattr(collector, "_cleanup_stale_draft_failures_once", lambda: None)
+    monkeypatch.setattr(collector, "_prune_old_operation_events_once", lambda now: None)
+    monkeypatch.setattr(collector, "_recover_failed_sources_once", lambda: [])
+    monkeypatch.setattr(collector, "_drain_pending_queue_once", lambda: [])
+    monkeypatch.setattr(collector, "_discover_fallback_url_candidates_once", lambda: [])
+    monkeypatch.setattr(collector, "_create_backup_if_needed_once", lambda now: None)
+    monkeypatch.setattr(collector, "_prune_old_backups_once", lambda: None)
+
+    ran = {"verify": False}
+
+    def verify_spy():
+        ran["verify"] = True
+        return None
+
+    monkeypatch.setattr(collector, "_verify_latest_backup_once", verify_spy)
+
+    now = datetime.now(timezone.utc)
+    # 중복 제거 단계가 터져도 예외가 전파되지 않고, 이후 단계(백업 검증)가 계속 실행된다.
+    collector._execute_maintenance_once(now)
+
+    assert ran["verify"] is True
+    daily = json.loads(store.get_app_metadata(AUTO_DAILY_REPORT_KEY) or "{}")
+    assert any("중복 제거 실패" in str(m) for m in daily.get("messages", []))
+
+
 def test_auto_maintenance_schedules_next_run_at_gemini_resume_time(monkeypatch):
     db_path = Path(f"data/.test_auto_maintenance_resume_time_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)

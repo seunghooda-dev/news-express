@@ -505,44 +505,62 @@ class AutoCollector:
 
     def _execute_maintenance_once(self, now: datetime) -> None:
         messages: list[str] = []
-        server_health = self._persist_server_health_snapshot(now)
-        if server_health.get("status_level") == "error":
-            messages.append(f"서버 상태 확인 필요: {server_health.get('message')}")
-        anomaly_report = self._persist_collection_anomaly_snapshot(now)
-        if anomaly_report.get("issue_count"):
-            messages.append(f"수집 이상치 {anomaly_report.get('issue_count')}건 감지")
-        dedupe_message = self._deduplicate_press_releases_once()
-        if dedupe_message:
-            messages.append(dedupe_message)
-        draft_failure_cleanup_message = self._cleanup_stale_draft_failures_once()
-        if draft_failure_cleanup_message:
-            messages.append(draft_failure_cleanup_message)
-        operation_event_prune_message = self._prune_old_operation_events_once(now)
-        if operation_event_prune_message:
-            messages.append(operation_event_prune_message)
-        asset_cleanup = prune_decorative_press_release_assets(self.store)
-        if asset_cleanup["deleted"]:
-            messages.append(f"보도자료 장식 이미지 {asset_cleanup['deleted']}건 정리")
-        source_messages = self._recover_failed_sources_once()
-        if source_messages:
-            messages.extend(source_messages)
-        queue_messages = self._drain_pending_queue_once()
-        if queue_messages:
-            messages.extend(queue_messages)
-        discovery_messages = self._discover_fallback_url_candidates_once()
-        if discovery_messages:
-            messages.extend(discovery_messages)
-        backup_create_message = self._create_backup_if_needed_once(now)
-        if backup_create_message:
-            messages.append(backup_create_message)
-        backup_prune_message = self._prune_old_backups_once()
-        if backup_prune_message:
-            messages.append(backup_prune_message)
-        backup_message = self._verify_latest_backup_once()
-        if backup_message:
-            messages.append(backup_message)
-        self._persist_daily_report_snapshot(messages, now)
-        self._persist_operations_summary_snapshot(messages, now)
+
+        def _health_messages() -> list[str]:
+            report = self._persist_server_health_snapshot(now)
+            if report.get("status_level") == "error":
+                return [f"서버 상태 확인 필요: {report.get('message')}"]
+            return []
+
+        def _anomaly_messages() -> list[str]:
+            report = self._persist_collection_anomaly_snapshot(now)
+            if report.get("issue_count"):
+                return [f"수집 이상치 {report.get('issue_count')}건 감지"]
+            return []
+
+        def _asset_messages() -> list[str]:
+            cleanup = prune_decorative_press_release_assets(self.store)
+            if cleanup["deleted"]:
+                return [f"보도자료 장식 이미지 {cleanup['deleted']}건 정리"]
+            return []
+
+        def _as_messages(value: object) -> list[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item) for item in value]
+            return [str(value)]
+
+        # 각 단계를 독립적으로 실행한다. 한 단계가 실패해도 나머지 유지보수는 계속된다.
+        steps = [
+            ("서버 상태 점검", _health_messages),
+            ("수집 이상치 점검", _anomaly_messages),
+            ("중복 제거", lambda: _as_messages(self._deduplicate_press_releases_once())),
+            ("초안 실패 정리", lambda: _as_messages(self._cleanup_stale_draft_failures_once())),
+            ("운영 이벤트 정리", lambda: _as_messages(self._prune_old_operation_events_once(now))),
+            ("장식 이미지 정리", _asset_messages),
+            ("소스 복구", lambda: _as_messages(self._recover_failed_sources_once())),
+            ("대기열 처리", lambda: _as_messages(self._drain_pending_queue_once())),
+            ("URL 후보 탐색", lambda: _as_messages(self._discover_fallback_url_candidates_once())),
+            ("백업 생성", lambda: _as_messages(self._create_backup_if_needed_once(now))),
+            ("오래된 백업 정리", lambda: _as_messages(self._prune_old_backups_once())),
+            ("백업 검증", lambda: _as_messages(self._verify_latest_backup_once())),
+        ]
+        for label, step in steps:
+            try:
+                messages.extend(step())
+            except Exception as exc:  # noqa: BLE001 - 한 단계 실패가 전체 유지보수를 멈추지 않게 한다.
+                logger.exception("auto maintenance step failed step=%s", label)
+                messages.append(f"{label} 실패: {type(exc).__name__}")
+
+        for snapshot_label, snapshot in (
+            ("일일 리포트", lambda: self._persist_daily_report_snapshot(messages, now)),
+            ("운영 요약", lambda: self._persist_operations_summary_snapshot(messages, now)),
+        ):
+            try:
+                snapshot()
+            except Exception:  # noqa: BLE001 - 스냅샷 기록 실패도 전체를 막지 않는다.
+                logger.exception("auto maintenance snapshot failed step=%s", snapshot_label)
 
     def _persist_server_health_snapshot(self, now: datetime) -> dict[str, object]:
         started = now
