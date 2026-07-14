@@ -367,6 +367,17 @@ button.secondary:hover {
   gap: 20px;
 }
 
+/* 두 컬럼의 리스트 카드 세로 높이를 맞춘다(짧은 쪽도 컬럼을 끝까지 채움). */
+.split > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.split > div > .list {
+  flex: 1 1 auto;
+}
+
 h1 {
   margin: 0 0 12px;
   font-size: 23px;
