@@ -2618,6 +2618,25 @@ def test_operations_page_redirects_to_admin_setup_when_password_is_missing(monke
     assert "/admin/setup" in response.headers["Location"]
 
 
+def test_pages_have_distinct_browser_titles(monkeypatch):
+    db_path = Path(f"data/.test_titles_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 컨텍스트 프로세서 기본 제목(뷰가 page_title을 안 넘기는 페이지)
+    assert "<title>대시보드 · News Express</title>" in client.get("/").get_data(as_text=True)
+    assert "<title>Gemini 사용량 · News Express</title>" in client.get("/gemini-usage").get_data(as_text=True)
+    # 뷰가 page_title을 넘기는 페이지(초안)는 그 값이 제목에 반영된다.
+    drafts_html = client.get("/drafts").get_data(as_text=True)
+    assert "· News Express</title>" in drafts_html
+    assert "<title>News Express</title>" not in drafts_html
+
+
 def test_security_headers_are_applied(monkeypatch):
     db_path = Path(f"data/.test_security_headers_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -2636,6 +2655,13 @@ def test_security_headers_are_applied(monkeypatch):
     assert "camera=()" in response.headers["Permissions-Policy"]
     assert "default-src 'self'" in response.headers["Content-Security-Policy"]
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+    # script-src는 'unsafe-inline' 대신 요청별 nonce를 쓰고, 인라인 스크립트에 같은 nonce가 붙는다.
+    csp = response.headers["Content-Security-Policy"]
+    assert "script-src 'self' 'unsafe-inline'" not in csp
+    nonce_match = re.search(r"script-src 'self' 'nonce-([A-Za-z0-9_-]+)'", csp)
+    assert nonce_match
+    assert f'<script nonce="{nonce_match.group(1)}">' in response.get_data(as_text=True)
 
     operations = client.get("/operations")
     assert operations.headers["Cache-Control"] == "no-store, max-age=0"

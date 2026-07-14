@@ -258,6 +258,8 @@ def create_app() -> Flask:
             "auth_state": auth_config(store),
             "admin_authenticated": bool(session.get("admin_authenticated")),
             "csrf_token": _csrf_token,
+            "csp_nonce": _current_csp_nonce,
+            "page_title": _page_title(request.endpoint),
         }
 
     @app.after_request
@@ -1500,6 +1502,36 @@ def _current_request_id() -> str:
     return str(request_id)
 
 
+def _current_csp_nonce() -> str:
+    nonce = getattr(g, "csp_nonce", "")
+    if not nonce:
+        nonce = secrets.token_urlsafe(16)
+        g.csp_nonce = nonce
+    return str(nonce)
+
+
+_PAGE_TITLES = {
+    "dashboard": "대시보드",
+    "drafts": "초안 검수",
+    "draft_detail": "초안 상세",
+    "next_review_draft": "초안 검수",
+    "press_releases": "수집 원문",
+    "press_release_detail": "원문 상세",
+    "source_detail": "기관별 수집",
+    "operations": "운영 관리",
+    "ops_logs": "운영 로그",
+    "operations_login": "운영 관리 확인",
+    "login": "로그인",
+    "admin_setup": "관리자 설정",
+    "gemini_usage": "Gemini 사용량",
+    "writing_settings": "기사 설정",
+}
+
+
+def _page_title(endpoint: str | None) -> str:
+    return _PAGE_TITLES.get(endpoint or "", "")
+
+
 def _csrf_token() -> str:
     token = session.get(CSRF_SESSION_KEY)
     if not token:
@@ -1679,7 +1711,7 @@ def _content_security_policy() -> str:
         [
             "default-src 'self'",
             "img-src 'self' data: blob: https: http:",
-            "script-src 'self' 'unsafe-inline'",
+            f"script-src 'self' 'nonce-{_current_csp_nonce()}'",
             "style-src 'self' 'unsafe-inline'",
             "connect-src 'self'",
             "font-src 'self' data:",

@@ -186,7 +186,7 @@
 </section>
 
 {% if auto_collector_status and auto_collector_status.enabled %}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (() => {
       const panel = document.querySelector(".crawl-progress");
       if (!panel) return;

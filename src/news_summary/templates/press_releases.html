@@ -23,14 +23,14 @@
   {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
   {% for region in selected_regions %}<input type="hidden" name="region" value="{{ region }}">{% endfor %}
   <label for="source">기관별</label>
-  <select id="source" name="source" onchange="this.form.submit()">
+  <select id="source" name="source" data-autosubmit>
     <option value="">전체 기관</option>
     {% for source in source_options %}
       <option value="{{ source.id }}" {% if source_filter == source.id %}selected{% endif %}>{{ source_display_label(source.name) }}</option>
     {% endfor %}
   </select>
   <label for="model">모델별</label>
-  <select id="model" name="model" onchange="this.form.submit()">
+  <select id="model" name="model" data-autosubmit>
     <option value="">전체 모델</option>
     <option value="flash" {% if model_filter == 'flash' %}selected{% endif %}>Gemini Flash</option>
     <option value="lite" {% if model_filter == 'lite' %}selected{% endif %}>Gemini Lite</option>

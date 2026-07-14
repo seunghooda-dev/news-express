@@ -108,7 +108,7 @@
   </form>
 </section>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
   (() => {
     const originalDetails = document.querySelector(".original-details");
     const form = document.querySelector("#draft-editor");

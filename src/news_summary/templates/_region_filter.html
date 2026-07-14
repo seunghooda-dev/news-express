@@ -27,7 +27,7 @@
     </div>
   </form>
 </details>
-<script>
+<script nonce="{{ csp_nonce() }}">
   (() => {
     document.querySelectorAll(".region-filter").forEach((form) => {
       const status = form.querySelector(".region-filter-status");
