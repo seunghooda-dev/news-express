@@ -812,14 +812,16 @@ class Store:
                 self._replace_press_release_assets(conn, release_id, item.assets)
                 return None
 
+            # SELECT 후 INSERT 사이에 다른 트랜잭션이 같은 url을 먼저 넣는 경합(특히 PostgreSQL)에
+            # 대비해 원자적 upsert로 삽입한다. 경합이 나면 DO NOTHING으로 무시되어 아무 행도 반환되지 않는다.
             insert_sql = """
                 INSERT INTO press_releases
                 (source_id, source_name, region, title, url, content, published_at, collected_at,
                  validation_status, validation_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (url) DO NOTHING
+                RETURNING id
                 """
-            if self.is_postgres:
-                insert_sql += " RETURNING id"
             cur = conn.execute(
                 insert_sql,
                 (
@@ -835,13 +837,12 @@ class Store:
                     item.validation_note,
                 ),
             )
-            if self.is_postgres:
-                row = cur.fetchone()
-                release_id = int(row["id"]) if row else None
-            else:
-                release_id = int(cur.lastrowid) if cur.lastrowid else None
-            if release_id:
-                self._replace_press_release_assets(conn, release_id, item.assets)
+            row = cur.fetchone()
+            if row is None:
+                # 다른 트랜잭션이 같은 url을 먼저 저장했다. 새로 추가된 것으로 보지 않는다.
+                return None
+            release_id = int(row["id"])
+            self._replace_press_release_assets(conn, release_id, item.assets)
             return release_id
 
     def _replace_press_release_assets(
