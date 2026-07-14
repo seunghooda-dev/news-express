@@ -2913,6 +2913,69 @@ def test_admin_setup_rejects_weak_password(monkeypatch):
     assert protected.status_code == 200
 
 
+def test_operations_password_change_stores_weak_db_password(monkeypatch):
+    db_path = Path(f"data/.test_ops_pw_change_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "skwmakzl1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.auth import operations_password_source, verify_operations_password
+    from news_summary.storage import Store
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 현재는 관리자 비밀번호(skwmakzl1)로 운영 접근을 연다.
+    client.post("/operations/login", data={"password": "skwmakzl1", "next": "/operations"})
+
+    # 잘못된 현재 비밀번호는 거부.
+    wrong = client.post(
+        "/operations/password",
+        data={"current_password": "nope", "new_password": "op99", "confirm_password": "op99"},
+        follow_redirects=True,
+    )
+    assert "현재 운영 관리 비밀번호가 올바르지 않습니다." in wrong.data.decode("utf-8")
+
+    # 약한 새 비밀번호(op99)도 허용되어 DB에 저장된다.
+    ok = client.post(
+        "/operations/password",
+        data={"current_password": "skwmakzl1", "new_password": "op99", "confirm_password": "op99"},
+        follow_redirects=True,
+    )
+    assert "운영 관리 비밀번호를 변경했습니다." in ok.data.decode("utf-8")
+
+    store = Store(db_path)
+    assert operations_password_source(store) == "database"
+    assert verify_operations_password(store, "op99") is True
+    # DB 전용 비밀번호가 생겼으므로 이제 관리자 비밀번호로는 운영 로그인이 안 된다.
+    assert verify_operations_password(store, "skwmakzl1") is False
+
+
+def test_operations_password_change_rejects_too_short(monkeypatch):
+    db_path = Path(f"data/.test_ops_pw_short_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "skwmakzl1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+    client.post("/operations/login", data={"password": "skwmakzl1", "next": "/operations"})
+
+    resp = client.post(
+        "/operations/password",
+        data={"current_password": "skwmakzl1", "new_password": "ab", "confirm_password": "ab"},
+        follow_redirects=True,
+    )
+    assert "새 비밀번호를 사용할 수 없습니다" in resp.data.decode("utf-8")
+
+
 def test_operations_page_changes_database_admin_password(monkeypatch):
     db_path = Path(f"data/.test_admin_password_change_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
@@ -2935,7 +2998,7 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     operations_html = client.get("/operations").data.decode("utf-8")
     assert "관리자 비밀번호" in operations_html
     assert "확인 후 변경 열기" in operations_html
-    assert "new_password" not in operations_html
+    assert 'action="/operations/admin-password"' not in operations_html
 
     wrong_unlock = client.post(
         "/operations/admin-password/unlock",
@@ -2944,7 +3007,7 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     )
     wrong_unlock_html = wrong_unlock.data.decode("utf-8")
     assert "현재 관리자 비밀번호가 올바르지 않습니다." in wrong_unlock_html
-    assert "new_password" not in wrong_unlock_html
+    assert 'action="/operations/admin-password"' not in wrong_unlock_html
 
     unlock = client.post(
         "/operations/admin-password/unlock",
@@ -2954,7 +3017,7 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     unlocked_html = unlock.data.decode("utf-8")
     assert "관리자 비밀번호 변경 입력칸을 열었습니다." in unlocked_html
     assert "비밀번호 변경" in unlocked_html
-    assert "new_password" in unlocked_html
+    assert 'action="/operations/admin-password"' in unlocked_html
 
     weak_change = client.post(
         "/operations/admin-password",

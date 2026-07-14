@@ -26,7 +26,10 @@ from .auth import (
     admin_plain_password_issues,
     auth_config,
     operations_password_configured,
+    operations_password_issues,
+    operations_password_source,
     set_admin_password,
+    set_operations_password,
     verify_admin_password,
     verify_operations_password,
 )
@@ -90,6 +93,7 @@ OPERATIONS_ACCESS_ENDPOINTS = {
     "update_auto_collect",
     "unlock_operations_write_access",
     "lock_operations_write_access",
+    "change_operations_password",
     "unlock_admin_password_panel",
     "change_admin_password",
     "create_backup_route",
@@ -351,7 +355,7 @@ def create_app() -> Flask:
         endpoint = request.endpoint or ""
         if not _operations_access_protected_endpoint(endpoint):
             return None
-        if _operations_access_unlocked(app):
+        if _operations_access_unlocked(app, store):
             return None
         if not _operations_password_available(store):
             flash("운영 관리에 접속하려면 관리자 비밀번호를 먼저 설정하세요.")
@@ -538,7 +542,7 @@ def create_app() -> Flask:
 
     @app.route("/operations/login", methods=["GET", "POST"])
     def operations_login():
-        if _operations_access_unlocked(app):
+        if _operations_access_unlocked(app, store):
             return redirect(_safe_next("operations"))
         if not _operations_password_available(store):
             flash("운영 관리에 접속하려면 관리자 비밀번호를 먼저 설정하세요.")
@@ -613,6 +617,7 @@ def create_app() -> Flask:
                     ),
                     "operations_write_unlocked": _operations_write_access_unlocked(store),
                     "operations_write_password_configured": _operations_password_available(store),
+                    "operations_password_source": operations_password_source(store),
                     "operations_write_expires_at": _operations_write_access_expires_at(),
                     "operations_write_unlock_minutes": _operations_write_unlock_minutes(),
                     "operation_events": _operation_event_items(store),
@@ -688,6 +693,34 @@ def create_app() -> Flask:
         session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
         _record_operation_event(store, "operations_write_locked", target="operations", detail="운영 변경 잠금")
         flash("운영 변경 기능을 다시 잠갔습니다.")
+        return redirect(url_for("operations"))
+
+    @app.post("/operations/password")
+    def change_operations_password():
+        if blocked_response := _auth_rate_limit_response(app, "operations_password_change", "operations"):
+            return blocked_response
+        current_password = request.form.get("current_password") or ""
+        new_password = request.form.get("new_password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
+        if not verify_operations_password(store, current_password):
+            _auth_rate_limit_record_failure(app, "operations_password_change")
+            logger.warning("operations password change failed remote_addr=%s", _masked_request_ip())
+            flash("현재 운영 관리 비밀번호가 올바르지 않습니다.")
+            return redirect(url_for("operations"))
+        _auth_rate_limit_clear("operations_password_change")
+        issues = operations_password_issues(new_password)
+        if issues:
+            flash("새 비밀번호를 사용할 수 없습니다: " + ", ".join(issues) + ".")
+            return redirect(url_for("operations"))
+        if new_password != confirm_password:
+            flash("새 비밀번호 확인이 일치하지 않습니다.")
+            return redirect(url_for("operations"))
+        set_operations_password(store, new_password)
+        _record_operation_event(
+            store, "operations_password_changed", target="operations", detail="운영 관리 비밀번호 변경"
+        )
+        logger.info("operations password changed remote_addr=%s", _masked_request_ip())
+        flash("운영 관리 비밀번호를 변경했습니다.")
         return redirect(url_for("operations"))
 
     @app.post("/operations/admin-password/unlock")
@@ -1485,14 +1518,14 @@ def _operations_access_protected_endpoint(endpoint: str) -> bool:
     return endpoint in OPERATIONS_ACCESS_ENDPOINTS
 
 
-def _operations_access_unlocked(app: Flask) -> bool:
+def _operations_access_unlocked(app: Flask, store: Store) -> bool:
     if app.testing and not _env_flag("NEWS_SUMMARY_TEST_OPERATIONS_AUTH"):
         return True
     if session.get(OPERATIONS_ACCESS_UNLOCKED_KEY):
         return True
     # 운영 전용 비밀번호가 설정돼 있으면 관리자 로그인만으로는 통과시키지 않고
     # 운영 관리 진입 시 항상 비밀번호를 다시 확인한다.
-    if operations_password_configured():
+    if operations_password_configured(store):
         return False
     return bool(session.get("admin_authenticated"))
 
@@ -4938,7 +4971,7 @@ def _configured_admin_password_source(store: Store) -> str:
 
 def _operations_password_available(store: Store) -> bool:
     # 운영 전용 비밀번호나 관리자 비밀번호 중 하나라도 있으면 운영 로그인으로 확인할 수 있다.
-    return operations_password_configured() or bool(_configured_admin_password_source(store))
+    return operations_password_configured(store) or bool(_configured_admin_password_source(store))
 
 
 def _operations_write_access_unlocked(store: Store) -> bool:

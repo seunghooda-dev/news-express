@@ -11,6 +11,8 @@ from .storage import Store
 
 
 ADMIN_PASSWORD_HASH_KEY = "admin_password_hash"
+OPERATIONS_PASSWORD_HASH_KEY = "operations_password_hash"
+OPERATIONS_PASSWORD_MIN_LENGTH = 4
 
 
 @dataclass(frozen=True)
@@ -48,11 +50,20 @@ def verify_admin_password(store: Store, password: str) -> bool:
     return False
 
 
-def operations_password_configured() -> bool:
+def operations_password_configured(store: Store) -> bool:
     return bool(
         os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH")
         or os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD")
+        or store.get_app_metadata(OPERATIONS_PASSWORD_HASH_KEY)
     )
+
+
+def operations_password_source(store: Store) -> str:
+    if os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH") or os.getenv("NEWS_SUMMARY_OPERATIONS_PASSWORD"):
+        return "environment"
+    if store.get_app_metadata(OPERATIONS_PASSWORD_HASH_KEY):
+        return "database"
+    return ""
 
 
 def verify_operations_password(store: Store, password: str) -> bool:
@@ -64,8 +75,27 @@ def verify_operations_password(store: Store, password: str) -> bool:
     if configured_password:
         return hmac.compare_digest(configured_password, password)
 
+    stored_hash = store.get_app_metadata(OPERATIONS_PASSWORD_HASH_KEY)
+    if stored_hash:
+        return check_password_hash(stored_hash, password)
+
     # 운영 전용 비밀번호가 없으면 기존 동작대로 관리자 비밀번호로 확인한다.
     return verify_admin_password(store, password)
+
+
+def set_operations_password(store: Store, password: str) -> None:
+    store.set_app_metadata(OPERATIONS_PASSWORD_HASH_KEY, generate_password_hash(password))
+
+
+def operations_password_issues(password: str) -> list[str]:
+    # 운영 관리 비밀번호는 내부 도구용이라 강도 규칙을 완화한다(빈 값/너무 짧은 값만 막는다).
+    value = str(password or "")
+    issues: list[str] = []
+    if not value:
+        issues.append("비어 있음")
+    elif len(value) < OPERATIONS_PASSWORD_MIN_LENGTH:
+        issues.append(f"{OPERATIONS_PASSWORD_MIN_LENGTH}자 미만")
+    return issues
 
 
 def set_admin_password(store: Store, password: str) -> None:

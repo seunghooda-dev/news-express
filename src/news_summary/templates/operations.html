@@ -903,6 +903,31 @@
 
   <article class="ops-card">
     <div class="ops-card-head">
+      <h2>운영 관리 비밀번호</h2>
+      <span class="badge {% if operations_password_source == 'database' %}badge-gemini{% elif operations_password_source == 'environment' %}badge-neutral{% else %}badge-warning{% endif %}">
+        {% if operations_password_source == 'database' %}변경 가능{% elif operations_password_source == 'environment' %}환경변수 관리{% else %}관리자 비번 사용 중{% endif %}
+      </span>
+    </div>
+    {% if operations_password_source == 'environment' %}
+      <p class="meta">운영 비밀번호가 환경변수(NEWS_SUMMARY_OPERATIONS_PASSWORD)로 설정돼 있어 화면에서 바꿀 수 없습니다. 화면 변경을 쓰려면 그 환경변수를 지운 뒤 다시 여세요.</p>
+    {% else %}
+      <p class="meta">운영 관리 진입에 쓰는 비밀번호입니다. 현재 비밀번호를 확인한 뒤 새 값으로 바꿉니다.{% if operations_password_source != 'database' %} (아직 전용 비밀번호가 없어, 현재 비밀번호는 관리자 비밀번호로 확인합니다. 한 번 바꾸면 이후로는 이 값이 우선 적용됩니다.){% endif %}</p>
+      <form class="ops-form" method="post" action="{{ url_for('change_operations_password') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="username" value="operations" autocomplete="username">
+        <label for="ops_current_password">현재 비밀번호</label>
+        <input id="ops_current_password" name="current_password" type="password" autocomplete="current-password" required>
+        <label for="ops_new_password">새 비밀번호</label>
+        <input id="ops_new_password" name="new_password" type="password" autocomplete="new-password" minlength="4" required>
+        <label for="ops_confirm_password">새 비밀번호 확인</label>
+        <input id="ops_confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="4" required>
+        <button type="submit">운영 비밀번호 변경</button>
+      </form>
+    {% endif %}
+  </article>
+
+  <article class="ops-card">
+    <div class="ops-card-head">
       <h2>관리자 비밀번호</h2>
       <span class="badge {% if admin_password_source == 'environment' %}badge-neutral{% elif admin_password_unlocked %}badge-gemini{% else %}badge-warning{% endif %}">
         {% if admin_password_source == 'environment' %}.env 관리{% elif admin_password_unlocked %}변경 가능{% elif admin_password_configured %}확인 필요{% else %}미설정{% endif %}
