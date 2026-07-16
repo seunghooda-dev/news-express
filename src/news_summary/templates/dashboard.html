@@ -154,6 +154,11 @@
             <strong>{{ item.title }}</strong>
             <span class="row-meta row-meta-main">
               <span>{{ source_display_label(item.source_name) }}</span>
+              {% if item.published_at %}
+                <span>게시 {{ item.published_at|date_label }}</span>
+              {% else %}
+                <span>수집 {{ item.collected_at|date_label }}</span>
+              {% endif %}
               {% if item.draft_id %}
                 <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
                 <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
@@ -161,16 +166,11 @@
                 <span class="badge badge-neutral">초안 없음</span>
               {% endif %}
             </span>
-            <span class="row-meta row-meta-secondary">
-              {% if item.published_at %}
-                <span>게시 {{ item.published_at|date_label }}</span>
-              {% else %}
-                <span>수집 {{ item.collected_at|date_label }}</span>
-              {% endif %}
-              {% if item.asset_count %}
+            {% if item.asset_count %}
+              <span class="row-meta row-meta-secondary">
                 <span class="badge badge-neutral">첨부 {{ item.asset_count }}개</span>
-              {% endif %}
-            </span>
+              </span>
+            {% endif %}
           </span>
         </a>
       {% else %}
