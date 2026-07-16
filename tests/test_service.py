@@ -530,6 +530,41 @@ def test_collect_enabled_sources_reports_source_progress(monkeypatch):
     assert events[-1]["message"] == "수집 완료"
 
 
+def test_collect_enabled_sources_filters_by_source_ids(monkeypatch):
+    db_path = Path(f"data/.test_service_source_filter_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [
+        Source(id="one", name="첫 기관", region="전남", type="html_board"),
+        Source(id="gangjin-county", name="강진군청 보도자료", region="전남", type="html_board"),
+    ]
+    collected_ids = []
+
+    def fake_collect(source, limit):
+        collected_ids.append(source.id)
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title=f"{source.name} 보도자료",
+                url=f"https://example.com/{source.id}/{uuid4().hex}",
+                content=f"{source.name}은 새 사업을 추진한다고 밝혔다.",
+            )
+        ]
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", fake_collect)
+
+    messages = collect_enabled_sources(
+        store, Path("unused.yaml"), limit=3, source_ids=["gangjin-county"]
+    )
+
+    # 지정한 소스만 수집하고 나머지는 건드리지 않는다.
+    assert collected_ids == ["gangjin-county"]
+    assert "새 원문 1건" in messages[-1]
+
+
 def test_collection_retention_cutoff_skips_weekends_and_holidays(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_RETENTION_DAYS", "3")
     monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "")

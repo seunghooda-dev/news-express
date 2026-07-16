@@ -23,6 +23,12 @@ def main() -> None:
 
     collect = sub.add_parser("collect", help="보도자료 원문을 수집합니다.")
     collect.add_argument("--limit", type=int, default=30, help="지자체별 최대 수집 건수")
+    collect.add_argument(
+        "--source",
+        action="append",
+        default=None,
+        help="지정한 소스 id만 수집합니다(여러 번 지정 가능). 예: --source gangjin-county",
+    )
 
     draft = sub.add_parser("draft", help="수집 원문으로 기사 초안을 만듭니다.")
     draft.add_argument("--limit", type=int, default=5, help="최대 초안 생성 건수")
@@ -78,7 +84,7 @@ def main() -> None:
         print(f"데이터베이스 준비 완료: {store.display_location}")
     elif args.command == "collect":
         store.init_db()
-        collect_command(store, config_path, args.limit)
+        collect_command(store, config_path, args.limit, source_ids=args.source)
     elif args.command == "draft":
         store.init_db()
         draft_command(store, args.limit)
@@ -119,10 +125,10 @@ def main() -> None:
         serve_command(args.host, args.port)
 
 
-def collect_command(store: Store, config_path, limit: int) -> None:
+def collect_command(store: Store, config_path, limit: int, source_ids: list[str] | None = None) -> None:
     from .service import collect_enabled_sources
 
-    for message in collect_enabled_sources(store, config_path, limit):
+    for message in collect_enabled_sources(store, config_path, limit, source_ids=source_ids):
         print(message)
 
 

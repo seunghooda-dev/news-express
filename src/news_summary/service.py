@@ -145,9 +145,14 @@ def collect_enabled_sources(
     config_path: Path,
     limit: int = DEFAULT_COLLECT_LIMIT,
     progress_callback: ProgressCallback | None = None,
+    source_ids: list[str] | None = None,
 ) -> list[str]:
     messages: list[str] = []
     sources = [source for source in load_sources(config_path) if source.enabled]
+    if source_ids:
+        # 특정 소스만 수집(예: 해외 IP가 차단되는 강진을 로컬에서만 수집할 때).
+        wanted = set(source_ids)
+        sources = [source for source in sources if source.id in wanted]
     retention_cutoff = collection_retention_cutoff_date()
     if not sources:
         _report_progress(progress_callback, phase="done", current=0, total=0, message="수집 완료")
