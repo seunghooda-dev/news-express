@@ -78,7 +78,7 @@ services:
       - key: NEWS_SUMMARY_AUTO_BACKUP_VERIFY
         value: "1"
       - key: NEWS_SUMMARY_PUBLIC_URL
-        value: https://news-express-5uq0.onrender.com
+        value: https://news-express-1.onrender.com
       - key: NEWS_SUMMARY_GEMINI_FAILURE_RETRY_SECONDS
         value: "900"
       - key: NEWS_SUMMARY_GITHUB_REPO

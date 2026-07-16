@@ -2,7 +2,7 @@
 
 - **프로젝트**: news-express (뉴스 요약/보도자료 초안 웹앱, Flask + PostgreSQL(Neon), Render 배포)
 - **저장소/브랜치**: `seunghooda-dev/news-express` · `codex/news-express`
-- **라이브**: https://news-express-5uq0.onrender.com
+- **라이브**: https://news-express-5uq0.onrender.com (작성 당시 주소 — 2026-07-16 싱가포르 이전 후 현재 주소는 https://news-express-1.onrender.com)
 
 ## 1. 개요
 
