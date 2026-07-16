@@ -14,4 +14,5 @@ def isolate_auth_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", raising=False)
     monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("NEWS_SUMMARY_DATABASE_URL", "")
+    monkeypatch.setenv("NEWS_SUMMARY_COLLECT_EXCLUDE_SOURCES", "")
     monkeypatch.setenv("NEWS_SUMMARY_LOG_DIR", str(tmp_path / "logs"))

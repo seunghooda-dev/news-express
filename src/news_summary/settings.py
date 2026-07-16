@@ -33,6 +33,13 @@ def env_database(default: str = "data/news_summary.sqlite") -> str:
     return str(resolved)
 
 
+def collection_excluded_source_ids() -> set[str]:
+    # 서버 IP가 차단되는 소스(예: 강진)를 서버 수집·재시도에서 제외할 때 쓴다.
+    # 로컬 CLI에서 --source로 명시 지정하면 이 제외 목록보다 우선한다.
+    raw = os.getenv("NEWS_SUMMARY_COLLECT_EXCLUDE_SOURCES", "")
+    return {token.strip() for token in raw.split(",") if token.strip()}
+
+
 def load_sources(config_path: Path) -> list[Source]:
     try:
         import yaml

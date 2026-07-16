@@ -29,7 +29,7 @@ from .service import (
     repair_missing_published_dates,
     retention_holidays,
 )
-from .settings import PROJECT_ROOT, env_path, load_sources
+from .settings import PROJECT_ROOT, collection_excluded_source_ids, env_path, load_sources
 from .storage import Store
 
 
@@ -920,8 +920,18 @@ def _source_recovery_candidates(store: Store, config_path: Path, limit: int) -> 
     return candidates[:limit]
 
 
+def _collectable_source_map(config_path: Path) -> dict[str, Source]:
+    # 서버 수집·재시도 대상 소스 목록(제외 목록 반영). 화면 표시는 load_sources를 그대로 쓴다.
+    excluded = collection_excluded_source_ids()
+    return {
+        source.id: source
+        for source in load_sources(config_path)
+        if source.enabled and source.id not in excluded
+    }
+
+
 def _failed_source_candidates(store: Store, config_path: Path, limit: int) -> list[SourceRecoveryCandidate]:
-    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    source_map = _collectable_source_map(config_path)
     now = datetime.now(timezone.utc)
     network_cooldown = timedelta(seconds=_network_failure_recheck_cooldown_seconds())
     with store.connect() as conn:
@@ -970,7 +980,7 @@ def _quiet_source_candidates(store: Store, config_path: Path, limit: int) -> lis
     if now.hour < min(check_hour, 23):
         return []
 
-    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    source_map = _collectable_source_map(config_path)
     if not source_map:
         return []
     local_start = datetime.combine(today, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc).isoformat()
@@ -1042,7 +1052,7 @@ def _focused_source_candidates(store: Store, config_path: Path, limit: int) -> l
         return []
     now = datetime.now(timezone.utc)
     anomaly_report = _collection_anomaly_snapshot(store, config_path, now=now)
-    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    source_map = _collectable_source_map(config_path)
     local_today = now.astimezone(LOCAL_TZ).date()
     local_start = datetime.combine(local_today, datetime.min.time(), tzinfo=LOCAL_TZ).astimezone(timezone.utc).isoformat()
     with store.connect() as conn:
@@ -1074,7 +1084,7 @@ def _focused_source_candidates(store: Store, config_path: Path, limit: int) -> l
 
 
 def _url_discovery_candidates(store: Store, config_path: Path, limit: int) -> list[Source]:
-    source_map = {source.id: source for source in load_sources(config_path) if source.enabled}
+    source_map = _collectable_source_map(config_path)
     if not source_map:
         return []
     with store.connect() as conn:

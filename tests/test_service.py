@@ -565,6 +565,49 @@ def test_collect_enabled_sources_filters_by_source_ids(monkeypatch):
     assert "새 원문 1건" in messages[-1]
 
 
+def test_collect_enabled_sources_respects_exclusion_env(monkeypatch):
+    db_path = Path(f"data/.test_service_exclusion_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [
+        Source(id="one", name="첫 기관", region="전남", type="html_board"),
+        Source(id="gangjin-county", name="강진군청 보도자료", region="전남", type="html_board"),
+    ]
+    collected_ids = []
+
+    def fake_collect(source, limit):
+        collected_ids.append(source.id)
+        return []
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", fake_collect)
+    monkeypatch.setenv("NEWS_SUMMARY_COLLECT_EXCLUDE_SOURCES", "gangjin-county")
+
+    # 서버 기본 수집은 제외 목록을 건너뛴다.
+    collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+    assert collected_ids == ["one"]
+
+    # 명시 --source 지정은 제외 목록보다 우선한다(로컬 수집 경로).
+    collected_ids.clear()
+    collect_enabled_sources(store, Path("unused.yaml"), limit=3, source_ids=["gangjin-county"])
+    assert collected_ids == ["gangjin-county"]
+
+
+def test_collectable_source_map_respects_exclusion_env(monkeypatch):
+    from news_summary.scheduler import _collectable_source_map
+
+    sources = [
+        Source(id="one", name="첫 기관", region="전남", type="html_board"),
+        Source(id="gangjin-county", name="강진군청 보도자료", region="전남", type="html_board"),
+    ]
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: sources)
+    monkeypatch.setenv("NEWS_SUMMARY_COLLECT_EXCLUDE_SOURCES", "gangjin-county")
+
+    source_map = _collectable_source_map(Path("unused.yaml"))
+
+    assert set(source_map) == {"one"}
+
+
 def test_collection_retention_cutoff_skips_weekends_and_holidays(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_RETENTION_DAYS", "3")
     monkeypatch.setenv("NEWS_SUMMARY_RETENTION_HOLIDAYS", "")

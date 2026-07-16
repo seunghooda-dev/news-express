@@ -16,7 +16,7 @@ from .asset_filters import is_cleanup_noise_image_asset
 from .collectors import DEFAULT_HEADERS, CollectionError, _clean_text, _normalize_published_at, collect_source
 from .models import PressRelease, Source
 from .ops_logging import get_logger
-from .settings import load_sources
+from .settings import collection_excluded_source_ids, load_sources
 from .storage import Store
 from .writer import GeminiDraftError, generate_draft
 
@@ -151,8 +151,13 @@ def collect_enabled_sources(
     sources = [source for source in load_sources(config_path) if source.enabled]
     if source_ids:
         # 특정 소스만 수집(예: 해외 IP가 차단되는 강진을 로컬에서만 수집할 때).
+        # 명시 지정은 서버 제외 목록보다 우선한다.
         wanted = set(source_ids)
         sources = [source for source in sources if source.id in wanted]
+    else:
+        excluded = collection_excluded_source_ids()
+        if excluded:
+            sources = [source for source in sources if source.id not in excluded]
     retention_cutoff = collection_retention_cutoff_date()
     if not sources:
         _report_progress(progress_callback, phase="done", current=0, total=0, message="수집 완료")
