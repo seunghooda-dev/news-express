@@ -165,12 +165,10 @@
               {% else %}
                 <span class="badge badge-neutral">초안 없음</span>
               {% endif %}
-            </span>
-            {% if item.asset_count %}
-              <span class="row-meta row-meta-secondary">
+              {% if item.asset_count %}
                 <span class="badge badge-neutral">첨부 {{ item.asset_count }}개</span>
-              </span>
-            {% endif %}
+              {% endif %}
+            </span>
           </span>
         </a>
       {% else %}

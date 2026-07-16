@@ -1276,7 +1276,11 @@ def test_dashboard_preview_rows_split_primary_and_secondary_meta(monkeypatch):
     assert 'class="row draft-row"' in html
     assert 'class="row-content"' in html
     assert html.count('class="row-meta row-meta-main"') >= 2
-    assert html.count('class="row-meta row-meta-secondary"') >= 2
+    # 검수 대기 초안 행은 여전히 보조 메타 줄을 쓴다.
+    assert html.count('class="row-meta row-meta-secondary"') >= 1
+    # 수집 원문 행은 게시 일자와 첨부 배지가 첫 메타 줄(기관명 오른쪽)에 함께 온다.
+    release_main_meta = re.findall(r'row-meta row-meta-main">(.*?)</span>\s*</span>', html, re.S)
+    assert any(("게시" in block) and ("첨부 1개" in block) for block in release_main_meta)
 
 
 def test_press_releases_page_shows_active_filter_chips(monkeypatch):
