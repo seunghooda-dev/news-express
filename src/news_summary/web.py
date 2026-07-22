@@ -5200,7 +5200,9 @@ def _browser_label(user_agent: object) -> str:
 def _should_record_visitor_access(endpoint: str, method: str) -> bool:
     if method.upper() not in {"GET", "POST"}:
         return False
-    if endpoint in {"static", "favicon", "healthz", "healthz_details", "recrawl_status"}:
+    # preview_press_release_asset: 페이지가 썸네일을 자동 로드할 때마다 불리는 부수 요청이라
+    # 접속 이력에 넣으면 한 번의 방문이 수십 건으로 잡힌다. 다운로드는 의도적 행동이라 기록 유지.
+    if endpoint in {"static", "favicon", "healthz", "healthz_details", "recrawl_status", "preview_press_release_asset"}:
         return False
     if request.path.startswith("/static/"):
         return False

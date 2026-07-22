@@ -5531,6 +5531,23 @@ def test_source_summary_marks_three_consecutive_structural_failures_as_failed(mo
     assert summary["consecutive_failures"] == 3
 
 
+def test_visitor_access_skips_thumbnail_preview_requests(monkeypatch):
+    db_path = Path(f"data/.test_visitor_skip_preview_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import _should_record_visitor_access, create_app
+
+    app = create_app()
+    # 썸네일 프리뷰는 페이지 로드마다 자동으로 불리는 부수 요청 — 접속 이력에서 제외한다.
+    with app.test_request_context("/assets/1/preview"):
+        assert _should_record_visitor_access("preview_press_release_asset", "GET") is False
+    # 다운로드는 의도적 행동이라 기록 유지, 일반 페이지도 기록.
+    with app.test_request_context("/assets/1/download"):
+        assert _should_record_visitor_access("download_press_release_asset", "GET") is True
+    with app.test_request_context("/"):
+        assert _should_record_visitor_access("dashboard", "GET") is True
+
+
 def test_operations_page_records_masked_visitor_access(monkeypatch):
     db_path = Path(f"data/.test_visitor_access_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
