@@ -21,6 +21,7 @@
   {% endfor %}
 </section>
 
+<h2 class="ops-group-title">핵심 상태</h2>
 <section class="ops-grid">
   <article class="ops-card" id="ops-service-status">
     <div class="ops-card-head">
@@ -47,201 +48,6 @@
       <p class="meta">현재 즉시 조치가 필요한 주요 운영 이상이 없습니다.</p>
     {% endif %}
   </article>
-
-  <article class="ops-card" id="ops-log-summary">
-    <div class="ops-card-head">
-      <h2>최근 운영 로그</h2>
-      <span class="badge {% if operations_log_report.status_level == 'ok' %}badge-gemini{% elif operations_log_report.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
-        {{ operations_log_report.status_label }}
-      </span>
-    </div>
-    <p class="meta">{{ operations_log_report.message }}</p>
-    <p class="meta">
-      최근 {{ operations_log_report.total_lines }}줄 기준
-      {% if operations_log_report.updated_at %}· 마지막 갱신 {{ operations_log_report.updated_at|date_label }}{% endif %}
-    </p>
-    {% if operations_log_report.entries %}
-      <ul class="ops-mini-list">
-        {% for item in operations_log_report.entries %}
-          <li>
-            <span class="badge {% if item.status_level == 'warning' %}badge-warning{% elif item.status_level == 'ok' %}badge-gemini{% else %}badge-neutral{% endif %}">{{ item.label }} {{ item.count }}줄</span>
-            <a href="{{ url_for('ops_logs', tab=item.id) }}">{{ item.latest_excerpt }}</a>
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  </article>
-
-  <article class="ops-card" id="ops-audit-events">
-    <div class="ops-card-head">
-      <h2>최근 운영 변경 이력</h2>
-      <span class="badge {% if operation_events %}badge-neutral{% else %}badge-gemini{% endif %}">
-        {{ operation_events|length }}건
-      </span>
-    </div>
-    {% if operation_events %}
-      <ul class="ops-mini-list">
-        {% for item in operation_events %}
-          <li>
-            <span class="badge badge-neutral">{{ item.label }}</span>
-            {% if item.target %}<strong>{{ item.target }}</strong>{% endif %}
-            {% if item.detail %}<span>{{ item.detail }}</span>{% endif %}
-            <br>
-            <span class="meta">{{ item.created_at|date_label }} · {{ item.actor }} · {{ item.masked_ip }}</span>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="meta">아직 기록된 운영 변경 이력이 없습니다.</p>
-    {% endif %}
-  </article>
-
-  <article class="ops-card" id="ops-attention-sources">
-    <div class="ops-card-head">
-      <h2>즉시 확인 기관</h2>
-      <span class="badge {% if attention_source_report.count %}badge-warning{% else %}badge-gemini{% endif %}">
-        {{ attention_source_report.count }}곳
-      </span>
-    </div>
-    {% if attention_source_report.sources %}
-      <ul class="ops-mini-list">
-        {% for item in attention_source_report.sources %}
-          <li>
-            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
-            <span class="badge {% if item.status_level == 'error' %}badge-warning{% elif item.status_level == 'warning' %}badge-neutral{% else %}badge-gemini{% endif %}">{{ item.status_label }}</span>
-            {% for reason in item.reason_labels %}
-              <span class="badge badge-warning">{{ reason }}</span>
-            {% endfor %}
-            {% if item.fallback_count %}
-              <span class="badge badge-neutral">대체 URL {{ item.fallback_count }}개</span>
-            {% endif %}
-            {% if item.discovered_count %}
-              <span class="badge badge-neutral">후보 URL {{ item.discovered_count }}개</span>
-            {% elif not item.fallback_count %}
-              <span class="badge badge-warning">경로 보강 필요</span>
-            {% endif %}
-            {% if item.summary_text %}
-              <br>
-              {{ item.summary_text }}
-            {% endif %}
-            <br>
-            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">기관 화면</a>
-            {% if item.missing_drafts %} · <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">미변환</a>{% endif %}
-            {% if item.date_issues %} · <a href="{{ url_for('press_releases', draft='date_issue', source=item.source_id) }}">게시일</a>{% endif %}
-            {% if item.fallback_count or item.discovered_count %} · <a href="{{ url_for('source_detail', source_id=item.source_id) }}#source-routes">경로</a>{% endif %}
-            · <a href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ item.source_id) }}">로그</a>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="meta">지금 바로 확인할 기관이 없습니다.</p>
-    {% endif %}
-  </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>운영 변경 잠금</h2>
-      <span class="badge {% if operations_write_unlocked %}badge-gemini{% else %}badge-warning{% endif %}">
-        {% if operations_write_unlocked %}해제됨{% else %}잠김{% endif %}
-      </span>
-    </div>
-    {% if operations_write_unlocked %}
-      <p class="meta">
-        백업, 복구, 자동 수집 변경 기능을 사용할 수 있습니다.
-        {% if operations_write_expires_at %}{{ operations_write_expires_at|date_label }}까지 유지됩니다.{% endif %}
-      </p>
-      <form class="inline-actions" method="post" action="{{ url_for('lock_operations_write_access') }}">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <button class="secondary" type="submit">다시 잠그기</button>
-      </form>
-    {% elif operations_write_password_configured %}
-      <p class="meta">운영 변경 기능은 운영 관리 비밀번호 확인 후 {{ operations_write_unlock_minutes }}분 동안 사용할 수 있습니다.</p>
-      <form class="ops-form" method="post" action="{{ url_for('unlock_operations_write_access') }}">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="username" value="admin" autocomplete="username">
-        <label for="operations_unlock_password">운영 관리 비밀번호</label>
-        <input id="operations_unlock_password" name="current_password" type="password" autocomplete="current-password" required>
-        <button type="submit">운영 변경 잠금 해제</button>
-      </form>
-    {% else %}
-      <p class="meta">운영 변경 기능을 사용하려면 먼저 운영 관리 비밀번호를 설정해야 합니다.</p>
-      <a class="source-link" href="{{ url_for('admin_setup') }}">관리자 비밀번호 설정</a>
-    {% endif %}
-  </article>
-
-  <article class="ops-card" id="ops-auto-collect">
-    <div class="ops-card-head">
-      <h2>자동 수집</h2>
-      <span class="badge {% if auto_collector_status and auto_collector_status.enabled %}badge-gemini{% else %}badge-neutral{% endif %}">
-        {% if auto_collector_status and auto_collector_status.enabled %}켜짐{% else %}꺼짐{% endif %}
-      </span>
-    </div>
-    {% if auto_collector_status %}
-      <p class="meta">
-        {% if auto_collector_status.running %}
-          현재 실행 중 · {{ auto_collector_status.progress_message }}
-        {% elif auto_collector_status.enabled %}
-          {{ interval_label(auto_collector_status.interval_seconds) }} 실행 · 다음 실행 {{ auto_collector_status.next_run_at|date_label }}
-        {% else %}
-          서버는 실행 중이지만 자동 수집은 꺼져 있습니다.
-        {% endif %}
-      </p>
-      <p class="meta">마지막 자동 수집 {{ auto_collector_status.last_auto_finished_at|date_label }}</p>
-    {% else %}
-      <p class="meta">자동 수집 컨트롤러가 준비되지 않았습니다.</p>
-    {% endif %}
-    <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}" data-confirm="자동 수집 설정을 변경할까요?">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-      {% if auto_collector_status and auto_collector_status.enabled %}
-        <input type="hidden" name="enabled" value="false">
-        <button class="secondary" type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 끄기</button>
-      {% else %}
-        <input type="hidden" name="enabled" value="true">
-        <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 켜기</button>
-      {% endif %}
-    </form>
-  </article>
-
-  <article class="ops-card" id="ops-deployment-version">
-    <div class="ops-card-head">
-      <h2>배포 버전</h2>
-      <span class="badge {% if deployment_version.status_level == 'ok' %}badge-gemini{% elif deployment_version.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
-        {{ deployment_version.status_label }}
-      </span>
-    </div>
-    <p class="meta">운영 {{ deployment_version.running_commit or '확인 불가' }} · GitHub {{ deployment_version.latest_commit or '확인 불가' }}</p>
-    <p class="meta">{{ deployment_version.repo }} / {{ deployment_version.branch }}</p>
-    <p class="meta">자동 배포 {{ deployment_version.auto_deploy_label or '확인 불가' }}</p>
-    {% if deployment_version.change_report %}
-      <p class="meta">
-        미배포 변경 {{ deployment_version.change_report.changed_count }}개 · 런타임 영향 {{ deployment_version.change_report.runtime_change_count }}개
-      </p>
-      {% if deployment_version.change_report.compare_url %}
-        <p class="inline-actions">
-          <a class="source-link" href="{{ deployment_version.change_report.compare_url }}" target="_blank" rel="noopener noreferrer">GitHub 변경 비교</a>
-        </p>
-      {% endif %}
-      {% if deployment_version.change_report.runtime_sample_files %}
-        <p class="gemini-models">
-          런타임 파일:
-          {% for item in deployment_version.change_report.runtime_sample_files %}
-            <span>{{ item }}</span>
-          {% endfor %}
-        </p>
-      {% elif deployment_version.change_report.sample_files %}
-        <p class="gemini-models">
-          변경 파일:
-          {% for item in deployment_version.change_report.sample_files %}
-            <span>{{ item }}</span>
-          {% endfor %}
-        </p>
-      {% endif %}
-      {% if deployment_version.change_report.runtime_change_count == 0 and deployment_version.change_report.changed_count > 0 %}
-        <p class="meta">서버 코드가 아닌 문서/워크플로 변경만 있어 현재 운영 버전을 정상으로 봅니다.</p>
-      {% endif %}
-    {% endif %}
-  </article>
-
   <article class="ops-card" id="ops-production-readiness">
     <div class="ops-card-head">
       <h2>상용 준비 점검</h2>
@@ -268,7 +74,6 @@
       {% endfor %}
     </p>
   </article>
-
   <article class="ops-card" id="ops-recovery-health">
     <div class="ops-card-head">
       <h2>자동 복구 점검</h2>
@@ -316,31 +121,82 @@
       <p class="meta">자동 수집, DB 연결, Gemini 대기열이 정상 범위입니다.</p>
     {% endif %}
   </article>
-
-  <article class="ops-card">
+</section>
+<h2 class="ops-group-title">수집·초안</h2>
+<section class="ops-grid">
+  <article class="ops-card" id="ops-auto-collect">
     <div class="ops-card-head">
-      <h2>자동 복구 예정</h2>
-      <span class="badge {% if recovery_candidate_report.status_level == 'ok' %}badge-gemini{% else %}badge-neutral{% endif %}">
-        {{ recovery_candidate_report.count }}곳
+      <h2>자동 수집</h2>
+      <span class="badge {% if auto_collector_status and auto_collector_status.enabled %}badge-gemini{% else %}badge-neutral{% endif %}">
+        {% if auto_collector_status and auto_collector_status.enabled %}켜짐{% else %}꺼짐{% endif %}
       </span>
     </div>
-    <p class="meta">{{ recovery_candidate_report.message }}</p>
-    <p class="meta">한 번에 최대 {{ recovery_candidate_report.limit }}곳까지 자동 재검증합니다.</p>
-    {% if recovery_candidate_report.candidates %}
-      <p class="gemini-models">
-        {% for item in recovery_candidate_report.candidates[:5] %}
-          <span>
-            {% if item.source_id %}
-              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }} · {{ item.reason_label }}</a>
-            {% else %}
-              {{ source_display_label(item.source_name) }} · {{ item.reason_label }}
-            {% endif %}
-          </span>
-        {% endfor %}
+    {% if auto_collector_status %}
+      <p class="meta">
+        {% if auto_collector_status.running %}
+          현재 실행 중 · {{ auto_collector_status.progress_message }}
+        {% elif auto_collector_status.enabled %}
+          {{ interval_label(auto_collector_status.interval_seconds) }} 실행 · 다음 실행 {{ auto_collector_status.next_run_at|date_label }}
+        {% else %}
+          서버는 실행 중이지만 자동 수집은 꺼져 있습니다.
+        {% endif %}
       </p>
+      <p class="meta">마지막 자동 수집 {{ auto_collector_status.last_auto_finished_at|date_label }}</p>
+    {% else %}
+      <p class="meta">자동 수집 컨트롤러가 준비되지 않았습니다.</p>
+    {% endif %}
+    <form class="inline-actions" method="post" action="{{ url_for('update_auto_collect') }}" data-confirm="자동 수집 설정을 변경할까요?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      {% if auto_collector_status and auto_collector_status.enabled %}
+        <input type="hidden" name="enabled" value="false">
+        <button class="secondary" type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 끄기</button>
+      {% else %}
+        <input type="hidden" name="enabled" value="true">
+        <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>자동 수집 켜기</button>
+      {% endif %}
+    </form>
+  </article>
+  <article class="ops-card" id="ops-attention-sources">
+    <div class="ops-card-head">
+      <h2>즉시 확인 기관</h2>
+      <span class="badge {% if attention_source_report.count %}badge-warning{% else %}badge-gemini{% endif %}">
+        {{ attention_source_report.count }}곳
+      </span>
+    </div>
+    {% if attention_source_report.sources %}
+      <ul class="ops-mini-list">
+        {% for item in attention_source_report.sources %}
+          <li>
+            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            <span class="badge {% if item.status_level == 'error' %}badge-warning{% elif item.status_level == 'warning' %}badge-neutral{% else %}badge-gemini{% endif %}">{{ item.status_label }}</span>
+            {% for reason in item.reason_labels %}
+              <span class="badge badge-warning">{{ reason }}</span>
+            {% endfor %}
+            {% if item.fallback_count %}
+              <span class="badge badge-neutral">대체 URL {{ item.fallback_count }}개</span>
+            {% endif %}
+            {% if item.discovered_count %}
+              <span class="badge badge-neutral">후보 URL {{ item.discovered_count }}개</span>
+            {% elif not item.fallback_count %}
+              <span class="badge badge-warning">경로 보강 필요</span>
+            {% endif %}
+            {% if item.summary_text %}
+              <br>
+              {{ item.summary_text }}
+            {% endif %}
+            <br>
+            <a href="{{ url_for('source_detail', source_id=item.source_id) }}">기관 화면</a>
+            {% if item.missing_drafts %} · <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">미변환</a>{% endif %}
+            {% if item.date_issues %} · <a href="{{ url_for('press_releases', draft='date_issue', source=item.source_id) }}">게시일</a>{% endif %}
+            {% if item.fallback_count or item.discovered_count %} · <a href="{{ url_for('source_detail', source_id=item.source_id) }}#source-routes">경로</a>{% endif %}
+            · <a href="{{ url_for('ops_logs', tab='collector', q='source_id=' ~ item.source_id) }}">로그</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">지금 바로 확인할 기관이 없습니다.</p>
     {% endif %}
   </article>
-
   <article class="ops-card" id="ops-priority-sources">
     <div class="ops-card-head">
       <h2>반복 실패 기관 우선순위</h2>
@@ -367,14 +223,459 @@
       <p class="meta">우선 확인이 필요한 반복 실패 기관이 없습니다.</p>
     {% endif %}
   </article>
-
-  <details class="ops-secondary-section">
-    <summary class="ops-secondary-toggle">
-      <span>참고 항목 펼치기</span>
-      <b>16개</b>
-    </summary>
-    <div class="ops-grid ops-grid-secondary">
-
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>Gemini 초안 대기열</h2>
+      <span class="badge {% if pending_queue.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ pending_queue.total }}건</span>
+    </div>
+    <p class="meta">전체 원문 기준 · 오늘 원문 외 대기분 포함</p>
+    {% if pending_queue.total %}
+      <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
+      <p class="inline-actions">
+        <a class="source-link" href="{{ url_for('press_releases', draft='missing') }}">전체 초안 대기 원문 보기</a>
+      </p>
+      {% if queue_drain_report.updated_at %}
+        <p class="meta">
+          마지막 자동 소진 {{ queue_drain_report.updated_at|date_label }} ·
+          {% if queue_drain_report.next_run_at %}다음 자동 점검 {{ queue_drain_report.next_run_at|date_label }} ·{% endif %}
+          전 {{ queue_drain_report.queue_pending_before if queue_drain_report.queue_pending_before is not none else '-' }}건 /
+          후 {{ queue_drain_report.queue_pending_after if queue_drain_report.queue_pending_after is not none else '-' }}건 /
+          처리 {{ queue_drain_report.queue_processed_count if queue_drain_report.queue_processed_count is not none else '-' }}건
+        </p>
+      {% endif %}
+      <p class="gemini-models">
+        날짜별:
+        {% for item in pending_queue.by_date %}
+          <span>{{ item.date }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+      <p class="gemini-models">
+        기관별:
+        {% for item in pending_queue.by_source %}
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">{{ source_display_label(item.source_name) }} {{ item.count }}건</a>
+            {% else %}
+              {{ source_display_label(item.source_name) }} {{ item.count }}건
+            {% endif %}
+          </span>
+        {% endfor %}
+      </p>
+    {% else %}
+      <p class="meta">Gemini 초안으로 변환할 대기 원문이 없습니다.</p>
+    {% endif %}
+  </article>
+  <article class="ops-card" id="ops-gemini-retry-queue">
+    <div class="ops-card-head">
+      <h2>Gemini 재처리 대기열</h2>
+      <span class="badge {% if draft_failure_summary.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ draft_failure_summary.total }}건</span>
+    </div>
+    <p class="meta">전체 원문 기준 · 오늘 원문 외 재처리 대기분 포함</p>
+    {% if draft_failure_summary.total %}
+      <p class="meta">
+        {% if draft_failure_summary.due %}
+          {{ draft_failure_summary.retry_due_label|default('자동 처리 대기') }} {{ draft_failure_summary.due }}건
+        {% else %}
+          자동 처리 예약 대기
+        {% endif %}
+        {% if draft_failure_summary.effective_next_retry_at %} · 다음 처리 {{ draft_failure_summary.effective_next_retry_at|date_label }}{% endif %}
+      </p>
+    {% else %}
+      <p class="meta">Gemini 재처리 대기 원문이 없습니다.</p>
+    {% endif %}
+    {% if draft_failure_summary.by_kind %}
+      <p class="gemini-models">
+        원인:
+        {% for item in draft_failure_summary.by_kind %}
+          <span>{{ item.kind }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+      {% if draft_failure_summary.latest %}
+        <p class="meta">최근 재처리 원문</p>
+        <ul class="ops-mini-list">
+          {% for item in draft_failure_summary.latest %}
+            <li>
+              <a href="{{ url_for('press_release_detail', release_id=item.press_release_id) }}">
+                {{ source_display_label(item.source_name) }} · {{ item.title }}
+              </a>
+              <br>
+              시도 {{ item.attempts }}회 · 다음 처리 {{ item.effective_next_retry_at|default(item.next_retry_at)|date_label }}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% else %}
+      <p class="meta">Gemini가 다시 처리할 원문이 없습니다.</p>
+    {% endif %}
+  </article>
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>자동 복구 예정</h2>
+      <span class="badge {% if recovery_candidate_report.status_level == 'ok' %}badge-gemini{% else %}badge-neutral{% endif %}">
+        {{ recovery_candidate_report.count }}곳
+      </span>
+    </div>
+    <p class="meta">{{ recovery_candidate_report.message }}</p>
+    <p class="meta">한 번에 최대 {{ recovery_candidate_report.limit }}곳까지 자동 재검증합니다.</p>
+    {% if recovery_candidate_report.candidates %}
+      <p class="gemini-models">
+        {% for item in recovery_candidate_report.candidates[:5] %}
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }} · {{ item.reason_label }}</a>
+            {% else %}
+              {{ source_display_label(item.source_name) }} · {{ item.reason_label }}
+            {% endif %}
+          </span>
+        {% endfor %}
+      </p>
+    {% endif %}
+  </article>
+</section>
+<h2 class="ops-group-title">백업·보안</h2>
+<section class="ops-grid">
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>운영 변경 잠금</h2>
+      <span class="badge {% if operations_write_unlocked %}badge-gemini{% else %}badge-warning{% endif %}">
+        {% if operations_write_unlocked %}해제됨{% else %}잠김{% endif %}
+      </span>
+    </div>
+    {% if operations_write_unlocked %}
+      <p class="meta">
+        백업, 복구, 자동 수집 변경 기능을 사용할 수 있습니다.
+        {% if operations_write_expires_at %}{{ operations_write_expires_at|date_label }}까지 유지됩니다.{% endif %}
+      </p>
+      <form class="inline-actions" method="post" action="{{ url_for('lock_operations_write_access') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button class="secondary" type="submit">다시 잠그기</button>
+      </form>
+    {% elif operations_write_password_configured %}
+      <p class="meta">운영 변경 기능은 운영 관리 비밀번호 확인 후 {{ operations_write_unlock_minutes }}분 동안 사용할 수 있습니다.</p>
+      <form class="ops-form" method="post" action="{{ url_for('unlock_operations_write_access') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="username" value="admin" autocomplete="username">
+        <label for="operations_unlock_password">운영 관리 비밀번호</label>
+        <input id="operations_unlock_password" name="current_password" type="password" autocomplete="current-password" required>
+        <button type="submit">운영 변경 잠금 해제</button>
+      </form>
+    {% else %}
+      <p class="meta">운영 변경 기능을 사용하려면 먼저 운영 관리 비밀번호를 설정해야 합니다.</p>
+      <a class="source-link" href="{{ url_for('admin_setup') }}">관리자 비밀번호 설정</a>
+    {% endif %}
+  </article>
+  <article class="ops-card" id="ops-db-backup">
+    <div class="ops-card-head">
+      <h2>DB 백업</h2>
+      <span class="badge {% if db_health.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">{{ db_health.status_label }}</span>
+    </div>
+    {% set latest_backup = backup_files[0] if backup_files else None %}
+    <p class="meta">{{ db_health.database_kind }} · 응답 {{ db_health.latency_ms if db_health.latency_ms is not none else '미상' }}ms · 백업 {{ db_health.backup_count }}개</p>
+    <p class="meta">최근 백업 {{ db_health.latest_backup.modified_at|date_label if db_health.latest_backup else '없음' }}</p>
+    <p class="meta">{{ db_health.note }}</p>
+    <p class="meta">자동 검증 {{ backup_verify_report.status_label }} · {{ backup_verify_report.message }}</p>
+    <p class="meta">백업 정책 {{ backup_health_report.backup_env_policy_label }} · {{ backup_health_report.backup_env_policy_message }}</p>
+    {% if backup_verify_report.backup_name %}
+      <p class="meta">검증 대상 {{ backup_verify_report.backup_name }}</p>
+    {% endif %}
+    {% if backup_verify_report.sensitive_config_keys %}
+      <p class="meta auto-status-error">
+        백업 ZIP에 민감 설정 키 {{ backup_verify_report.sensitive_config_keys|length }}개가 포함되어 있습니다.
+        값은 표시하지 않으며, 다운로드 파일은 외부 공유하지 마세요.
+      </p>
+    {% endif %}
+    {% if backup_verify_report.checked_sqlite or backup_verify_report.checked_database_export %}
+      <p class="gemini-models">
+        검증 항목:
+        {% if backup_verify_report.checked_sqlite %}
+          <span>SQLite 무결성</span>
+        {% endif %}
+        {% if backup_verify_report.checked_database_export %}
+          <span>PostgreSQL 덤프 구조</span>
+        {% endif %}
+      </p>
+    {% endif %}
+    <p class="meta">현재 DB: {{ db_path }}</p>
+    <p class="meta">백업 폴더: {{ backup_dir }}</p>
+    <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>지금 백업 생성</button>
+    </form>
+    {% if latest_backup and operations_write_unlocked %}
+      <div class="inline-actions">
+        <a class="source-link" href="{{ url_for('download_backup', filename=latest_backup.name) }}">최신 백업 다운로드</a>
+        <form method="post" action="{{ url_for('restore_backup_route') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="backup_name" value="{{ latest_backup.name }}">
+          <button class="secondary" type="submit" name="action" value="preview">최신 백업 복구 대상 확인</button>
+        </form>
+      </div>
+    {% endif %}
+  </article>
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>운영 관리 비밀번호</h2>
+      <span class="badge {% if operations_password_source == 'database' %}badge-gemini{% elif operations_password_source == 'environment' %}badge-neutral{% else %}badge-warning{% endif %}">
+        {% if operations_password_source == 'database' %}변경 가능{% elif operations_password_source == 'environment' %}환경변수 관리{% else %}관리자 비번 사용 중{% endif %}
+      </span>
+    </div>
+    {% if operations_password_source == 'environment' %}
+      <p class="meta">운영 비밀번호가 환경변수(NEWS_SUMMARY_OPERATIONS_PASSWORD)로 설정돼 있어 화면에서 바꿀 수 없습니다. 화면 변경을 쓰려면 그 환경변수를 지운 뒤 다시 여세요.</p>
+    {% else %}
+      <p class="meta">운영 관리 진입에 쓰는 비밀번호입니다. 현재 비밀번호를 확인한 뒤 새 값으로 바꿉니다.{% if operations_password_source != 'database' %} (아직 전용 비밀번호가 없어, 현재 비밀번호는 관리자 비밀번호로 확인합니다. 한 번 바꾸면 이후로는 이 값이 우선 적용됩니다.){% endif %}</p>
+      <form class="ops-form" method="post" action="{{ url_for('change_operations_password') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="username" value="operations" autocomplete="username">
+        <label for="ops_current_password">현재 비밀번호</label>
+        <input id="ops_current_password" name="current_password" type="password" autocomplete="current-password" required>
+        <label for="ops_new_password">새 비밀번호</label>
+        <input id="ops_new_password" name="new_password" type="password" autocomplete="new-password" minlength="4" required>
+        <label for="ops_confirm_password">새 비밀번호 확인</label>
+        <input id="ops_confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="4" required>
+        <button type="submit">운영 비밀번호 변경</button>
+      </form>
+    {% endif %}
+  </article>
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>관리자 비밀번호</h2>
+      <span class="badge {% if admin_password_source == 'environment' %}badge-neutral{% elif admin_password_unlocked %}badge-gemini{% else %}badge-warning{% endif %}">
+        {% if admin_password_source == 'environment' %}.env 관리{% elif admin_password_unlocked %}변경 가능{% elif admin_password_configured %}확인 필요{% else %}미설정{% endif %}
+      </span>
+    </div>
+    {% if admin_password_source == 'environment' %}
+      <p class="meta">현재 .env에 설정된 관리자 비밀번호가 우선 적용 중입니다.</p>
+      <p class="meta">변경하려면 .env 값을 수정한 뒤 프로그램을 다시 실행해야 합니다.</p>
+    {% elif not admin_password_configured %}
+      <p class="meta">아직 관리자 비밀번호가 설정되지 않았습니다.</p>
+      <a class="source-link" href="{{ url_for('admin_setup') }}">관리자 비밀번호 설정</a>
+    {% elif not admin_password_unlocked %}
+      <p class="meta">현재 관리자 비밀번호를 입력하면 변경 입력칸이 표시됩니다.</p>
+      <form class="ops-form" method="post" action="{{ url_for('unlock_admin_password_panel') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="username" value="admin" autocomplete="username">
+        <label for="unlock_current_password">현재 비밀번호</label>
+        <input id="unlock_current_password" name="current_password" type="password" autocomplete="current-password" required>
+        <button type="submit">확인 후 변경 열기</button>
+      </form>
+    {% else %}
+      <p class="meta">현재 비밀번호 확인 후 새 비밀번호를 저장합니다.</p>
+      <form class="ops-form" method="post" action="{{ url_for('change_admin_password') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="username" value="admin" autocomplete="username">
+        <label for="new_password">새 비밀번호</label>
+        <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="12" required>
+        <label for="confirm_password">새 비밀번호 확인</label>
+        <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="12" required>
+        <button type="submit">비밀번호 변경</button>
+      </form>
+    {% endif %}
+  </article>
+</section>
+<h2 class="ops-group-title">로그·접속</h2>
+<section class="ops-grid">
+  <article class="ops-card" id="ops-log-summary">
+    <div class="ops-card-head">
+      <h2>최근 운영 로그</h2>
+      <span class="badge {% if operations_log_report.status_level == 'ok' %}badge-gemini{% elif operations_log_report.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ operations_log_report.status_label }}
+      </span>
+    </div>
+    <p class="meta">{{ operations_log_report.message }}</p>
+    <p class="meta">
+      최근 {{ operations_log_report.total_lines }}줄 기준
+      {% if operations_log_report.updated_at %}· 마지막 갱신 {{ operations_log_report.updated_at|date_label }}{% endif %}
+    </p>
+    {% if operations_log_report.entries %}
+      <ul class="ops-mini-list">
+        {% for item in operations_log_report.entries %}
+          <li>
+            <span class="badge {% if item.status_level == 'warning' %}badge-warning{% elif item.status_level == 'ok' %}badge-gemini{% else %}badge-neutral{% endif %}">{{ item.label }} {{ item.count }}줄</span>
+            <a href="{{ url_for('ops_logs', tab=item.id) }}">{{ item.latest_excerpt }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </article>
+  <article class="ops-card" id="ops-audit-events">
+    <div class="ops-card-head">
+      <h2>최근 운영 변경 이력</h2>
+      <span class="badge {% if operation_events %}badge-neutral{% else %}badge-gemini{% endif %}">
+        {{ operation_events|length }}건
+      </span>
+    </div>
+    {% if operation_events %}
+      <ul class="ops-mini-list">
+        {% for item in operation_events %}
+          <li>
+            <span class="badge badge-neutral">{{ item.label }}</span>
+            {% if item.target %}<strong>{{ item.target }}</strong>{% endif %}
+            {% if item.detail %}<span>{{ item.detail }}</span>{% endif %}
+            <br>
+            <span class="meta">{{ item.created_at|date_label }} · {{ item.actor }} · {{ item.masked_ip }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="meta">아직 기록된 운영 변경 이력이 없습니다.</p>
+    {% endif %}
+  </article>
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>외부 접속</h2>
+      <span class="badge {% if cloudflare_tunnel.running %}badge-gemini{% else %}badge-warning{% endif %}">{{ cloudflare_tunnel.label }}</span>
+    </div>
+    {% if cloudflare_tunnel.public_url %}
+      <p class="meta">공유 주소: <a href="{{ cloudflare_tunnel.public_url }}" target="_blank" rel="noopener noreferrer">{{ cloudflare_tunnel.public_url }}</a></p>
+    {% else %}
+      <p class="meta">Cloudflare 임시 주소를 아직 찾지 못했습니다.</p>
+    {% endif %}
+    <p class="meta">터널 로그: {{ cloudflare_tunnel.log_path }}</p>
+    <p class="meta">최근 갱신: {{ cloudflare_tunnel.updated_at|date_label }}</p>
+  </article>
+  <article class="ops-card visitor-card">
+    <div class="ops-card-head">
+      <h2>접속자 현황</h2>
+      <span class="badge badge-neutral">최근 7일</span>
+    </div>
+    <p class="meta">원본 IP는 저장하지 않고 일부를 가린 IP와 접속 시간만 기록합니다.</p>
+    <div class="visitor-date-tabs" aria-label="날짜별 접속자 기록">
+      {% for item in visitor_access.dates %}
+        <a class="{% if item.active %}active{% endif %}" href="{{ url_for('operations', access_date=item.date) }}">
+          <span>{{ item.label }}</span>
+          <b>{{ item.count }}</b>
+        </a>
+      {% endfor %}
+    </div>
+    <div class="visitor-summary">
+      <span>선택 날짜 {{ visitor_access.selected_count }}건</span>
+      <span>마스킹 IP {{ visitor_access.unique_masked_ips }}개</span>
+      <span>오류 응답 {{ visitor_access.error_count }}건</span>
+    </div>
+    {% if visitor_access.top_paths %}
+      <p class="gemini-models">
+        자주 열린 경로:
+        {% for item in visitor_access.top_paths %}
+          <span>{{ item.method }} {{ item.path }} {{ item.count }}건</span>
+        {% endfor %}
+      </p>
+    {% endif %}
+    {% if visitor_access.rows %}
+      <div class="visitor-list">
+        {% for item in visitor_access.rows %}
+          <div class="visitor-row">
+            <strong>{{ item.masked_ip }}</strong>
+            <span>{{ item.visited_at|date_label }}</span>
+            <span>{{ item.method }} {{ item.path }}</span>
+            <span>{{ item.user_agent }} · {{ item.status_code }}</span>
+          </div>
+        {% endfor %}
+      </div>
+      {% if visitor_access.selected_count > visitor_access.rows|length %}
+        <p class="meta">표시는 최근 {{ visitor_access.rows|length }}건까지만 제한합니다.</p>
+      {% endif %}
+    {% else %}
+      <p class="empty">선택한 날짜의 방문 기록이 없습니다.</p>
+    {% endif %}
+  </article>
+</section>
+<details class="ops-secondary-section">
+  <summary class="ops-secondary-toggle">
+    <span>상세 진단 펼치기</span>
+    <b>13개</b>
+  </summary>
+  <div class="ops-grid ops-grid-secondary">
+  <article class="ops-card" id="ops-deployment-version">
+    <div class="ops-card-head">
+      <h2>배포 버전</h2>
+      <span class="badge {% if deployment_version.status_level == 'ok' %}badge-gemini{% elif deployment_version.status_level == 'warning' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ deployment_version.status_label }}
+      </span>
+    </div>
+    <p class="meta">운영 {{ deployment_version.running_commit or '확인 불가' }} · GitHub {{ deployment_version.latest_commit or '확인 불가' }}</p>
+    <p class="meta">{{ deployment_version.repo }} / {{ deployment_version.branch }}</p>
+    <p class="meta">자동 배포 {{ deployment_version.auto_deploy_label or '확인 불가' }}</p>
+    {% if deployment_version.change_report %}
+      <p class="meta">
+        미배포 변경 {{ deployment_version.change_report.changed_count }}개 · 런타임 영향 {{ deployment_version.change_report.runtime_change_count }}개
+      </p>
+      {% if deployment_version.change_report.compare_url %}
+        <p class="inline-actions">
+          <a class="source-link" href="{{ deployment_version.change_report.compare_url }}" target="_blank" rel="noopener noreferrer">GitHub 변경 비교</a>
+        </p>
+      {% endif %}
+      {% if deployment_version.change_report.runtime_sample_files %}
+        <p class="gemini-models">
+          런타임 파일:
+          {% for item in deployment_version.change_report.runtime_sample_files %}
+            <span>{{ item }}</span>
+          {% endfor %}
+        </p>
+      {% elif deployment_version.change_report.sample_files %}
+        <p class="gemini-models">
+          변경 파일:
+          {% for item in deployment_version.change_report.sample_files %}
+            <span>{{ item }}</span>
+          {% endfor %}
+        </p>
+      {% endif %}
+      {% if deployment_version.change_report.runtime_change_count == 0 and deployment_version.change_report.changed_count > 0 %}
+        <p class="meta">서버 코드가 아닌 문서/워크플로 변경만 있어 현재 운영 버전을 정상으로 봅니다.</p>
+      {% endif %}
+    {% endif %}
+  </article>
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>서버 상태 점검</h2>
+      <span class="badge {% if server_health_report.status_level == 'ok' %}badge-gemini{% elif server_health_report.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
+        {{ server_health_report.status_label }}
+      </span>
+    </div>
+    <p class="meta">{{ server_health_report.message }}</p>
+    <p class="meta">최근 점검 {{ server_health_report.updated_at|date_label }}</p>
+    {% if server_health_report.checks %}
+      <p class="gemini-models">
+        {% for check in server_health_report.checks[:4] %}
+          <span>{{ check.message }}</span>
+        {% endfor %}
+      </p>
+    {% endif %}
+  </article>
+  <article class="ops-card">
+    <div class="ops-card-head">
+      <h2>수집 이상치</h2>
+      <span class="badge {% if anomaly_report.issue_count %}badge-warning{% else %}badge-gemini{% endif %}">{{ anomaly_report.issue_count }}건</span>
+    </div>
+    <p class="meta">기준 시각 {{ automation_settings.anomaly_check_hour }}시 이후 평소 수집량과 비교합니다.</p>
+    <p class="meta">최근 점검 {{ anomaly_report.updated_at|date_label }}</p>
+    {% if anomaly_report.issues %}
+      <p class="gemini-models">
+        {% for item in anomaly_report.issues[:5] %}
+          {% if item.type == 'today_zero' %}
+            <span>
+              {% if item.source_id %}
+                <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }}</a>
+              {% else %}
+                {{ source_display_label(item.source_name) }}
+              {% endif %}
+              오늘 0건 / 평균 {{ item.average }}건
+            </span>
+          {% else %}
+            <span>
+              {% if item.source_id %}
+                <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }}</a>
+              {% else %}
+                {{ source_display_label(item.source_name) }}
+              {% endif %}
+              {{ item.label }} · 오늘 {{ item.today_count }}건 / 평균 {{ item.average }}건
+            </span>
+          {% endif %}
+        {% endfor %}
+      </p>
+    {% else %}
+      <p class="meta">현재 감지된 수집 이상치가 없습니다.</p>
+    {% endif %}
+  </article>
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>일일 운영 리포트</h2>
@@ -397,7 +698,6 @@
       </p>
     {% endif %}
   </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>운영 요약</h2>
@@ -407,7 +707,6 @@
     <p class="meta">오늘 원문 기관 {{ operations_summary.today_active_sources }}곳 · 이상치 {{ operations_summary.anomaly_count }}건 · 중복 정리 {{ operations_summary.dedupe_merged }}건</p>
     <p class="meta">서버 상태 {{ operations_summary.server_status_level }} · 갱신 {{ operations_summary.updated_at|date_label }}</p>
   </article>
-
   <article class="ops-card" id="ops-collection-coverage">
     <div class="ops-card-head">
       <h2>오늘 수집 점검 커버리지</h2>
@@ -444,7 +743,6 @@
       </p>
     {% endif %}
   </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>수집 대상 커버리지</h2>
@@ -470,7 +768,6 @@
       <p class="meta">추가 소스 {{ source_coverage_report.extra_ids|length }}곳이 함께 관리됩니다.</p>
     {% endif %}
   </article>
-
   <article class="ops-card" id="ops-draft-conversion">
     <div class="ops-card-head">
       <h2>오늘 초안 변환 커버리지</h2>
@@ -526,61 +823,6 @@
       </p>
     {% endif %}
   </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>서버 상태 점검</h2>
-      <span class="badge {% if server_health_report.status_level == 'ok' %}badge-gemini{% elif server_health_report.status_level == 'error' %}badge-warning{% else %}badge-neutral{% endif %}">
-        {{ server_health_report.status_label }}
-      </span>
-    </div>
-    <p class="meta">{{ server_health_report.message }}</p>
-    <p class="meta">최근 점검 {{ server_health_report.updated_at|date_label }}</p>
-    {% if server_health_report.checks %}
-      <p class="gemini-models">
-        {% for check in server_health_report.checks[:4] %}
-          <span>{{ check.message }}</span>
-        {% endfor %}
-      </p>
-    {% endif %}
-  </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>수집 이상치</h2>
-      <span class="badge {% if anomaly_report.issue_count %}badge-warning{% else %}badge-gemini{% endif %}">{{ anomaly_report.issue_count }}건</span>
-    </div>
-    <p class="meta">기준 시각 {{ automation_settings.anomaly_check_hour }}시 이후 평소 수집량과 비교합니다.</p>
-    <p class="meta">최근 점검 {{ anomaly_report.updated_at|date_label }}</p>
-    {% if anomaly_report.issues %}
-      <p class="gemini-models">
-        {% for item in anomaly_report.issues[:5] %}
-          {% if item.type == 'today_zero' %}
-            <span>
-              {% if item.source_id %}
-                <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }}</a>
-              {% else %}
-                {{ source_display_label(item.source_name) }}
-              {% endif %}
-              오늘 0건 / 평균 {{ item.average }}건
-            </span>
-          {% else %}
-            <span>
-              {% if item.source_id %}
-                <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ source_display_label(item.source_name) }}</a>
-              {% else %}
-                {{ source_display_label(item.source_name) }}
-              {% endif %}
-              {{ item.label }} · 오늘 {{ item.today_count }}건 / 평균 {{ item.average }}건
-            </span>
-          {% endif %}
-        {% endfor %}
-      </p>
-    {% else %}
-      <p class="meta">현재 감지된 수집 이상치가 없습니다.</p>
-    {% endif %}
-  </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>수집 보관 기준</h2>
@@ -589,94 +831,6 @@
     <p class="meta">{{ retention_policy.cutoff_date|date_label }} 이후 원문과 초안을 보관합니다.</p>
     <p class="meta">{{ retention_policy.description }} 공휴일이 있으면 그 일자만큼 보관 범위가 자동으로 늘어납니다.</p>
   </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>Gemini 초안 대기열</h2>
-      <span class="badge {% if pending_queue.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ pending_queue.total }}건</span>
-    </div>
-    <p class="meta">전체 원문 기준 · 오늘 원문 외 대기분 포함</p>
-    {% if pending_queue.total %}
-      <p class="meta">최신 원문 {{ pending_queue.latest_published_at|date_label }} · 오래된 원문 {{ pending_queue.oldest_published_at|date_label }}</p>
-      <p class="inline-actions">
-        <a class="source-link" href="{{ url_for('press_releases', draft='missing') }}">전체 초안 대기 원문 보기</a>
-      </p>
-      {% if queue_drain_report.updated_at %}
-        <p class="meta">
-          마지막 자동 소진 {{ queue_drain_report.updated_at|date_label }} ·
-          {% if queue_drain_report.next_run_at %}다음 자동 점검 {{ queue_drain_report.next_run_at|date_label }} ·{% endif %}
-          전 {{ queue_drain_report.queue_pending_before if queue_drain_report.queue_pending_before is not none else '-' }}건 /
-          후 {{ queue_drain_report.queue_pending_after if queue_drain_report.queue_pending_after is not none else '-' }}건 /
-          처리 {{ queue_drain_report.queue_processed_count if queue_drain_report.queue_processed_count is not none else '-' }}건
-        </p>
-      {% endif %}
-      <p class="gemini-models">
-        날짜별:
-        {% for item in pending_queue.by_date %}
-          <span>{{ item.date }} {{ item.count }}건</span>
-        {% endfor %}
-      </p>
-      <p class="gemini-models">
-        기관별:
-        {% for item in pending_queue.by_source %}
-          <span>
-            {% if item.source_id %}
-              <a href="{{ url_for('press_releases', draft='missing', source=item.source_id) }}">{{ source_display_label(item.source_name) }} {{ item.count }}건</a>
-            {% else %}
-              {{ source_display_label(item.source_name) }} {{ item.count }}건
-            {% endif %}
-          </span>
-        {% endfor %}
-      </p>
-    {% else %}
-      <p class="meta">Gemini 초안으로 변환할 대기 원문이 없습니다.</p>
-    {% endif %}
-  </article>
-
-  <article class="ops-card" id="ops-gemini-retry-queue">
-    <div class="ops-card-head">
-      <h2>Gemini 재처리 대기열</h2>
-      <span class="badge {% if draft_failure_summary.total %}badge-warning{% else %}badge-gemini{% endif %}">{{ draft_failure_summary.total }}건</span>
-    </div>
-    <p class="meta">전체 원문 기준 · 오늘 원문 외 재처리 대기분 포함</p>
-    {% if draft_failure_summary.total %}
-      <p class="meta">
-        {% if draft_failure_summary.due %}
-          {{ draft_failure_summary.retry_due_label|default('자동 처리 대기') }} {{ draft_failure_summary.due }}건
-        {% else %}
-          자동 처리 예약 대기
-        {% endif %}
-        {% if draft_failure_summary.effective_next_retry_at %} · 다음 처리 {{ draft_failure_summary.effective_next_retry_at|date_label }}{% endif %}
-      </p>
-    {% else %}
-      <p class="meta">Gemini 재처리 대기 원문이 없습니다.</p>
-    {% endif %}
-    {% if draft_failure_summary.by_kind %}
-      <p class="gemini-models">
-        원인:
-        {% for item in draft_failure_summary.by_kind %}
-          <span>{{ item.kind }} {{ item.count }}건</span>
-        {% endfor %}
-      </p>
-      {% if draft_failure_summary.latest %}
-        <p class="meta">최근 재처리 원문</p>
-        <ul class="ops-mini-list">
-          {% for item in draft_failure_summary.latest %}
-            <li>
-              <a href="{{ url_for('press_release_detail', release_id=item.press_release_id) }}">
-                {{ source_display_label(item.source_name) }} · {{ item.title }}
-              </a>
-              <br>
-              시도 {{ item.attempts }}회 · 다음 처리 {{ item.effective_next_retry_at|default(item.next_retry_at)|date_label }}
-            </li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-    {% else %}
-      <p class="meta">Gemini가 다시 처리할 원문이 없습니다.</p>
-    {% endif %}
-  </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>게시일 점검</h2>
@@ -720,7 +874,6 @@
       <p class="meta">최근 원문 게시일 파싱이 정상 범위입니다.</p>
     {% endif %}
   </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>대체 URL 준비</h2>
@@ -747,7 +900,6 @@
       <p class="meta">아직 대체 URL이 등록된 기관이 없습니다.</p>
     {% endif %}
   </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>중복 원문 정리</h2>
@@ -757,7 +909,6 @@
     <p class="meta">검토 그룹 {{ deduplicate_report.groups }}개 · 병합 {{ deduplicate_report.merged }}건 · 보류 {{ deduplicate_report.skipped }}건</p>
     <p class="meta">최근 정리 {{ deduplicate_report.updated_at|date_label }}</p>
   </article>
-
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>URL 후보 탐색</h2>
@@ -789,179 +940,8 @@
       <p class="meta">새로 발견된 후보 URL이 없습니다.</p>
     {% endif %}
   </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>외부 접속</h2>
-      <span class="badge {% if cloudflare_tunnel.running %}badge-gemini{% else %}badge-warning{% endif %}">{{ cloudflare_tunnel.label }}</span>
-    </div>
-    {% if cloudflare_tunnel.public_url %}
-      <p class="meta">공유 주소: <a href="{{ cloudflare_tunnel.public_url }}" target="_blank" rel="noopener noreferrer">{{ cloudflare_tunnel.public_url }}</a></p>
-    {% else %}
-      <p class="meta">Cloudflare 임시 주소를 아직 찾지 못했습니다.</p>
-    {% endif %}
-    <p class="meta">터널 로그: {{ cloudflare_tunnel.log_path }}</p>
-    <p class="meta">최근 갱신: {{ cloudflare_tunnel.updated_at|date_label }}</p>
-  </article>
-
-  <article class="ops-card visitor-card">
-    <div class="ops-card-head">
-      <h2>접속자 현황</h2>
-      <span class="badge badge-neutral">최근 7일</span>
-    </div>
-    <p class="meta">원본 IP는 저장하지 않고 일부를 가린 IP와 접속 시간만 기록합니다.</p>
-    <div class="visitor-date-tabs" aria-label="날짜별 접속자 기록">
-      {% for item in visitor_access.dates %}
-        <a class="{% if item.active %}active{% endif %}" href="{{ url_for('operations', access_date=item.date) }}">
-          <span>{{ item.label }}</span>
-          <b>{{ item.count }}</b>
-        </a>
-      {% endfor %}
-    </div>
-    <div class="visitor-summary">
-      <span>선택 날짜 {{ visitor_access.selected_count }}건</span>
-      <span>마스킹 IP {{ visitor_access.unique_masked_ips }}개</span>
-      <span>오류 응답 {{ visitor_access.error_count }}건</span>
-    </div>
-    {% if visitor_access.top_paths %}
-      <p class="gemini-models">
-        자주 열린 경로:
-        {% for item in visitor_access.top_paths %}
-          <span>{{ item.method }} {{ item.path }} {{ item.count }}건</span>
-        {% endfor %}
-      </p>
-    {% endif %}
-    {% if visitor_access.rows %}
-      <div class="visitor-list">
-        {% for item in visitor_access.rows %}
-          <div class="visitor-row">
-            <strong>{{ item.masked_ip }}</strong>
-            <span>{{ item.visited_at|date_label }}</span>
-            <span>{{ item.method }} {{ item.path }}</span>
-            <span>{{ item.user_agent }} · {{ item.status_code }}</span>
-          </div>
-        {% endfor %}
-      </div>
-      {% if visitor_access.selected_count > visitor_access.rows|length %}
-        <p class="meta">표시는 최근 {{ visitor_access.rows|length }}건까지만 제한합니다.</p>
-      {% endif %}
-    {% else %}
-      <p class="empty">선택한 날짜의 방문 기록이 없습니다.</p>
-    {% endif %}
-  </article>
-    </div>
-  </details>
-
-  <article class="ops-card" id="ops-db-backup">
-    <div class="ops-card-head">
-      <h2>DB 백업</h2>
-      <span class="badge {% if db_health.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">{{ db_health.status_label }}</span>
-    </div>
-    {% set latest_backup = backup_files[0] if backup_files else None %}
-    <p class="meta">{{ db_health.database_kind }} · 응답 {{ db_health.latency_ms if db_health.latency_ms is not none else '미상' }}ms · 백업 {{ db_health.backup_count }}개</p>
-    <p class="meta">최근 백업 {{ db_health.latest_backup.modified_at|date_label if db_health.latest_backup else '없음' }}</p>
-    <p class="meta">{{ db_health.note }}</p>
-    <p class="meta">자동 검증 {{ backup_verify_report.status_label }} · {{ backup_verify_report.message }}</p>
-    <p class="meta">백업 정책 {{ backup_health_report.backup_env_policy_label }} · {{ backup_health_report.backup_env_policy_message }}</p>
-    {% if backup_verify_report.backup_name %}
-      <p class="meta">검증 대상 {{ backup_verify_report.backup_name }}</p>
-    {% endif %}
-    {% if backup_verify_report.sensitive_config_keys %}
-      <p class="meta auto-status-error">
-        백업 ZIP에 민감 설정 키 {{ backup_verify_report.sensitive_config_keys|length }}개가 포함되어 있습니다.
-        값은 표시하지 않으며, 다운로드 파일은 외부 공유하지 마세요.
-      </p>
-    {% endif %}
-    {% if backup_verify_report.checked_sqlite or backup_verify_report.checked_database_export %}
-      <p class="gemini-models">
-        검증 항목:
-        {% if backup_verify_report.checked_sqlite %}
-          <span>SQLite 무결성</span>
-        {% endif %}
-        {% if backup_verify_report.checked_database_export %}
-          <span>PostgreSQL 덤프 구조</span>
-        {% endif %}
-      </p>
-    {% endif %}
-    <p class="meta">현재 DB: {{ db_path }}</p>
-    <p class="meta">백업 폴더: {{ backup_dir }}</p>
-    <form class="inline-actions" method="post" action="{{ url_for('create_backup_route') }}" data-confirm="현재 DB 백업을 생성할까요?">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>지금 백업 생성</button>
-    </form>
-    {% if latest_backup and operations_write_unlocked %}
-      <div class="inline-actions">
-        <a class="source-link" href="{{ url_for('download_backup', filename=latest_backup.name) }}">최신 백업 다운로드</a>
-        <form method="post" action="{{ url_for('restore_backup_route') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="backup_name" value="{{ latest_backup.name }}">
-          <button class="secondary" type="submit" name="action" value="preview">최신 백업 복구 대상 확인</button>
-        </form>
-      </div>
-    {% endif %}
-  </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>운영 관리 비밀번호</h2>
-      <span class="badge {% if operations_password_source == 'database' %}badge-gemini{% elif operations_password_source == 'environment' %}badge-neutral{% else %}badge-warning{% endif %}">
-        {% if operations_password_source == 'database' %}변경 가능{% elif operations_password_source == 'environment' %}환경변수 관리{% else %}관리자 비번 사용 중{% endif %}
-      </span>
-    </div>
-    {% if operations_password_source == 'environment' %}
-      <p class="meta">운영 비밀번호가 환경변수(NEWS_SUMMARY_OPERATIONS_PASSWORD)로 설정돼 있어 화면에서 바꿀 수 없습니다. 화면 변경을 쓰려면 그 환경변수를 지운 뒤 다시 여세요.</p>
-    {% else %}
-      <p class="meta">운영 관리 진입에 쓰는 비밀번호입니다. 현재 비밀번호를 확인한 뒤 새 값으로 바꿉니다.{% if operations_password_source != 'database' %} (아직 전용 비밀번호가 없어, 현재 비밀번호는 관리자 비밀번호로 확인합니다. 한 번 바꾸면 이후로는 이 값이 우선 적용됩니다.){% endif %}</p>
-      <form class="ops-form" method="post" action="{{ url_for('change_operations_password') }}">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="username" value="operations" autocomplete="username">
-        <label for="ops_current_password">현재 비밀번호</label>
-        <input id="ops_current_password" name="current_password" type="password" autocomplete="current-password" required>
-        <label for="ops_new_password">새 비밀번호</label>
-        <input id="ops_new_password" name="new_password" type="password" autocomplete="new-password" minlength="4" required>
-        <label for="ops_confirm_password">새 비밀번호 확인</label>
-        <input id="ops_confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="4" required>
-        <button type="submit">운영 비밀번호 변경</button>
-      </form>
-    {% endif %}
-  </article>
-
-  <article class="ops-card">
-    <div class="ops-card-head">
-      <h2>관리자 비밀번호</h2>
-      <span class="badge {% if admin_password_source == 'environment' %}badge-neutral{% elif admin_password_unlocked %}badge-gemini{% else %}badge-warning{% endif %}">
-        {% if admin_password_source == 'environment' %}.env 관리{% elif admin_password_unlocked %}변경 가능{% elif admin_password_configured %}확인 필요{% else %}미설정{% endif %}
-      </span>
-    </div>
-    {% if admin_password_source == 'environment' %}
-      <p class="meta">현재 .env에 설정된 관리자 비밀번호가 우선 적용 중입니다.</p>
-      <p class="meta">변경하려면 .env 값을 수정한 뒤 프로그램을 다시 실행해야 합니다.</p>
-    {% elif not admin_password_configured %}
-      <p class="meta">아직 관리자 비밀번호가 설정되지 않았습니다.</p>
-      <a class="source-link" href="{{ url_for('admin_setup') }}">관리자 비밀번호 설정</a>
-    {% elif not admin_password_unlocked %}
-      <p class="meta">현재 관리자 비밀번호를 입력하면 변경 입력칸이 표시됩니다.</p>
-      <form class="ops-form" method="post" action="{{ url_for('unlock_admin_password_panel') }}">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="username" value="admin" autocomplete="username">
-        <label for="unlock_current_password">현재 비밀번호</label>
-        <input id="unlock_current_password" name="current_password" type="password" autocomplete="current-password" required>
-        <button type="submit">확인 후 변경 열기</button>
-      </form>
-    {% else %}
-      <p class="meta">현재 비밀번호 확인 후 새 비밀번호를 저장합니다.</p>
-      <form class="ops-form" method="post" action="{{ url_for('change_admin_password') }}">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="username" value="admin" autocomplete="username">
-        <label for="new_password">새 비밀번호</label>
-        <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="12" required>
-        <label for="confirm_password">새 비밀번호 확인</label>
-        <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="12" required>
-        <button type="submit">비밀번호 변경</button>
-      </form>
-    {% endif %}
-  </article>
-</section>
+  </div>
+</details>
 
 <section class="ops-log-view">
   <div class="section-head compact">

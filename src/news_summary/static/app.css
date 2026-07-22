@@ -1377,6 +1377,19 @@ h3 {
   margin-bottom: 18px;
 }
 
+/* 운영관리 카드 그룹 제목 — 성격별 구획을 나누는 라벨 */
+.ops-group-title {
+  margin: 26px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.ops-overview + .ops-group-title {
+  margin-top: 8px;
+}
+
 .ops-overview {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

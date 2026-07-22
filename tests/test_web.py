@@ -4856,8 +4856,8 @@ def test_operations_page_collapses_secondary_reference_cards_by_default(monkeypa
 
     assert '<details class="ops-secondary-section">' in html
     assert '<details class="ops-secondary-section" open' not in html
-    assert "참고 항목 펼치기" in html
-    assert "16개" in html
+    assert "상세 진단 펼치기" in html
+    assert "13개" in html
     assert "일일 운영 리포트" in html
     assert "운영 요약" in html
     assert "서버 상태 점검" in html
