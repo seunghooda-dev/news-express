@@ -2843,6 +2843,129 @@ def test_auth_rate_limit_success_clears_failed_login_count(monkeypatch):
     assert second_success.status_code == 302
 
 
+def test_client_ip_prefers_rightmost_forwarded_for(monkeypatch):
+    db_path = Path(f"data/.test_client_ip_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import _client_ip, create_app
+
+    app = create_app()
+
+    # 공격자가 왼쪽에 위조 IP를 끼워도 신뢰 프록시가 마지막에 붙인 맨 오른쪽만 취한다.
+    with app.test_request_context(headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.9"}):
+        assert _client_ip() == "203.0.113.9"
+    # CF-Connecting-IP는 앞단에 Cloudflare가 없어 순수 위조 벡터 — 신뢰하지 않는다.
+    with app.test_request_context(
+        headers={"CF-Connecting-IP": "9.9.9.9", "X-Forwarded-For": "203.0.113.9"}
+    ):
+        assert _client_ip() == "203.0.113.9"
+    # X-Forwarded-For가 없으면 remote_addr로 폴백한다.
+    with app.test_request_context(environ_base={"REMOTE_ADDR": "198.51.100.7"}):
+        assert _client_ip() == "198.51.100.7"
+
+
+def test_auth_rate_limit_not_bypassed_by_spoofed_forwarded_for(monkeypatch):
+    db_path = Path(f"data/.test_auth_rate_limit_spoof_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_MAX_FAILURES", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_LOCK_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary import web as web_module
+
+    web_module._auth_rate_limit_attempts.clear()
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 공격자가 매 요청 왼쪽 위조 IP를 바꿔도 신뢰 프록시가 붙인 오른쪽 IP는 동일하다.
+    client.post(
+        "/login",
+        data={"password": "wrong"},
+        headers={"X-Forwarded-For": "10.0.0.1, 203.0.113.9"},
+    )
+    client.post(
+        "/login",
+        data={"password": "wrong"},
+        headers={"X-Forwarded-For": "10.0.0.2, 203.0.113.9"},
+    )
+    blocked = client.post(
+        "/login",
+        data={"password": "secret1234", "next": "/"},
+        headers={"X-Forwarded-For": "10.0.0.3, 203.0.113.9"},
+    )
+
+    assert blocked.status_code == 429
+
+
+def test_auth_rate_limit_not_bypassed_by_user_agent_rotation(monkeypatch):
+    db_path = Path(f"data/.test_auth_rate_limit_ua_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_MAX_FAILURES", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_LOCK_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary import web as web_module
+
+    web_module._auth_rate_limit_attempts.clear()
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 같은 IP에서 User-Agent만 매번 바꿔도 잠금이 유지돼야 한다.
+    client.post(
+        "/login",
+        data={"password": "wrong"},
+        headers={"X-Forwarded-For": "203.0.113.9", "User-Agent": "rotating-agent-1"},
+    )
+    client.post(
+        "/login",
+        data={"password": "wrong"},
+        headers={"X-Forwarded-For": "203.0.113.9", "User-Agent": "rotating-agent-2"},
+    )
+    blocked = client.post(
+        "/login",
+        data={"password": "secret1234", "next": "/"},
+        headers={"X-Forwarded-For": "203.0.113.9", "User-Agent": "rotating-agent-3"},
+    )
+
+    assert blocked.status_code == 429
+
+
+def test_login_clears_prior_session_state_on_success(monkeypatch):
+    db_path = Path(f"data/.test_login_session_rotate_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary import web as web_module
+
+    web_module._auth_rate_limit_attempts.clear()
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 로그인 전 익명 세션에 잔여 값을 심어 둔다.
+    with client.session_transaction() as sess:
+        sess["planted_stale_flag"] = "attacker"
+
+    response = client.post(
+        "/login", data={"password": "secret1234", "next": "/"}, follow_redirects=False
+    )
+    assert response.status_code == 302
+
+    # 로그인 성공 시 세션이 재발급되어 이전 값은 사라지고 인증 플래그만 남는다.
+    with client.session_transaction() as sess:
+        assert sess.get("admin_authenticated") is True
+        assert "planted_stale_flag" not in sess
+
+
 def test_dangerous_operations_render_confirmation_prompts(monkeypatch):
     db_path = Path(f"data/.test_operation_confirmations_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

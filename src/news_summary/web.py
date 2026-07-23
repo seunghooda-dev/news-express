@@ -500,6 +500,8 @@ def create_app() -> Flask:
             password = request.form.get("password") or ""
             if verify_admin_password(store, password):
                 _auth_rate_limit_clear("admin_login")
+                # 세션 고정 방어: 로그인 경계에서 이전(익명) 세션을 폐기하고 새로 시작한다.
+                session.clear()
                 session["admin_authenticated"] = True
                 logger.info("admin login succeeded remote_addr=%s", _masked_request_ip())
                 return redirect(_safe_next())
@@ -536,6 +538,8 @@ def create_app() -> Flask:
                 flash("비밀번호 확인이 일치하지 않습니다.")
             else:
                 set_admin_password(store, password)
+                # 세션 고정 방어: 인증을 켜는 경계에서 이전 세션을 폐기한 뒤 상태를 설정한다.
+                session.clear()
                 session["admin_authenticated"] = True
                 logger.info("admin password configured remote_addr=%s", _masked_request_ip())
                 flash("관리자 로그인을 활성화했습니다.")
@@ -1654,8 +1658,9 @@ def _auth_rate_limit_clear(scope: str) -> None:
 
 
 def _auth_rate_limit_key(scope: str) -> tuple[str, str]:
-    raw_identity = f"{_client_ip()}|{request.headers.get('User-Agent', '')}"
-    identity_hash = hashlib.sha256(raw_identity.encode("utf-8", errors="ignore")).hexdigest()[:20]
+    # 무차별 대입 방어이므로 접속 IP만으로 식별한다. User-Agent는 클라이언트가
+    # 매 요청 바꿀 수 있어 키에 넣으면 잠금을 우회하는 벡터가 된다.
+    identity_hash = hashlib.sha256(_client_ip().encode("utf-8", errors="ignore")).hexdigest()[:20]
     return scope, identity_hash
 
 
@@ -5156,10 +5161,17 @@ def _stored_auto_collector_status_payload(store: Store) -> dict[str, object]:
 
 
 def _client_ip() -> str:
-    forwarded = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip()
-    return (request.headers.get("X-Real-IP") or request.remote_addr or "").strip()
+    # rate-limit 키로도 쓰이므로 클라이언트가 위조할 수 있는 값이 아니라
+    # 신뢰 프록시가 마지막에 덧붙인 값만 신뢰해야 한다. Render는 단일 신뢰 홉이라
+    # X-Forwarded-For의 맨 오른쪽 항목이 실제 접속 IP이며, 공격자가 왼쪽에 IP를
+    # 끼워 넣어도 오른쪽은 위조할 수 없다. CF-Connecting-IP/X-Real-IP는 이 배포
+    # 앞단에 해당 프록시가 없어 순수 위조 벡터이므로 신뢰하지 않는다.
+    # (앞단에 Cloudflare 등 프록시를 추가하면 신뢰 홉 수를 다시 맞춰야 한다.)
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    parts = [segment.strip() for segment in forwarded.split(",") if segment.strip()]
+    if parts:
+        return parts[-1]
+    return (request.remote_addr or "").strip()
 
 
 def _mask_ip(value: object) -> str:
