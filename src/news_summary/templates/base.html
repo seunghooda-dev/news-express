@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% if page_title %}{{ page_title }} · {% endif %}News Express</title>
+  <title>{% if page_title %}{{ page_title }} · {% endif %}KBC NEWS EXPRESS</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_version) }}">
 </head>
 <body>
   <header class="topbar">
     <a class="brand{% if request.endpoint == 'dashboard' %} active{% endif %}" href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>
-      <span class="brand-mark">NE</span>
-      <span>News Express</span>
+      <span class="brand-mark">KBC</span>
+      <span>NEWS EXPRESS</span>
     </a>
     <nav class="topnav" aria-label="주요 메뉴">
       <div class="desktop-nav-links">

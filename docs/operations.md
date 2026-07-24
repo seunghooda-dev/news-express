@@ -48,7 +48,7 @@ cd "C:\Users\seung\news summary"
 
 ## Gemini 사용량
 
-상단 메뉴의 `Gemini 사용량`은 News Express DB에 저장된 성공 호출을 기준으로 오늘 초안 생성, 오늘 다듬기, 전체 Gemini 생성 건수를 보여줍니다.
+상단 메뉴의 `Gemini 사용량`은 KBC NEWS EXPRESS DB에 저장된 성공 호출을 기준으로 오늘 초안 생성, 오늘 다듬기, 전체 Gemini 생성 건수를 보여줍니다.
 무료 key의 정확한 남은 요청 수, 분당 제한, 일일 제한은 Google AI Studio의 `Usage and Limits` 화면에서 확인합니다.
 Google 공식 문서상 Gemini API rate limit은 요청/토큰/일일 요청 등 여러 축으로 적용되며, 활성 제한은 AI Studio에서 확인하는 방식입니다.
 

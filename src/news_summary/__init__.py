@@ -1,3 +1,3 @@
-"""News Express 패키지."""
+"""KBC NEWS EXPRESS 패키지."""
 
 __version__ = "0.1.0"

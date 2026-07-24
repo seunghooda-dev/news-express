@@ -2476,7 +2476,7 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     right = client.post("/login", data={"password": "secret1234", "next": "/"}, follow_redirects=True)
     html = right.data.decode("utf-8")
     assert right.status_code == 200
-    assert "News Express" in html
+    assert "KBC NEWS EXPRESS" in html
     assert "로그아웃" in html
 
     logout = client.post("/logout", follow_redirects=False)
@@ -2633,12 +2633,12 @@ def test_pages_have_distinct_browser_titles(monkeypatch):
     client = app.test_client()
 
     # 컨텍스트 프로세서 기본 제목(뷰가 page_title을 안 넘기는 페이지)
-    assert "<title>대시보드 · News Express</title>" in client.get("/").get_data(as_text=True)
-    assert "<title>Gemini 사용량 · News Express</title>" in client.get("/gemini-usage").get_data(as_text=True)
+    assert "<title>대시보드 · KBC NEWS EXPRESS</title>" in client.get("/").get_data(as_text=True)
+    assert "<title>Gemini 사용량 · KBC NEWS EXPRESS</title>" in client.get("/gemini-usage").get_data(as_text=True)
     # 뷰가 page_title을 넘기는 페이지(초안)는 그 값이 제목에 반영된다.
     drafts_html = client.get("/drafts").get_data(as_text=True)
-    assert "· News Express</title>" in drafts_html
-    assert "<title>News Express</title>" not in drafts_html
+    assert "· KBC NEWS EXPRESS</title>" in drafts_html
+    assert "<title>KBC NEWS EXPRESS</title>" not in drafts_html
 
 
 def test_security_headers_are_applied(monkeypatch):
