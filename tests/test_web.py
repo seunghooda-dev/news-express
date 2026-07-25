@@ -2854,14 +2854,44 @@ def test_client_ip_prefers_rightmost_forwarded_for(monkeypatch):
     # 공격자가 왼쪽에 위조 IP를 끼워도 신뢰 프록시가 마지막에 붙인 맨 오른쪽만 취한다.
     with app.test_request_context(headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.9"}):
         assert _client_ip() == "203.0.113.9"
-    # CF-Connecting-IP는 앞단에 Cloudflare가 없어 순수 위조 벡터 — 신뢰하지 않는다.
+    # CF-Connecting-IP는 Cloudflare가 채우는 실제 방문자 IP이므로 최우선 신뢰한다.
     with app.test_request_context(
-        headers={"CF-Connecting-IP": "9.9.9.9", "X-Forwarded-For": "203.0.113.9"}
+        headers={"CF-Connecting-IP": "9.9.9.9", "X-Forwarded-For": "1.2.3.4, 203.0.113.9"}
     ):
-        assert _client_ip() == "203.0.113.9"
+        assert _client_ip() == "9.9.9.9"
     # X-Forwarded-For가 없으면 remote_addr로 폴백한다.
     with app.test_request_context(environ_base={"REMOTE_ADDR": "198.51.100.7"}):
         assert _client_ip() == "198.51.100.7"
+
+
+def test_auth_rate_limit_keys_on_cloudflare_connecting_ip(monkeypatch):
+    db_path = Path(f"data/.test_auth_rate_limit_cf_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_MAX_FAILURES", "2")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_RATE_LIMIT_LOCK_SECONDS", "60")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+
+    from news_summary import web as web_module
+
+    web_module._auth_rate_limit_attempts.clear()
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # Cloudflare 뒤에서는 CF-Connecting-IP가 실제 방문자다. 요청마다 엣지 노드가 바뀌어
+    # X-Forwarded-For가 달라져도(172.69·141.101·104.22 등), CF-Connecting-IP가 같으면
+    # 같은 방문자로 묶여 잠금이 유지돼야 한다.
+    client.post("/login", data={"password": "wrong"},
+                headers={"CF-Connecting-IP": "203.0.113.9", "X-Forwarded-For": "172.69.1.1"})
+    client.post("/login", data={"password": "wrong"},
+                headers={"CF-Connecting-IP": "203.0.113.9", "X-Forwarded-For": "141.101.2.2"})
+    blocked = client.post("/login", data={"password": "secret1234", "next": "/"},
+                          headers={"CF-Connecting-IP": "203.0.113.9", "X-Forwarded-For": "104.22.3.3"})
+
+    assert blocked.status_code == 429
 
 
 def test_auth_rate_limit_not_bypassed_by_spoofed_forwarded_for(monkeypatch):

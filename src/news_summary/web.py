@@ -5161,12 +5161,15 @@ def _stored_auto_collector_status_payload(store: Store) -> dict[str, object]:
 
 
 def _client_ip() -> str:
-    # rate-limit 키로도 쓰이므로 클라이언트가 위조할 수 있는 값이 아니라
-    # 신뢰 프록시가 마지막에 덧붙인 값만 신뢰해야 한다. Render는 단일 신뢰 홉이라
-    # X-Forwarded-For의 맨 오른쪽 항목이 실제 접속 IP이며, 공격자가 왼쪽에 IP를
-    # 끼워 넣어도 오른쪽은 위조할 수 없다. CF-Connecting-IP/X-Real-IP는 이 배포
-    # 앞단에 해당 프록시가 없어 순수 위조 벡터이므로 신뢰하지 않는다.
-    # (앞단에 Cloudflare 등 프록시를 추가하면 신뢰 홉 수를 다시 맞춰야 한다.)
+    # Render는 앞단에 Cloudflare CDN을 두므로, Cloudflare가 채워 주는 CF-Connecting-IP가
+    # 실제 접속자 IP다. Cloudflare가 이 값을 직접 덮어써서 설정하기 때문에 클라이언트가
+    # 위조할 수 없고, rate-limit 키로도 안전하다. 요청마다 Cloudflare 엣지 노드가 달라져
+    # X-Forwarded-For 맨 끝은 매번 다른 Cloudflare IP가 되므로 접속 식별에 쓰면 안 된다.
+    # Cloudflare를 거치지 않는 로컬/직접 요청에서만 CF-Connecting-IP가 비어, 그때는
+    # X-Forwarded-For 맨 오른쪽(신뢰 프록시가 붙인 값)·remote_addr로 폴백한다.
+    cf_ip = request.headers.get("CF-Connecting-IP", "").split(",", 1)[0].strip()
+    if cf_ip:
+        return cf_ip
     forwarded = request.headers.get("X-Forwarded-For", "")
     parts = [segment.strip() for segment in forwarded.split(",") if segment.strip()]
     if parts:
