@@ -1867,6 +1867,20 @@ class Store:
             conn.execute("DELETE FROM visitor_access_logs WHERE visited_at < ?", (cutoff_iso,))
         return int(row["count"] or 0)
 
+    def delete_visitor_access_logs_by_ip_prefixes(self, prefixes: tuple[str, ...]) -> int:
+        # 마스킹 IP가 주어진 접두사로 시작하는 기록만 지운다(프록시 엣지 IP 정리용).
+        if not prefixes:
+            return 0
+        clause = " OR ".join(["masked_ip LIKE ?"] * len(prefixes))
+        params = tuple(f"{prefix}%" for prefix in prefixes)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM visitor_access_logs WHERE {clause}",
+                params,
+            ).fetchone()
+            conn.execute(f"DELETE FROM visitor_access_logs WHERE {clause}", params)
+        return int(row["count"] or 0)
+
     def record_operation_event(
         self,
         event_type: str,

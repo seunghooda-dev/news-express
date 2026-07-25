@@ -67,6 +67,10 @@
     {% else %}
       <p class="empty">선택한 날짜의 방문 기록이 없습니다.</p>
     {% endif %}
+    <form class="inline-actions" method="post" action="{{ url_for('purge_proxy_visitor_logs') }}" data-confirm="앞단 프록시(Cloudflare) IP로 잘못 기록된 접속 이력을 정리할까요?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>프록시 IP 기록 정리</button>
+    </form>
   </article>
 </section>
 <h2 class="ops-group-title">핵심 상태</h2>

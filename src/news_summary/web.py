@@ -99,6 +99,7 @@ OPERATIONS_ACCESS_ENDPOINTS = {
     "create_backup_route",
     "download_backup",
     "restore_backup_route",
+    "purge_proxy_visitor_logs",
 }
 NO_STORE_ENDPOINTS = {
     "admin_setup",
@@ -139,6 +140,15 @@ LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
+# Cloudflare 엣지 IP 대역의 앞 두 옥텟. 앞단 프록시 IP가 방문자 대신 접속 이력에
+# 기록된 구간을 정리할 때 쓴다(마스킹 IP가 "172.69.xxx.xxx" 형태로 저장됨).
+CLOUDFLARE_MASKED_IP_PREFIXES = (
+    "103.21.", "103.22.", "103.31.", "104.16.", "104.17.", "104.18.", "104.19.",
+    "104.20.", "104.21.", "104.22.", "104.23.", "108.162.", "131.0.", "141.101.",
+    "162.158.", "162.159.", "172.64.", "172.65.", "172.66.", "172.67.", "172.68.",
+    "172.69.", "172.70.", "172.71.", "173.245.", "188.114.", "190.93.", "197.234.",
+    "198.41.",
+)
 DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
 DEFAULT_AUTO_RUNNING_WARN_MINUTES = 180
 DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
@@ -823,6 +833,25 @@ def create_app() -> Flask:
         _record_operation_event(store, "backup_created", target=backup_path.name, detail="DB 백업 생성")
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")
+        return redirect(url_for("operations"))
+
+    @app.post("/operations/visitor-logs/proxy-cleanup")
+    def purge_proxy_visitor_logs():
+        if locked_response := _require_operations_write_access(store):
+            return locked_response
+        removed = store.delete_visitor_access_logs_by_ip_prefixes(CLOUDFLARE_MASKED_IP_PREFIXES)
+        _clear_operations_report_cache()
+        _record_operation_event(
+            store,
+            "visitor_logs_proxy_cleaned",
+            target="visitor_access_logs",
+            detail=f"프록시 IP 기록 {removed}건 삭제",
+        )
+        logger.info("visitor access proxy ip rows removed count=%s", removed)
+        if removed:
+            flash(f"프록시 IP로 기록된 접속 이력 {removed}건을 정리했습니다.")
+        else:
+            flash("정리할 프록시 IP 기록이 없습니다.")
         return redirect(url_for("operations"))
 
     @app.get("/operations/backups/<path:filename>")
@@ -5272,6 +5301,7 @@ OPERATION_EVENT_LABELS = {
     "backup_created": "백업 생성",
     "backup_create_failed": "백업 생성 실패",
     "backup_restored": "백업 복구",
+    "visitor_logs_proxy_cleaned": "접속 이력 프록시 IP 정리",
     "gemini_usage_reset": "Gemini 사용량 초기화",
     "writing_settings_reset": "기사 설정 초기화",
     "writing_settings_updated": "기사 설정 저장",

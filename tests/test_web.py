@@ -5701,6 +5701,48 @@ def test_visitor_access_skips_thumbnail_preview_requests(monkeypatch):
         assert _should_record_visitor_access("dashboard", "GET") is True
 
 
+def test_purge_proxy_visitor_logs_removes_only_proxy_rows(monkeypatch):
+    db_path = Path(f"data/.test_visitor_proxy_cleanup_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+
+    store = Store(db_path)
+    store.init_db()
+    # 앞단 Cloudflare 엣지 IP가 방문자 대신 기록된 행들
+    for masked_ip in ("172.69.xxx.xxx", "141.101.xxx.xxx", "104.22.xxx.xxx"):
+        store.record_visitor_access(masked_ip, "GET", "/", "dashboard", 200, "Chrome")
+    # 실제 방문자 IP로 정상 기록된 행
+    store.record_visitor_access("203.0.xxx.xxx", "GET", "/", "dashboard", 200, "Chrome")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    def masked_ips() -> set[str]:
+        return {row["masked_ip"] for row in store.visitor_access_logs_since("1970-01-01T00:00:00+00:00")}
+
+    # 운영 변경 잠금 상태에서는 지워지지 않는다.
+    locked = client.post("/operations/visitor-logs/proxy-cleanup", follow_redirects=True)
+    assert "운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다." in locked.data.decode("utf-8")
+    assert "172.69.xxx.xxx" in masked_ips()
+
+    client.post(
+        "/operations/write-access/unlock",
+        data={"current_password": "secret1234"},
+        follow_redirects=True,
+    )
+    response = client.post("/operations/visitor-logs/proxy-cleanup", follow_redirects=True)
+
+    assert "접속 이력 3건을 정리했습니다" in response.data.decode("utf-8")
+    remaining = masked_ips()
+    # 프록시 IP 기록만 사라지고 실제 방문자 기록은 남는다.
+    assert not [ip for ip in remaining if ip.startswith(("172.69.", "141.101.", "104.22."))]
+    assert "203.0.xxx.xxx" in remaining
+
+
 def test_operations_page_records_masked_visitor_access(monkeypatch):
     db_path = Path(f"data/.test_visitor_access_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
