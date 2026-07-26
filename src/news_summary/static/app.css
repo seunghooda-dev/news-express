@@ -1686,6 +1686,10 @@ h3 {
   max-height: 420px;
   overflow: auto;
   padding-right: 2px;
+  /* 행이 max-height에 맞춰 찌그러지지 않고 내용 높이를 유지한 채 스크롤되게 한다.
+     (행에 min-height가 있어 grid가 임의로 줄일 수 있으므로 행 크기를 내용에 고정한다.) */
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 
 .visitor-row {
@@ -1702,7 +1706,8 @@ h3 {
   font-size: 13px;
 }
 
-.visitor-row span {
+/* IP는 strong, 나머지는 span이라 직계 자식을 모두 같은 규칙으로 다룬다. */
+.visitor-row > * {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2678,8 +2683,12 @@ h3 {
     align-items: start;
   }
 
-  .visitor-row span {
+  /* 한 줄에 하나씩 쌓이므로 잘라내지 않고 줄바꿈한다. overflow를 풀어야 각 줄이
+     제 높이를 주장해, 목록이 행을 찌그러뜨리며 글자가 겹치는 일이 없다. */
+  .visitor-row > * {
+    overflow: visible;
     white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .ops-log-tabs {
