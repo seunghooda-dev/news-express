@@ -253,6 +253,17 @@ button.secondary:hover {
   background: #eeeefc;
 }
 
+/* 운영 변경 잠금 등으로 비활성인 버튼. hover 효과까지 함께 꺼야 눌리는 것처럼 보이지 않는다. */
+button:disabled,
+button:disabled:hover {
+  border-color: var(--line-strong);
+  background: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

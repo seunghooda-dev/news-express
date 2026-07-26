@@ -71,6 +71,9 @@
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <button type="submit" {% if not operations_write_unlocked %}disabled{% endif %}>프록시 IP 기록 정리</button>
     </form>
+    {% if not operations_write_unlocked %}
+      <p class="meta">앞단 프록시(Cloudflare) IP로 잘못 기록된 이력을 지웁니다. 사용하려면 아래 "운영 변경 잠금"을 먼저 해제하세요.</p>
+    {% endif %}
   </article>
 </section>
 <h2 class="ops-group-title">핵심 상태</h2>
