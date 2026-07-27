@@ -291,19 +291,20 @@ def _draft_value(draft, key: str):
 
 
 def _gemini_draft_model_candidates(item: PressRelease, model: str | None = None) -> list[str]:
+    # 초안은 보도자료 종류와 무관하게 항상 Lite로 만든다(Flash 대비 약 7배 빠름).
+    # Flash는 Lite 호출이 실패했을 때만 쓰는 예비 경로로 남겨 둔다.
     enabled_models = current_gemini_models()
     if model and model in enabled_models:
         return [model]
-    if _needs_flash_for_draft(item):
-        return list(GEMINI_PRIMARY_MODELS)
     return _dedupe_models([*GEMINI_LITE_MODELS, *GEMINI_PRIMARY_MODELS])
 
 
 def _gemini_refine_model_candidates(model: str | None = None) -> list[str]:
+    # 다듬기도 초안과 같이 Lite 우선. Flash는 Lite 실패 시의 예비 경로다.
     enabled_models = current_gemini_models()
     if model and model in enabled_models:
         return [model]
-    return list(GEMINI_PRIMARY_MODELS)
+    return _dedupe_models([*GEMINI_LITE_MODELS, *GEMINI_PRIMARY_MODELS])
 
 
 def _dedupe_models(models: list[str]) -> list[str]:
@@ -312,50 +313,6 @@ def _dedupe_models(models: list[str]) -> list[str]:
         if model not in deduped:
             deduped.append(model)
     return deduped
-
-
-def _needs_flash_for_draft(item: PressRelease) -> bool:
-    return _draft_complexity_score(item) >= 12
-
-
-def _draft_complexity_score(item: PressRelease) -> int:
-    text = f"{item.title}\n{_clean_gemini_source_content(item.content, item.title)}"
-    score = 0
-    if len(text) >= 1800:
-        score += 3
-    if len(text) >= 3200:
-        score += 3
-    score += min(len(re.findall(r"\d", text)), 18) // 3
-
-    complex_tokens = (
-        "신청",
-        "접수",
-        "모집",
-        "공모",
-        "대상",
-        "자격",
-        "조건",
-        "지원",
-        "환급",
-        "보조",
-        "사업비",
-        "예산",
-        "금액",
-        "만원",
-        "억원",
-        "기간",
-        "부터",
-        "까지",
-        "선정",
-        "심사",
-    )
-    matched_tokens = {token for token in complex_tokens if token in text}
-    score += len(matched_tokens) * 2
-    if len(matched_tokens) >= 4:
-        score += 4
-    if re.search(r"\d+\s*(?:만|억)?\s*원|\d{1,2}월\s*\d{1,2}일|20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
-        score += 3
-    return score
 
 
 def current_gemini_models(today: date | None = None) -> list[str]:

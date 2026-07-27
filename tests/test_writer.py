@@ -7,7 +7,6 @@ from news_summary.writer import (
     generate_draft,
     gemini_source_max_chars,
     refine_draft_with_gemini,
-    _draft_complexity_score,
     _gemini_draft_model_candidates,
     _gemini_source_excerpt,
     _parse_model_output,
@@ -299,11 +298,12 @@ def test_generate_draft_stops_model_fallback_after_quota(monkeypatch):
         generate_draft(1, item, require_gemini=True)
     except GeminiDraftError as exc:
         assert "처리 가능 시간" in str(exc)
-        assert exc.attempted_models == ["gemini-3.5-flash"]
+        assert exc.attempted_models == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
     else:
         raise AssertionError("GeminiDraftError가 발생해야 합니다.")
 
-    assert calls == ["gemini-3.5-flash"]
+    # 마지막 모델까지 쿼터 오류면 더 시도하지 않고 멈춘다.
+    assert calls == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
 
 def test_current_gemini_models_include_lite_for_auto_routing():
@@ -370,7 +370,7 @@ def test_generate_draft_falls_back_to_flash_when_simple_lite_fails(monkeypatch):
     assert draft.model == "gemini-3.5-flash:gemini"
 
 
-def test_complex_article_uses_flash_without_lite_fallback():
+def test_all_articles_use_lite_first_regardless_of_complexity():
     simple = PressRelease(
         source_id="test",
         source_name="테스트",
@@ -392,10 +392,10 @@ def test_complex_article_uses_flash_without_lite_fallback():
         ),
     )
 
-    assert _draft_complexity_score(simple) < 12
+    # 금액·기간·모집 같은 조건이 많은 보도자료도 이제 Lite로 먼저 만든다(속도 우선).
+    # Flash는 두 경우 모두 Lite 실패 시의 예비 경로로만 남는다.
     assert _gemini_draft_model_candidates(simple) == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
-    assert _draft_complexity_score(complex_item) >= 12
-    assert _gemini_draft_model_candidates(complex_item) == ["gemini-3.5-flash"]
+    assert _gemini_draft_model_candidates(complex_item) == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
 
 def test_refine_draft_with_gemini_passes_reporter_instruction(monkeypatch):
@@ -433,11 +433,11 @@ def test_refine_draft_with_gemini_passes_reporter_instruction(monkeypatch):
         "기존 메모",
     )
 
-    assert refined.model == "gemini-3.5-flash:gemini-refine"
+    assert refined.model == "gemini-3.1-flash-lite:gemini-refine"
     assert refined.title == "신안군, 교육 프로그램 운영"
 
 
-def test_refine_draft_with_gemini_uses_only_35_flash(monkeypatch):
+def test_refine_draft_with_gemini_uses_lite_first(monkeypatch):
     draft_row = {
         "press_release_id": 7,
         "source_name": "신안군청 보도자료",
@@ -462,11 +462,11 @@ def test_refine_draft_with_gemini_uses_only_35_flash(monkeypatch):
         refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
     except GeminiRefineError as exc:
         assert "일시적으로 과부하" in str(exc)
-        assert exc.attempted_models == ["gemini-3.5-flash"]
+        assert exc.attempted_models == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
     else:
         raise AssertionError("GeminiRefineError가 발생해야 합니다.")
 
-    assert calls == ["gemini-3.5-flash"]
+    assert calls == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
 
 def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
@@ -492,6 +492,6 @@ def test_refine_draft_with_gemini_reports_attempted_models(monkeypatch):
         refine_draft_with_gemini(draft_row, "다듬기", "제목", "본문", "메모")
     except GeminiRefineError as exc:
         assert "처리 가능 시간" in str(exc)
-        assert exc.attempted_models == ["gemini-3.5-flash"]
+        assert exc.attempted_models == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
     else:
         raise AssertionError("GeminiRefineError가 발생해야 합니다.")
