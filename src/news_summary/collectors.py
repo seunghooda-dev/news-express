@@ -82,6 +82,9 @@ ASSET_SKIP_TOKENS = (
 # 미리보기 계열 토큰은 UI 썸네일을 걸러내려는 것이지만, 일부 지자체는 실제 보도사진을
 # preview.do 같은 주소로 제공한다. 파일 식별자를 쿼리로 받는 주소에는 적용하지 않는다.
 PREVIEW_SKIP_TOKENS = ("filepreview", "preview", "미리보기")
+# 새올(eminwon) 계열 게시판의 첨부 내려받기 폼 필드와 자바스크립트 호출 형태.
+EMINWON_DOWNLOAD_FIELDS = ("user_file_nm", "sys_file_nm", "file_path")
+GO_DOWNLOAD_CALL_PATTERN = re.compile(r"goDownLoad\(\s*'(.*?)'\s*,\s*'(.*?)'\s*,\s*'(.*?)'\s*\)", re.DOTALL)
 STORED_FILE_QUERY_PATTERN = re.compile(r"(?:^|&)[a-z_]*file[a-z_]*=", re.IGNORECASE)
 logger = get_logger("collectors")
 
@@ -826,9 +829,38 @@ def _extract_detail_assets(
                     break
         for link in node.select("a[href]"):
             label = _clean_text(link.get_text(" ") or str(link.get("title") or ""))
-            add_asset(str(link.get("href") or ""), label)
+            href = str(link.get("href") or "")
+            if href.lower().startswith("javascript:"):
+                add_asset(_script_download_url(soup, href, detail_url), label)
+                continue
+            add_asset(href, label)
 
     return assets
+
+
+def _script_download_url(soup: BeautifulSoup, href: str, detail_url: str) -> str:
+    # 새올(eminwon) 계열 게시판은 첨부를 javascript:goDownLoad('..','..','..')로 넘긴다.
+    # 인자 세 개를 그대로 폼 전송 주소에 실으면 GET으로도 같은 파일을 받을 수 있다.
+    match = GO_DOWNLOAD_CALL_PATTERN.search(href)
+    if not match:
+        return ""
+    action = _download_form_action(soup, EMINWON_DOWNLOAD_FIELDS)
+    if not action:
+        return ""
+    base_url = urljoin(detail_url, action)
+    if base_url.startswith("http://"):
+        # 이 시스템은 80번 포트가 닫혀 있고 https로만 응답한다.
+        base_url = f"https://{base_url[len('http://'):]}"
+    params = dict(zip(EMINWON_DOWNLOAD_FIELDS, match.groups()))
+    return f"{base_url}?{urlencode(params)}"
+
+
+def _download_form_action(soup: BeautifulSoup, field_names: tuple[str, ...]) -> str:
+    for form in soup.select("form[action]"):
+        input_names = {str(node.get("name") or "") for node in form.select("input[name]")}
+        if set(field_names) <= input_names:
+            return str(form.get("action") or "")
+    return ""
 
 
 def _asset_scope_nodes(soup: BeautifulSoup, selectors: dict) -> list[Tag]:

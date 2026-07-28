@@ -978,6 +978,72 @@ def test_collect_html_board_keeps_body_photo_served_from_preview_endpoint(monkey
     assert not [url for url in image_urls if "btn_preview" in url]
 
 
+def test_collect_html_board_builds_download_url_from_go_download_script(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if url.endswith("/list"):
+                return FakeResponse('<ul><li><a href="/view/1">순천시 폭염 예방 물품 지원</a></li></ul>')
+            return FakeResponse(
+                """
+                <form name="form1" method="post" action="http://eminwon.example.go.kr/emwp/jsp/ofr/FileDownNew.jsp">
+                  <input type="hidden" name="user_file_nm" value="" />
+                  <input type="hidden" name="sys_file_nm" value="" />
+                  <input type="hidden" name="file_path" value="" />
+                </form>
+                <div class="contents">
+                  <p>순천시는 폭염에 대비해 외국인 계절근로자에게 예방 물품을 나눠줬다고 밝혔다.</p>
+                  <p>시는 농가와 협력해 물품을 배포하고 현장 점검을 이어갈 계획이다.</p>
+                  <p>지원 대상과 물품 종류는 수요를 반영해 늘려갈 예정이다.</p>
+                  <a href="javascript:goDownLoad('user+tok==','sys+tok==','/path+tok')">기념 촬영.jpg</a>
+                </div>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="go-download-test",
+        name="스크립트 첨부 테스트 시청",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+        base_url="https://example.com",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": [".contents"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    assets = items[0].assets
+    assert len(assets) == 1
+    asset = assets[0]
+    # 폼 전송으로만 받던 첨부를 GET 주소로 바꿔 썸네일·다운로드에 그대로 쓴다.
+    assert asset.url.startswith("https://eminwon.example.go.kr/emwp/jsp/ofr/FileDownNew.jsp?")
+    assert "user_file_nm=user%2Btok%3D%3D" in asset.url
+    assert "sys_file_nm=sys%2Btok%3D%3D" in asset.url
+    assert "file_path=%2Fpath%2Btok" in asset.url
+    assert asset.is_image is True
+    assert asset.content_type == "image/jpeg"
+    assert asset.filename == "기념 촬영.jpg"
+
+
 def test_collect_json_board_collects_assets_from_detail_api(monkeypatch):
     class FakeResponse:
         status_code = 200
