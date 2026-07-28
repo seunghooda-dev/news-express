@@ -79,6 +79,10 @@ ASSET_SKIP_TOKENS = (
     "layout",
     "favicon",
 )
+# 미리보기 계열 토큰은 UI 썸네일을 걸러내려는 것이지만, 일부 지자체는 실제 보도사진을
+# preview.do 같은 주소로 제공한다. 파일 식별자를 쿼리로 받는 주소에는 적용하지 않는다.
+PREVIEW_SKIP_TOKENS = ("filepreview", "preview", "미리보기")
+STORED_FILE_QUERY_PATTERN = re.compile(r"(?:^|&)[a-z_]*file[a-z_]*=", re.IGNORECASE)
 logger = get_logger("collectors")
 
 
@@ -282,10 +286,86 @@ def collect_json_board(source: Source, limit: int = 10) -> list[PressRelease]:
             url=detail_url,
             content=_trim_boilerplate(content),
             published_at=_clean_text(str(item.get(date_field) or "")) or _extract_date(content),
+            assets=_json_board_assets(client, source, selectors, item),
         )
         if release:
             releases.append(release)
     return releases
+
+
+def _json_board_assets(
+    client: httpx.Client,
+    source: Source,
+    selectors: dict,
+    item: dict,
+    limit: int = 24,
+) -> list[PressReleaseAsset]:
+    # 목록 JSON에는 첨부가 없고 상세 API에만 있는 게시판을 위한 경로다.
+    # 세 설정이 모두 있어야 동작하고, 없으면 기존처럼 첨부 없이 수집한다.
+    detail_template = selectors.get("detail_api_url_template")
+    files_path = selectors.get("files_path")
+    file_url_template = selectors.get("file_url_template")
+    if not (detail_template and files_path and file_url_template):
+        return []
+
+    root_url = source.base_url or source.list_url or ""
+    try:
+        detail_api_url = urljoin(root_url, str(detail_template).format(**item))
+    except (KeyError, IndexError):
+        return []
+
+    try:
+        response = client.get(detail_api_url)
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning(
+            "json board detail assets skipped source_id=%s url=%s error=%s",
+            source.id,
+            detail_api_url,
+            exc,
+        )
+        return []
+
+    entries = _get_path(data, files_path)
+    if not isinstance(entries, list):
+        return []
+
+    name_field = str(selectors.get("file_name_field") or "fileNm")
+    assets: list[PressReleaseAsset] = []
+    seen_urls: set[str] = set()
+    for entry in entries:
+        if len(assets) >= limit:
+            break
+        if not isinstance(entry, dict):
+            continue
+        try:
+            raw_url = str(file_url_template).format(**entry)
+        except (KeyError, IndexError):
+            continue
+        asset_url = _normal_asset_url(urljoin(root_url, raw_url), root_url)
+        if not asset_url or asset_url in seen_urls:
+            continue
+        label = _clean_text(str(entry.get(name_field) or ""))
+        extension = _asset_extension(asset_url, label)
+        is_image = extension in IMAGE_EXTENSIONS
+        if not is_image and extension not in ATTACHMENT_EXTENSIONS:
+            continue
+        if _is_noise_asset(asset_url, label):
+            continue
+        seen_urls.add(asset_url)
+        assets.append(
+            PressReleaseAsset(
+                url=asset_url,
+                title=label or ("사진" if is_image else "첨부파일"),
+                filename=_asset_filename(asset_url, label),
+                content_type=_asset_content_type(extension, is_image),
+                asset_type="image" if is_image else "file",
+                is_image=is_image,
+                sort_order=len(assets),
+            )
+        )
+    return assets
 
 
 def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
@@ -718,7 +798,7 @@ def _extract_detail_assets(
         is_image = force_image or extension in IMAGE_EXTENSIONS
         if not is_image and extension not in ATTACHMENT_EXTENSIONS and not _looks_like_attachment_url(asset_url, label):
             return
-        if _is_noise_asset(asset_url, label):
+        if _is_noise_asset(asset_url, label, from_image_tag=force_image):
             return
         seen_urls.add(asset_url)
         filename = _asset_filename(asset_url, label)
@@ -930,11 +1010,16 @@ def _looks_like_attachment_url(url: str, label: str = "") -> bool:
     return any(token in text for token in ("download", "attach", "atch", "file", "fileno", "file_id", "첨부", "다운로드"))
 
 
-def _is_noise_asset(url: str, label: str = "") -> bool:
+def _is_noise_asset(url: str, label: str = "", *, from_image_tag: bool = False) -> bool:
     text = f"{url} {label}".lower()
     if _is_jeonnam_gwangju_image_view_url(url):
         return True
-    if any(token in text for token in ASSET_SKIP_TOKENS):
+    skip_tokens = ASSET_SKIP_TOKENS
+    if from_image_tag and _serves_stored_file(url):
+        # 본문 <img>가 파일 식별자를 받는 주소를 가리키면 그것이 실제 보도사진이다.
+        # 미리보기 "링크"(다운로드 링크와 나란히 놓인 UI)는 여전히 걸러진다.
+        skip_tokens = tuple(token for token in ASSET_SKIP_TOKENS if token not in PREVIEW_SKIP_TOKENS)
+    if any(token in text for token in skip_tokens):
         return True
     if (
         "mode=view" in text
@@ -943,6 +1028,11 @@ def _is_noise_asset(url: str, label: str = "") -> bool:
     ):
         return True
     return False
+
+
+def _serves_stored_file(url: str) -> bool:
+    # fileId·fileSeq처럼 파일 식별자를 쿼리로 받는 주소는 실제 첨부를 내려주는 경로다.
+    return bool(STORED_FILE_QUERY_PATTERN.search(urlsplit(url).query))
 
 
 def _is_jeonnam_gwangju_image_view_url(url: str) -> bool:

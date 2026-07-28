@@ -252,6 +252,11 @@ sources:
       content_field: "dataContent"
       published_at_field: "registerDate"
       url_template: "/board/detail?dataSid={dataSid}&boardId=BBS_0000007&domainId=DOM_0000001&contentsSid=12&menuCd=DOM_000000190001005001"
+      # 목록 JSON에는 첨부가 없어 상세 API에서 파일 목록을 따로 가져온다.
+      detail_api_url_template: "/board/getBoardDetail?dataSid={dataSid}&boardId=BBS_0000007&domainId=DOM_0000001&contentsSid=12&menuCd=DOM_000000190001005001"
+      files_path: "RSLT_DATA.boardDetail.boardContentsFileList"
+      file_url_template: "/board/getFile?boardId=BBS_0000007&fileSid={fileSid}"
+      file_name_field: "fileNm"
 
   - id: gokseong-county
     name: 곡성군청 보도자료

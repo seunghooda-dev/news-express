@@ -920,3 +920,216 @@ def test_validated_release_rejects_attachment_metadata_only():
     )
 
     assert item is None
+
+
+def test_collect_html_board_keeps_body_photo_served_from_preview_endpoint(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            if url.endswith("/list"):
+                return FakeResponse('<ul><li><a href="/view/1">해남군 미소 기획전 개최</a></li></ul>')
+            return FakeResponse(
+                """
+                <div class="data_cont">
+                  <p>해남군은 지역 농특산물을 널리 알리기 위한 기획전을 다음 달부터 연다고 밝혔다.</p>
+                  <p>군은 참여 업체를 모집하고 현장 홍보와 판촉 행사를 함께 이어갈 계획이다.</p>
+                  <p>기획전은 지역 농가의 판로를 넓히고 소비자 접점을 늘리기 위해 마련됐다.</p>
+                  <img src="https://portal.example.go.kr/jfile/preview.do?fileId=abc123&fileSeq=1" alt="기획전 사진">
+                  <img src="/images/btn_preview.png" alt="미리보기">
+                </div>
+                """
+            )
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="preview-endpoint-test",
+        name="미리보기 주소 테스트 군청",
+        region="전남",
+        type="html_board",
+        list_url="https://example.com/list",
+        base_url="https://example.com",
+        include_url_contains=["/view/"],
+        selectors={"link": "a[href]", "content": [".data_cont"]},
+    )
+
+    items = collect_html_board(source, limit=1)
+
+    # preview.do라도 파일 식별자를 받는 주소는 실제 보도사진이므로 수집한다.
+    image_urls = [asset.url for asset in items[0].assets if asset.is_image]
+    assert image_urls == ["https://portal.example.go.kr/jfile/preview.do?fileId=abc123&fileSeq=1"]
+    # 파일 식별자가 없는 미리보기 버튼 이미지는 그대로 걸러진다.
+    assert not [url for url in image_urls if "btn_preview" in url]
+
+
+def test_collect_json_board_collects_assets_from_detail_api(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    list_payload = {
+        "RSLT_DATA": {
+            "boardContentsList": [
+                {
+                    "dataSid": 819033,
+                    "dataTitle": "담양군, 상품권 운영 개선",
+                    "dataContent": (
+                        "<p>담양군은 상품권 이용자의 편의를 높이기 위해 운영 방식을 개선한다고 밝혔다.</p>"
+                        "<p>군은 가맹점 등록 절차를 간소화하고 부정유통 관리도 지속해 나갈 계획이다.</p>"
+                        "<p>이번 개선으로 이용자가 구매 단계에서 받는 혜택이 한층 늘어날 것으로 기대된다.</p>"
+                    ),
+                    "registerDate": "2026-07-28",
+                }
+            ]
+        }
+    }
+    detail_payload = {
+        "RSLT_DATA": {
+            "boardDetail": {
+                "boardContentsFileList": [
+                    {"fileNm": "보도자료.hwpx", "fileSid": 213912},
+                    {"fileNm": "담양군청(2026.07).jpg", "fileSid": 213913},
+                ]
+            }
+        }
+    }
+
+    requested = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, params=None):
+            requested.append(url)
+            if "getBoardDetail" in url:
+                return FakeResponse(detail_payload)
+            return FakeResponse(list_payload)
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="json-detail-asset-test",
+        name="상세 API 첨부 테스트 군청",
+        region="전남",
+        type="json_board",
+        list_url="https://example.com/board/getContentsList",
+        base_url="https://example.com",
+        include_url_contains=["/board/detail"],
+        selectors={
+            "items_path": "RSLT_DATA.boardContentsList",
+            "title_field": "dataTitle",
+            "content_field": "dataContent",
+            "published_at_field": "registerDate",
+            "url_template": "/board/detail?dataSid={dataSid}",
+            "detail_api_url_template": "/board/getBoardDetail?dataSid={dataSid}",
+            "files_path": "RSLT_DATA.boardDetail.boardContentsFileList",
+            "file_url_template": "/board/getFile?fileSid={fileSid}",
+            "file_name_field": "fileNm",
+        },
+    )
+
+    items = collect_json_board(source, limit=1)
+
+    assert len(items) == 1
+    assets = items[0].assets
+    assert [asset.asset_type for asset in assets] == ["file", "image"]
+    assert assets[1].url == "https://example.com/board/getFile?fileSid=213913"
+    assert assets[1].content_type == "image/jpeg"
+    assert assets[1].title == "담양군청(2026.07).jpg"
+    assert any("getBoardDetail" in url for url in requested)
+
+
+def test_collect_json_board_without_detail_config_skips_asset_lookup(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "RSLT_DATA": {
+                    "boardContentsList": [
+                        {
+                            "dataSid": 1,
+                            "dataTitle": "테스트군 사업 추진",
+                            "dataContent": (
+                                "<p>테스트군은 주민 편의를 높이기 위해 새로운 사업을 추진한다고 밝혔다.</p>"
+                                "<p>군은 관계 기관 협의를 거쳐 다음 달부터 사업을 본격적으로 시작할 계획이다.</p>"
+                                "<p>사업 대상과 세부 일정은 주민 의견을 수렴해 확정할 예정이다.</p>"
+                            ),
+                            "registerDate": "2026-07-28",
+                        }
+                    ]
+                }
+            }
+
+        def raise_for_status(self):
+            return None
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, params=None):
+            calls.append(url)
+            return FakeResponse()
+
+    monkeypatch.setattr("news_summary.collectors.httpx.Client", FakeClient)
+    source = Source(
+        id="json-no-detail-test",
+        name="상세 설정 없는 테스트 군청",
+        region="전남",
+        type="json_board",
+        list_url="https://example.com/board/getContentsList",
+        base_url="https://example.com",
+        include_url_contains=["/board/detail"],
+        selectors={
+            "items_path": "RSLT_DATA.boardContentsList",
+            "title_field": "dataTitle",
+            "content_field": "dataContent",
+            "published_at_field": "registerDate",
+            "url_template": "/board/detail?dataSid={dataSid}",
+        },
+    )
+
+    items = collect_json_board(source, limit=1)
+
+    # 상세 API 설정이 없으면 추가 요청 없이 기존처럼 동작한다.
+    assert items[0].assets == []
+    assert len(calls) == 1
