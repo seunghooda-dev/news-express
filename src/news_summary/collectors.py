@@ -250,46 +250,47 @@ def collect_json_board(source: Source, limit: int = 10) -> list[PressRelease]:
         response.raise_for_status()
         data = response.json()
 
-    items = _get_path(data, selectors.get("items_path", "items"))
-    if not isinstance(items, list):
-        return []
+        items = _get_path(data, selectors.get("items_path", "items"))
+        if not isinstance(items, list):
+            return []
 
-    releases = []
-    title_field = selectors.get("title_field", "title")
-    content_field = selectors.get("content_field", "content")
-    date_field = selectors.get("published_at_field", "published_at")
-    url_template = selectors.get("url_template")
+        releases = []
+        title_field = selectors.get("title_field", "title")
+        content_field = selectors.get("content_field", "content")
+        date_field = selectors.get("published_at_field", "published_at")
+        url_template = selectors.get("url_template")
 
-    for item in items:
-        if len(releases) >= limit:
-            break
-        if not isinstance(item, dict):
-            continue
-        title = _clean_title(str(item.get(title_field) or ""))
-        raw_content = str(item.get(content_field) or "")
-        content = _clean_text(BeautifulSoup(raw_content, "html.parser").get_text(" "))
-        if not title or not content:
-            continue
-        if url_template:
-            try:
-                detail_url = url_template.format(**item)
-            except KeyError:
+        # 첨부 조회가 같은 클라이언트를 쓰므로 루프는 with 블록 안에서 돈다.
+        for item in items:
+            if len(releases) >= limit:
+                break
+            if not isinstance(item, dict):
                 continue
-        else:
-            detail_url = str(item.get("url") or "")
-        detail_url = _canonical_url(urljoin(source.base_url or source.list_url, detail_url))
-        if not _is_allowed_link(source, detail_url, title):
-            continue
-        release = _validated_release(
-            source=source,
-            title=title,
-            url=detail_url,
-            content=_trim_boilerplate(content),
-            published_at=_clean_text(str(item.get(date_field) or "")) or _extract_date(content),
-            assets=_json_board_assets(client, source, selectors, item),
-        )
-        if release:
-            releases.append(release)
+            title = _clean_title(str(item.get(title_field) or ""))
+            raw_content = str(item.get(content_field) or "")
+            content = _clean_text(BeautifulSoup(raw_content, "html.parser").get_text(" "))
+            if not title or not content:
+                continue
+            if url_template:
+                try:
+                    detail_url = url_template.format(**item)
+                except KeyError:
+                    continue
+            else:
+                detail_url = str(item.get("url") or "")
+            detail_url = _canonical_url(urljoin(source.base_url or source.list_url, detail_url))
+            if not _is_allowed_link(source, detail_url, title):
+                continue
+            release = _validated_release(
+                source=source,
+                title=title,
+                url=detail_url,
+                content=_trim_boilerplate(content),
+                published_at=_clean_text(str(item.get(date_field) or "")) or _extract_date(content),
+                assets=_json_board_assets(client, source, selectors, item),
+            )
+            if release:
+                releases.append(release)
     return releases
 
 

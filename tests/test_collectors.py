@@ -1022,15 +1022,19 @@ def test_collect_json_board_collects_assets_from_detail_api(monkeypatch):
 
     class FakeClient:
         def __init__(self, **kwargs):
-            pass
+            self.closed = False
 
         def __enter__(self):
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            self.closed = True
             return False
 
         def get(self, url, params=None):
+            # 실제 httpx.Client처럼 닫힌 뒤 쓰면 실패해야 한다(첨부 조회가 with 밖으로 나가는 회귀 방지).
+            if self.closed:
+                raise RuntimeError("Cannot send a request, as the client has been closed.")
             requested.append(url)
             if "getBoardDetail" in url:
                 return FakeResponse(detail_payload)
@@ -1098,15 +1102,18 @@ def test_collect_json_board_without_detail_config_skips_asset_lookup(monkeypatch
 
     class FakeClient:
         def __init__(self, **kwargs):
-            pass
+            self.closed = False
 
         def __enter__(self):
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            self.closed = True
             return False
 
         def get(self, url, params=None):
+            if self.closed:
+                raise RuntimeError("Cannot send a request, as the client has been closed.")
             calls.append(url)
             return FakeResponse()
 
