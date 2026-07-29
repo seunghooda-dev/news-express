@@ -10,8 +10,13 @@ IMAGE_DECORATIVE_TOKENS = (
     "icon",
     "ico_",
     "banner",
+    "btn_",
     "images/main",
     "images-main",
+    # 게시판 UI 버튼이 놓이는 경로. 올라온 사진은 /upload 같은 곳에 있고, 여기 있는 건
+    # "목록"·"이전글" 같은 조작 이미지다(장성군 board_list.gif 실측).
+    "images/board",
+    "images-board",
     "main_visual",
     "visual_wrap",
     "visual-wrap",
