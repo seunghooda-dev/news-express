@@ -22,6 +22,12 @@ services:
     # 대기는 대부분 네트워크라 스레드를 늘려도 부담이 적고, 실제 변환량은 앱에서 따로 묶는다.
     startCommand: gunicorn --workers 1 --threads 16 --timeout 180 --bind 0.0.0.0:$PORT news_summary.wsgi:app
     healthCheckPath: /healthz
+    # 인스턴스 디스크는 재배포·재시작 때 초기화된다. 백업과 로그를 /tmp에 두면 매 배포마다
+    # 사라지므로 영구 디스크에 올린다(로그는 2MB×6개로 회전해 1GB로 충분하다).
+    disk:
+      name: news-express-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -92,10 +98,11 @@ services:
         value: "2400"
       - key: NEWS_SUMMARY_RETENTION_DAYS
         value: "3"
+      # 영구 디스크(/var/data) 아래에 둬야 재배포 후에도 남는다.
       - key: NEWS_SUMMARY_LOG_DIR
-        value: /tmp/news-express/logs
+        value: /var/data/logs
       - key: NEWS_SUMMARY_BACKUP_DIR
-        value: /tmp/news-express/backups
+        value: /var/data/backups
       - key: NEWS_SUMMARY_BACKUP_INCLUDE_ENV
         value: "0"
       - key: NEWS_SUMMARY_CONFIG
