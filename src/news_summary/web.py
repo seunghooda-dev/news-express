@@ -136,9 +136,9 @@ REQUIRED_DB_INDEXES = tuple(
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 12 * 1024 * 1024
 # 썸네일로 내보낼 때 긴 변의 최대 픽셀. 화면 표시는 100픽셀 미만이라 넉넉한 값이다.
 DEFAULT_ASSET_PREVIEW_MAX_EDGE = 480
-# 이미지 변환은 CPU·메모리를 많이 쓴다. 목록 한 화면이 썸네일 수십 개를 한꺼번에 요청하는데
-# 서버는 0.5 CPU라, 동시 변환 수를 묶어 두지 않으면 캐시가 빈 직후 요청이 무너진다.
-_asset_preview_resize_limit = BoundedSemaphore(2)
+# 캐시가 빈 썸네일 요청은 원본 내려받기와 축소로 메모리를 크게 쓴다. 512MB 인스턴스에서
+# 목록 한 화면 분량을 한꺼번에 처리하면 프로세스가 버티지 못하므로 동시 실행 수를 묶는다.
+_asset_preview_fetch_limit = BoundedSemaphore(3)
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
@@ -1173,24 +1173,34 @@ def create_app() -> Flask:
         if cached_preview:
             response_content_type, response_content = cached_preview
             return _asset_preview_response(response_content_type, response_content, "HIT")
-        try:
-            response_content_type, response_content = _download_asset_content_from_url(
-                asset_url,
-                asset,
-                max_bytes=_max_asset_preview_bytes(),
-            )
-        except (httpx.HTTPError, AssetDownloadError) as exc:
-            logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
+        # 원본 내려받기와 축소는 이미지 한 장당 수십 MB를 잡는다. 목록 화면이 썸네일
+        # 수십 개를 한꺼번에 요청하는데 인스턴스 메모리는 512MB뿐이라, 캐시가 빈 요청은
+        # 동시 실행 수를 묶어 순서대로 처리한다.
+        with _asset_preview_fetch_limit:
             with asset_preview_cache_lock:
-                stale_preview = _asset_preview_cache_get(asset_preview_cache, cache_key, allow_stale=True)
-            if stale_preview:
-                response_content_type, response_content = stale_preview
-                return _asset_preview_response(response_content_type, response_content, "STALE")
-            return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
+                # 기다리는 동안 다른 요청이 채워 뒀을 수 있다.
+                cached_preview = _asset_preview_cache_get(asset_preview_cache, cache_key)
+            if cached_preview:
+                response_content_type, response_content = cached_preview
+                return _asset_preview_response(response_content_type, response_content, "HIT")
+            try:
+                response_content_type, response_content = _download_asset_content_from_url(
+                    asset_url,
+                    asset,
+                    max_bytes=_max_asset_preview_bytes(),
+                )
+            except (httpx.HTTPError, AssetDownloadError) as exc:
+                logger.warning("asset preview failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
+                with asset_preview_cache_lock:
+                    stale_preview = _asset_preview_cache_get(asset_preview_cache, cache_key, allow_stale=True)
+                if stale_preview:
+                    response_content_type, response_content = stale_preview
+                    return _asset_preview_response(response_content_type, response_content, "STALE")
+                return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
 
-        response_content_type, response_content = _downscale_preview_image(
-            response_content_type, response_content
-        )
+            response_content_type, response_content = _downscale_preview_image(
+                response_content_type, response_content
+            )
         with asset_preview_cache_lock:
             _asset_preview_cache_put(
                 asset_preview_cache,
@@ -2401,7 +2411,7 @@ def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, by
         return content_type, content
 
     try:
-        with _asset_preview_resize_limit, Image.open(io.BytesIO(content)) as image:
+        with Image.open(io.BytesIO(content)) as image:
             if max(image.size) <= max_edge:
                 return content_type, content
             # JPEG는 디코딩 단계에서 미리 줄여 메모리와 시간을 아낀다.
