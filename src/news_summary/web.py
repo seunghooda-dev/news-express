@@ -13,7 +13,7 @@ from collections import Counter, OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from threading import RLock
+from threading import BoundedSemaphore, RLock
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -136,6 +136,9 @@ REQUIRED_DB_INDEXES = tuple(
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 12 * 1024 * 1024
 # 썸네일로 내보낼 때 긴 변의 최대 픽셀. 화면 표시는 100픽셀 미만이라 넉넉한 값이다.
 DEFAULT_ASSET_PREVIEW_MAX_EDGE = 480
+# 이미지 변환은 CPU·메모리를 많이 쓴다. 목록 한 화면이 썸네일 수십 개를 한꺼번에 요청하는데
+# 서버는 0.5 CPU라, 동시 변환 수를 묶어 두지 않으면 캐시가 빈 직후 요청이 무너진다.
+_asset_preview_resize_limit = BoundedSemaphore(2)
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
@@ -2398,7 +2401,7 @@ def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, by
         return content_type, content
 
     try:
-        with Image.open(io.BytesIO(content)) as image:
+        with _asset_preview_resize_limit, Image.open(io.BytesIO(content)) as image:
             if max(image.size) <= max_edge:
                 return content_type, content
             # JPEG는 디코딩 단계에서 미리 줄여 메모리와 시간을 아낀다.
