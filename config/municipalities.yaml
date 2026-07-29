@@ -27,23 +27,6 @@ common_content: &common_content
   - "main"
 
 sources:
-  - id: gwangju-city
-    name: 전남광주통합특별시 광주청사 보도자료
-    region: 전남광주통합특별시 광주
-    enabled: true
-    type: html_board
-    list_url: "https://www.gwangju.go.kr/boardList.do?boardId=BD_0000000027&pageId=www789&recordCnt=30"
-    base_url: "https://www.gwangju.go.kr"
-    include_url_contains:
-      - "boardView.do"
-      - "BD_0000000027"
-    exclude_title_contains:
-      - "이전 보도자료"
-      - "사진뉴스"
-    selectors:
-      link: "a[href*='boardView.do'][href*='BD_0000000027']"
-      content: *common_content
-
   - id: gwangju-donggu
     name: 광주 동구청 보도자료
     region: 전남광주통합특별시 광주 동구

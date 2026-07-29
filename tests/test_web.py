@@ -1459,9 +1459,9 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
     for title, published_at in (("오늘 보도자료", today), ("어제 보도자료", yesterday)):
         store.add_press_release(
             PressRelease(
-                source_id="gwangju-city",
-                source_name="광주광역시청 보도자료",
-                region="광주",
+                source_id="gwangju-seogu",
+                source_name="광주 서구청 보도자료",
+                region="광주 서구",
                 title=title,
                 url=f"https://example.com/{title}",
                 content="기관별 수집 상태 테스트 본문입니다.",
@@ -1469,8 +1469,8 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
             )
         )
     store.record_source_collection_status(
-        source_id="gwangju-city",
-        source_name="광주광역시청 보도자료",
+        source_id="gwangju-seogu",
+        source_name="광주 서구청 보도자료",
         status="failed",
         message="ReadTimeout",
         failure_stage="외부 사이트 응답 지연",
@@ -1487,15 +1487,14 @@ def test_dashboard_source_cards_show_yesterday_and_today_counts(monkeypatch):
 
     assert '<details class="source-board">' in dashboard_html
     assert '<details class="source-board" open' not in dashboard_html
-    assert "광주 ·" in dashboard_html
-    assert "전남광주통합특별시 광주 ·" not in dashboard_html
+    assert "광주 서구 ·" in dashboard_html
+    assert "전남광주통합특별시 광주 서구 ·" not in dashboard_html
     assert "어제 1건 · 오늘 1건" in dashboard_html
     assert "누적 2건" not in dashboard_html
     assert "mobile-source-board" not in dashboard_html
-    assert "광주청사 보도자료" in dashboard_html
-    assert "전남광주통합특별시 광주청사 보도자료" not in dashboard_html
+    assert "광주 서구청 보도자료" in dashboard_html
     assert "오늘 원문 1건이 수집돼 정상으로 봅니다" in dashboard_html
-    assert 'href="/sources/gwangju-city"' in dashboard_html
+    assert 'href="/sources/gwangju-seogu"' in dashboard_html
 
 
 def test_region_display_label_removes_common_integrated_city_prefix():
@@ -1713,18 +1712,18 @@ def test_source_status_records_collection_failures(monkeypatch):
     store = Store(db_path)
     store.init_db()
     store.record_source_collection_status(
-        "gwangju-city",
-        "광주광역시청 보도자료",
+        "gwangju-seogu",
+        "광주 서구청 보도자료",
         "failed",
-        "광주광역시청 보도자료 수집 실패: 타임아웃",
+        "광주 서구청 보도자료 수집 실패: 타임아웃",
         failure_stage="사이트 접속",
         failure_reason="응답 지연 또는 타임아웃",
     )
     release_id = store.add_press_release(
         PressRelease(
-            source_id="gwangju-city",
-            source_name="광주광역시청 보도자료",
-            region="광주",
+            source_id="gwangju-seogu",
+            source_name="광주 서구청 보도자료",
+            region="광주 서구",
             title="첨부 표시 테스트 원문",
             url="https://example.com/gwangju-asset-release",
             content="광주시는 첨부 표시 기능을 점검한다고 밝혔다.",
@@ -1752,13 +1751,13 @@ def test_source_status_records_collection_failures(monkeypatch):
     client = app.test_client()
 
     dashboard_html = client.get("/").data.decode("utf-8")
-    detail_html = client.get("/sources/gwangju-city").data.decode("utf-8")
+    detail_html = client.get("/sources/gwangju-seogu").data.decode("utf-8")
 
     assert "외부 사이트 응답 지연" in dashboard_html
     assert "응답 지연 또는 타임아웃" in dashboard_html
     assert "최근 수집 점검" in detail_html
     assert "외부 사이트 응답 지연" in detail_html
-    assert "광주광역시청 보도자료 수집 실패: 타임아웃" in detail_html
+    assert "광주 서구청 보도자료 수집 실패: 타임아웃" in detail_html
     assert "최근 첨부 사진/파일" in detail_html
     assert preview_src in detail_html
     assert '<img src="https://example.com/gwangju-photo.png"' not in detail_html
@@ -7267,9 +7266,9 @@ def test_source_coverage_report_covers_required_municipal_sources():
     report = _source_coverage_report(Path("config/municipalities.yaml"))
 
     assert report["status_level"] == "ok"
-    assert report["expected_total"] == 29
-    assert report["configured_required_count"] == 29
-    assert report["enabled_required_count"] == 29
+    assert report["expected_total"] == 28
+    assert report["configured_required_count"] == 28
+    assert report["enabled_required_count"] == 28
     assert report["missing_labels"] == []
     assert report["disabled_labels"] == []
     assert report["duplicate_ids"] == []
@@ -7280,14 +7279,14 @@ def test_source_coverage_report_flags_missing_disabled_and_duplicate_sources(tmp
     config_path.write_text(
         """
 sources:
-  - id: gwangju-city
-    name: 광주청사
-    region: 광주
+  - id: gwangju-seogu
+    name: 광주 서구청
+    region: 광주 서구
     type: html_board
     enabled: false
-  - id: gwangju-city
-    name: 광주청사 중복
-    region: 광주
+  - id: gwangju-seogu
+    name: 광주 서구청 중복
+    region: 광주 서구
     type: html_board
   - id: unexpected-source
     name: 추가 소스
@@ -7300,11 +7299,11 @@ sources:
     report = _source_coverage_report(config_path)
 
     assert report["status_level"] == "warning"
-    assert report["expected_total"] == 29
+    assert report["expected_total"] == 28
     assert report["configured_required_count"] == 1
     assert report["enabled_required_count"] == 1
     assert "광주 동구" in report["missing_labels"]
-    assert "gwangju-city" in report["duplicate_ids"]
+    assert "gwangju-seogu" in report["duplicate_ids"]
     assert report["extra_ids"] == ["unexpected-source"]
 
 
@@ -7321,7 +7320,7 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     html = client.get("/operations").data.decode("utf-8")
 
     assert "수집 대상 커버리지" in html
-    assert "29/29" in html
+    assert "28/28" in html
     assert "광주·전남 필수 수집 대상이 모두 포함되어 있습니다." in html
 
 
@@ -8582,7 +8581,8 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
     assert response.status_code == 200
-    assert collector.calls == [(10, 290, "수동 재수집")]
+    # 초안 한도는 활성 기관 수에 연동된다(기관 28곳 × 10).
+    assert collector.calls == [(10, 280, "수동 재수집")]
 
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2

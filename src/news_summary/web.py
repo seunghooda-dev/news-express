@@ -178,7 +178,6 @@ RECOVERY_REASON_LABELS = {
     "quiet": "업무일 무수집 보정",
 }
 REQUIRED_SOURCE_COVERAGE = (
-    ("gwangju-city", "광주청사"),
     ("gwangju-donggu", "광주 동구"),
     ("gwangju-seogu", "광주 서구"),
     ("gwangju-namgu", "광주 남구"),
