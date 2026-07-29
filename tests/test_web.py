@@ -6224,6 +6224,53 @@ def test_service_health_summary_keeps_gemini_wait_when_queue_exceeds_today_pendi
     ]
 
 
+def test_preview_downscales_large_images_for_thumbnails():
+    import io as _io
+
+    from PIL import Image
+
+    from news_summary.web import _downscale_preview_image
+
+    buffer = _io.BytesIO()
+    Image.effect_noise((2000, 1500), 60).convert("RGB").save(buffer, format="JPEG", quality=92)
+    original = buffer.getvalue()
+
+    content_type, resized = _downscale_preview_image("image/jpeg", original)
+
+    # 목록 한 화면에 수십 장이 붙으므로 원본 그대로 내보내면 모바일에서 끊긴다.
+    assert content_type == "image/jpeg"
+    assert len(resized) < len(original)
+    with Image.open(_io.BytesIO(resized)) as image:
+        assert max(image.size) == 480
+
+
+def test_preview_keeps_small_images_untouched():
+    import io as _io
+
+    from PIL import Image
+
+    from news_summary.web import _downscale_preview_image
+
+    buffer = _io.BytesIO()
+    Image.new("RGB", (200, 150), (90, 120, 160)).save(buffer, format="JPEG")
+    original = buffer.getvalue()
+
+    content_type, resized = _downscale_preview_image("image/jpeg", original)
+
+    assert content_type == "image/jpeg"
+    assert resized == original
+
+
+def test_preview_passes_through_content_it_cannot_resize():
+    from news_summary.web import _downscale_preview_image
+
+    # 이미지로 열 수 없는 응답은 축소하지 않고 그대로 보낸다(표시가 사라지지 않도록).
+    content_type, resized = _downscale_preview_image("application/octet-stream", b"not an image at all")
+
+    assert content_type == "application/octet-stream"
+    assert resized == b"not an image at all"
+
+
 def test_healthz_flags_sources_that_stopped_attaching_images(monkeypatch):
     db_path = Path(f"data/.test_healthz_image_coverage_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

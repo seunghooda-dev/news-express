@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import ipaddress
 import hashlib
 import json
@@ -133,6 +134,8 @@ REQUIRED_DB_INDEXES = tuple(
     for statement in INDEX_STATEMENTS
 )
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 12 * 1024 * 1024
+# 썸네일로 내보낼 때 긴 변의 최대 픽셀. 화면 표시는 100픽셀 미만이라 넉넉한 값이다.
+DEFAULT_ASSET_PREVIEW_MAX_EDGE = 480
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
@@ -1182,6 +1185,9 @@ def create_app() -> Flask:
                 return _asset_preview_response(response_content_type, response_content, "STALE")
             return Response("이미지 미리보기에 실패했습니다.", status=502, content_type="text/plain; charset=utf-8")
 
+        response_content_type, response_content = _downscale_preview_image(
+            response_content_type, response_content
+        )
         with asset_preview_cache_lock:
             _asset_preview_cache_put(
                 asset_preview_cache,
@@ -2379,6 +2385,49 @@ def _asset_preview_cache_prune(
 
 def _asset_preview_cache_size(cache: AssetPreviewCache) -> int:
     return sum(len(content) for _fresh_expires_at, _stale_expires_at, _content_type, content in cache.values())
+
+
+def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, bytes]:
+    # 썸네일은 화면에서 100픽셀도 안 되게 그려지는데 원본은 3MB에 이른다. 목록 한 화면에
+    # 수십 장이 붙으면 수십 MB가 되어 모바일에서 일부가 끊기고 깨진 이미지로 보인다.
+    # 줄이지 못하는 형식이면 원본을 그대로 돌려준다(표시가 사라지는 것보다 낫다).
+    max_edge = _asset_preview_max_edge()
+    try:
+        from PIL import Image
+    except ModuleNotFoundError:
+        return content_type, content
+
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            if max(image.size) <= max_edge:
+                return content_type, content
+            # JPEG는 디코딩 단계에서 미리 줄여 메모리와 시간을 아낀다.
+            image.draft("RGB", (max_edge, max_edge))
+            has_alpha = image.mode in {"RGBA", "LA"} or (
+                image.mode == "P" and "transparency" in image.info
+            )
+            if has_alpha:
+                canvas = Image.new("RGB", image.size, (255, 255, 255))
+                rgba = image.convert("RGBA")
+                canvas.paste(rgba, mask=rgba.split()[-1])
+                prepared = canvas
+            else:
+                prepared = image.convert("RGB")
+            prepared.thumbnail((max_edge, max_edge), Image.LANCZOS)
+            buffer = io.BytesIO()
+            prepared.save(buffer, format="JPEG", quality=82, optimize=True)
+    except Exception as exc:  # noqa: BLE001 - 축소 실패는 원본 제공으로 넘어간다.
+        logger.warning("asset preview downscale failed error=%s", exc)
+        return content_type, content
+
+    resized = buffer.getvalue()
+    if not resized or len(resized) >= len(content):
+        return content_type, content
+    return "image/jpeg", resized
+
+
+def _asset_preview_max_edge() -> int:
+    return _env_int("NEWS_SUMMARY_ASSET_PREVIEW_MAX_EDGE", DEFAULT_ASSET_PREVIEW_MAX_EDGE, minimum=64, maximum=2000)
 
 
 def _asset_preview_response(content_type: str, content: bytes, cache_status: str) -> Response:
