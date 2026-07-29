@@ -140,6 +140,9 @@ LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
 DEFAULT_OPERATIONS_REPORT_CACHE_SECONDS = 20
 DEFAULT_DASHBOARD_SOURCE_CACHE_SECONDS = 30
 VISITOR_ACCESS_PRUNE_INTERVAL_SECONDS = 3600
+# 이미지 첨부 점검 창(일)과, 판단에 필요한 최소 원문 건수.
+DEFAULT_IMAGE_COVERAGE_DAYS = 7
+DEFAULT_IMAGE_COVERAGE_MIN_RELEASES = 3
 # Cloudflare 엣지 IP 대역의 앞 두 옥텟. 앞단 프록시 IP가 방문자 대신 접속 이력에
 # 기록된 구간을 정리할 때 쓴다(마스킹 IP가 "172.69.xxx.xxx" 형태로 저장됨).
 CLOUDFLARE_MASKED_IP_PREFIXES = (
@@ -476,6 +479,7 @@ def create_app() -> Flask:
             payload.update(_gemini_queue_health_payload(store))
             payload.update(_source_collection_health_payload(store))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
+            payload.update(_image_coverage_health_payload(store))
             payload.update(_draft_conversion_coverage_health_payload(store))
             backup_verify_report = _backup_verify_report(store, backup_dir)
             payload.update(_backup_health_payload(backup_dir, backup_verify_report))
@@ -1846,6 +1850,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     if gemini_status in {"warning", "error"} and not (gemini_wait_already_counted or gemini_retry_already_counted):
         add_issue(gemini_status, "gemini_queue", payload.get("gemini_queue_message"))
 
+    image_coverage_status = str(payload.get("image_coverage_status") or "")
+    if image_coverage_status in {"warning", "error"}:
+        add_issue(image_coverage_status, "image_coverage", payload.get("image_coverage_message"))
+
     backup_status = str(payload.get("backup_status") or "")
     if backup_status in {"warning", "error"}:
         add_issue(backup_status, "backup", payload.get("backup_message"))
@@ -2954,6 +2962,7 @@ def _operations_cached_report_bundle(
         "daily_report": _daily_operations_report(store),
         "operations_summary": _operations_summary_report(store),
         "collection_check_coverage_report": _collection_check_coverage_report(store, config_path),
+        "image_coverage_report": _image_coverage_report(store),
         "draft_conversion_coverage_report": _draft_conversion_coverage_report(store),
         "queue_drain_report": _auto_queue_drain_report(store),
         "source_coverage_report": _source_coverage_report(config_path),
@@ -3530,6 +3539,96 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
         "latest_pending_at": pending_time(latest_pending),
         "oldest_pending_at": pending_time(oldest_pending),
         "message": message,
+    }
+
+
+def _image_coverage_report(store: Store) -> dict[str, object]:
+    # 수집은 되는데 사진이 한 장도 안 붙는 기관을 찾아낸다. 첨부 방식이 바뀌거나
+    # 수집 규칙이 어긋나면 원문 건수는 그대로라 다른 점검에는 잡히지 않는다.
+    days = _image_coverage_window_days()
+    cutoff = (datetime.now(LOCAL_TZ) - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+    try:
+        rows = store.image_asset_coverage_since(cutoff)
+    except Exception as exc:  # noqa: BLE001 - 진단 항목이 페이지 전체를 막지 않도록 한다.
+        logger.warning("image coverage check failed error=%s", exc)
+        return {
+            "status_level": "warning",
+            "status_label": "확인 필요",
+            "days": days,
+            "source_total": 0,
+            "with_image_total": 0,
+            "missing_items": [],
+            "message": "이미지 첨부 점검을 수행하지 못했습니다.",
+        }
+
+    minimum = _image_coverage_min_releases()
+    missing_items: list[dict[str, object]] = []
+    with_image_total = 0
+    for row in rows:
+        release_count = int(row["release_count"] or 0)
+        image_release_count = int(row["image_release_count"] or 0)
+        if image_release_count > 0:
+            with_image_total += 1
+            continue
+        if release_count < minimum:
+            continue
+        missing_items.append(
+            {
+                "source_id": str(row["source_id"] or ""),
+                "source_name": str(row["source_name"] or ""),
+                "release_count": release_count,
+            }
+        )
+
+    source_total = len(rows)
+    if missing_items:
+        labels = ", ".join(str(item["source_name"]) for item in missing_items[:3])
+        suffix = f" 외 {len(missing_items) - 3}곳" if len(missing_items) > 3 else ""
+        message = f"최근 {days}일 사진이 한 장도 없는 기관 {len(missing_items)}곳: {labels}{suffix}"
+        status_level = "warning"
+        status_label = "확인 필요"
+    else:
+        message = f"최근 {days}일 수집 기관 {source_total}곳 모두 사진이 붙고 있습니다."
+        status_level = "ok"
+        status_label = "정상"
+
+    return {
+        "status_level": status_level,
+        "status_label": status_label,
+        "days": days,
+        "source_total": source_total,
+        "with_image_total": with_image_total,
+        "missing_items": missing_items,
+        "message": message,
+    }
+
+
+def _image_coverage_window_days() -> int:
+    return _env_int("NEWS_SUMMARY_IMAGE_COVERAGE_DAYS", DEFAULT_IMAGE_COVERAGE_DAYS, minimum=1, maximum=30)
+
+
+def _image_coverage_min_releases() -> int:
+    return _env_int(
+        "NEWS_SUMMARY_IMAGE_COVERAGE_MIN_RELEASES",
+        DEFAULT_IMAGE_COVERAGE_MIN_RELEASES,
+        minimum=1,
+        maximum=50,
+    )
+
+
+def _image_coverage_health_payload(store: Store) -> dict[str, object]:
+    report = _image_coverage_report(store)
+    missing_items = list(report.get("missing_items") or [])
+    return {
+        "image_coverage_status": report.get("status_level"),
+        "image_coverage_label": report.get("status_label"),
+        "image_coverage_days": int(report.get("days") or 0),
+        "image_coverage_source_total": int(report.get("source_total") or 0),
+        "image_coverage_with_image_total": int(report.get("with_image_total") or 0),
+        "image_coverage_missing_count": len(missing_items),
+        "image_coverage_missing_sources": [str(item["source_name"]) for item in missing_items[:5]],
+        "image_coverage_missing_items": missing_items[:5],
+        "image_coverage_message": report.get("message"),
     }
 
 

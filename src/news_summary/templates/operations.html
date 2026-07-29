@@ -753,6 +753,30 @@
       </p>
     {% endif %}
   </article>
+  <article class="ops-card" id="ops-image-coverage">
+    <div class="ops-card-head">
+      <h2>사진 첨부 점검</h2>
+      <span class="badge {% if image_coverage_report.status_level == 'ok' %}badge-gemini{% else %}badge-warning{% endif %}">
+        {{ image_coverage_report.with_image_total }}/{{ image_coverage_report.source_total }}
+      </span>
+    </div>
+    <p class="meta">{{ image_coverage_report.message }}</p>
+    <p class="meta">최근 {{ image_coverage_report.days }}일 수집 기관 기준입니다. 사진이 없는 기관은 첨부 방식이 바뀌었을 수 있어 확인이 필요합니다.</p>
+    {% if image_coverage_report.missing_items %}
+      <p class="gemini-models">
+        {% for item in image_coverage_report.missing_items[:8] %}
+          <span>
+            {% if item.source_id %}
+              <a href="{{ url_for('source_detail', source_id=item.source_id) }}">{{ item.source_name }}</a>
+            {% else %}
+              {{ item.source_name }}
+            {% endif %}
+            원문 {{ item.release_count }}건
+          </span>
+        {% endfor %}
+      </p>
+    {% endif %}
+  </article>
   <article class="ops-card">
     <div class="ops-card-head">
       <h2>수집 대상 커버리지</h2>

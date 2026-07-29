@@ -893,6 +893,29 @@ class Store:
                 (press_release_id,),
             ).fetchall()
 
+    def image_asset_coverage_since(self, cutoff_iso: str) -> list[Any]:
+        # 기관별로 "원문은 들어오는데 사진이 하나도 안 붙는" 상태를 찾기 위한 집계다.
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pr.source_id AS source_id,
+                       pr.source_name AS source_name,
+                       COUNT(*) AS release_count,
+                       SUM(CASE WHEN img.image_count > 0 THEN 1 ELSE 0 END) AS image_release_count
+                FROM press_releases pr
+                LEFT JOIN (
+                    SELECT press_release_id, COUNT(*) AS image_count
+                    FROM press_release_assets
+                    WHERE is_image = 1
+                    GROUP BY press_release_id
+                ) img ON img.press_release_id = pr.id
+                WHERE pr.collected_at >= ?
+                GROUP BY pr.source_id, pr.source_name
+                ORDER BY pr.source_name
+                """,
+                (cutoff_iso,),
+            ).fetchall()
+
     def get_press_release_asset(self, asset_id: int) -> sqlite3.Row | None:
         with self.connect() as conn:
             return conn.execute(

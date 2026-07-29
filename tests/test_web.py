@@ -6224,6 +6224,114 @@ def test_service_health_summary_keeps_gemini_wait_when_queue_exceeds_today_pendi
     ]
 
 
+def test_healthz_flags_sources_that_stopped_attaching_images(monkeypatch):
+    db_path = Path(f"data/.test_healthz_image_coverage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_IMAGE_COVERAGE_MIN_RELEASES", "2")
+    store = Store(db_path)
+    store.init_db()
+
+    def add(source_id, source_name, index, with_image):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id=source_id,
+                source_name=source_name,
+                region="전남",
+                title=f"{source_name} 사업 추진 {index}",
+                url=f"https://example.com/{source_id}/{index}",
+                content=(
+                    "군은 주민 편의를 높이기 위해 사업을 추진한다고 밝혔다. "
+                    "관계 기관 협의를 거쳐 다음 달부터 본격적으로 시작할 계획이다."
+                ),
+                published_at="2026-07-28",
+                assets=[
+                    PressReleaseAsset(
+                        url=f"https://example.com/{source_id}/{index}.jpg",
+                        title="사진",
+                        filename=f"{index}.jpg",
+                        content_type="image/jpeg",
+                        asset_type="image",
+                        is_image=True,
+                    )
+                ]
+                if with_image
+                else [
+                    PressReleaseAsset(
+                        url=f"https://example.com/{source_id}/{index}.hwp",
+                        title="첨부",
+                        filename=f"{index}.hwp",
+                        content_type="application/x-hwp",
+                        asset_type="file",
+                        is_image=False,
+                    )
+                ],
+            )
+        )
+        assert release_id is not None
+
+    for index in range(2):
+        add("with-photo", "사진 있는 기관", index, True)
+        add("no-photo", "사진 없는 기관", index, False)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    # 원문은 들어오는데 사진이 한 장도 없는 기관만 짚어낸다.
+    assert payload["image_coverage_status"] == "warning"
+    assert payload["image_coverage_missing_sources"] == ["사진 없는 기관"]
+    assert payload["image_coverage_missing_count"] == 1
+    assert payload["image_coverage_with_image_total"] == 1
+    assert payload["image_coverage_source_total"] == 2
+    assert any(issue["component"] == "image_coverage" for issue in payload["service_status_issues"])
+
+
+def test_healthz_image_coverage_ok_when_every_source_has_photos(monkeypatch):
+    db_path = Path(f"data/.test_healthz_image_coverage_ok_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_IMAGE_COVERAGE_MIN_RELEASES", "2")
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(2):
+        store.add_press_release(
+            PressRelease(
+                source_id="with-photo",
+                source_name="사진 있는 기관",
+                region="전남",
+                title=f"사진 있는 기관 사업 추진 {index}",
+                url=f"https://example.com/with-photo/{index}",
+                content=(
+                    "군은 주민 편의를 높이기 위해 사업을 추진한다고 밝혔다. "
+                    "관계 기관 협의를 거쳐 다음 달부터 본격적으로 시작할 계획이다."
+                ),
+                published_at="2026-07-28",
+                assets=[
+                    PressReleaseAsset(
+                        url=f"https://example.com/with-photo/{index}.jpg",
+                        title="사진",
+                        filename=f"{index}.jpg",
+                        content_type="image/jpeg",
+                        asset_type="image",
+                        is_image=True,
+                    )
+                ],
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["image_coverage_status"] == "ok"
+    assert payload["image_coverage_missing_count"] == 0
+    assert not any(issue["component"] == "image_coverage" for issue in payload["service_status_issues"])
+
+
 def test_healthz_reports_collection_check_coverage(monkeypatch):
     db_path = Path(f"data/.test_healthz_collection_check_coverage_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
