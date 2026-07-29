@@ -776,6 +776,9 @@
         {% endfor %}
       </p>
     {% endif %}
+    {% if image_coverage_report.text_only_labels %}
+      <p class="meta">사진을 싣지 않는 게시판 {{ image_coverage_report.text_only_labels|length }}곳은 점검에서 제외했습니다: {{ image_coverage_report.text_only_labels|join(', ') }}</p>
+    {% endif %}
   </article>
   <article class="ops-card">
     <div class="ops-card-head">

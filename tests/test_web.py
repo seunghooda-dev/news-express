@@ -6288,6 +6288,56 @@ def test_healthz_flags_sources_that_stopped_attaching_images(monkeypatch):
     assert any(issue["component"] == "image_coverage" for issue in payload["service_status_issues"])
 
 
+def test_healthz_image_coverage_skips_boards_that_publish_no_photos(monkeypatch):
+    db_path = Path(f"data/.test_healthz_image_coverage_textonly_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_IMAGE_COVERAGE_MIN_RELEASES", "2")
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(3):
+        store.add_press_release(
+            PressRelease(
+                source_id="text-only",
+                source_name="사진 없는 게시판",
+                region="전남",
+                title=f"사진 없는 게시판 사업 추진 {index}",
+                url=f"https://example.com/text-only/{index}",
+                content=(
+                    "군은 주민 편의를 높이기 위해 사업을 추진한다고 밝혔다. "
+                    "관계 기관 협의를 거쳐 다음 달부터 본격적으로 시작할 계획이다."
+                ),
+                published_at="2026-07-28",
+            )
+        )
+
+    from news_summary import web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "load_sources",
+        lambda config_path: [
+            Source(
+                id="text-only",
+                name="사진 없는 게시판",
+                region="전남",
+                type="html_board",
+                expects_images=False,
+            )
+        ],
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    # 원래 사진을 싣지 않는 게시판은 경고 대상이 아니지만, 제외했다는 사실은 남긴다.
+    assert payload["image_coverage_status"] == "ok"
+    assert payload["image_coverage_missing_count"] == 0
+    assert payload["image_coverage_text_only_sources"] == ["사진 없는 게시판"]
+    assert payload["image_coverage_text_only_count"] == 1
+
+
 def test_healthz_image_coverage_ok_when_every_source_has_photos(monkeypatch):
     db_path = Path(f"data/.test_healthz_image_coverage_ok_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

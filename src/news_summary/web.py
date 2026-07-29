@@ -479,7 +479,7 @@ def create_app() -> Flask:
             payload.update(_gemini_queue_health_payload(store))
             payload.update(_source_collection_health_payload(store))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
-            payload.update(_image_coverage_health_payload(store))
+            payload.update(_image_coverage_health_payload(store, config_path))
             payload.update(_draft_conversion_coverage_health_payload(store))
             backup_verify_report = _backup_verify_report(store, backup_dir)
             payload.update(_backup_health_payload(backup_dir, backup_verify_report))
@@ -2962,7 +2962,7 @@ def _operations_cached_report_bundle(
         "daily_report": _daily_operations_report(store),
         "operations_summary": _operations_summary_report(store),
         "collection_check_coverage_report": _collection_check_coverage_report(store, config_path),
-        "image_coverage_report": _image_coverage_report(store),
+        "image_coverage_report": _image_coverage_report(store, config_path),
         "draft_conversion_coverage_report": _draft_conversion_coverage_report(store),
         "queue_drain_report": _auto_queue_drain_report(store),
         "source_coverage_report": _source_coverage_report(config_path),
@@ -3542,7 +3542,7 @@ def _draft_conversion_coverage_report(store: Store) -> dict[str, object]:
     }
 
 
-def _image_coverage_report(store: Store) -> dict[str, object]:
+def _image_coverage_report(store: Store, config_path: Path) -> dict[str, object]:
     # 수집은 되는데 사진이 한 장도 안 붙는 기관을 찾아낸다. 첨부 방식이 바뀌거나
     # 수집 규칙이 어긋나면 원문 건수는 그대로라 다른 점검에는 잡히지 않는다.
     days = _image_coverage_window_days()
@@ -3558,29 +3558,46 @@ def _image_coverage_report(store: Store) -> dict[str, object]:
             "source_total": 0,
             "with_image_total": 0,
             "missing_items": [],
+            "text_only_labels": [],
             "message": "이미지 첨부 점검을 수행하지 못했습니다.",
         }
 
+    try:
+        text_only_ids = {
+            source.id for source in load_sources(config_path) if not source.expects_images
+        }
+    except Exception as exc:  # noqa: BLE001 - 설정을 못 읽어도 점검 자체는 진행한다.
+        logger.warning("image coverage source config unavailable error=%s", exc)
+        text_only_ids = set()
+
     minimum = _image_coverage_min_releases()
     missing_items: list[dict[str, object]] = []
+    text_only_labels: list[str] = []
     with_image_total = 0
     for row in rows:
+        source_id = str(row["source_id"] or "")
+        source_name = str(row["source_name"] or "")
         release_count = int(row["release_count"] or 0)
         image_release_count = int(row["image_release_count"] or 0)
         if image_release_count > 0:
             with_image_total += 1
             continue
+        if source_id in text_only_ids:
+            # 원래 사진을 싣지 않는 게시판이라 경고 대상이 아니다. 다만 잊히지 않게 이름은 남긴다.
+            text_only_labels.append(source_name)
+            continue
         if release_count < minimum:
             continue
         missing_items.append(
             {
-                "source_id": str(row["source_id"] or ""),
-                "source_name": str(row["source_name"] or ""),
+                "source_id": source_id,
+                "source_name": source_name,
                 "release_count": release_count,
             }
         )
 
     source_total = len(rows)
+    checked_total = source_total - len(text_only_labels)
     if missing_items:
         labels = ", ".join(str(item["source_name"]) for item in missing_items[:3])
         suffix = f" 외 {len(missing_items) - 3}곳" if len(missing_items) > 3 else ""
@@ -3588,7 +3605,7 @@ def _image_coverage_report(store: Store) -> dict[str, object]:
         status_level = "warning"
         status_label = "확인 필요"
     else:
-        message = f"최근 {days}일 수집 기관 {source_total}곳 모두 사진이 붙고 있습니다."
+        message = f"최근 {days}일 점검 대상 {checked_total}곳 모두 사진이 붙고 있습니다."
         status_level = "ok"
         status_label = "정상"
 
@@ -3596,9 +3613,10 @@ def _image_coverage_report(store: Store) -> dict[str, object]:
         "status_level": status_level,
         "status_label": status_label,
         "days": days,
-        "source_total": source_total,
+        "source_total": checked_total,
         "with_image_total": with_image_total,
         "missing_items": missing_items,
+        "text_only_labels": text_only_labels,
         "message": message,
     }
 
@@ -3616,9 +3634,10 @@ def _image_coverage_min_releases() -> int:
     )
 
 
-def _image_coverage_health_payload(store: Store) -> dict[str, object]:
-    report = _image_coverage_report(store)
+def _image_coverage_health_payload(store: Store, config_path: Path) -> dict[str, object]:
+    report = _image_coverage_report(store, config_path)
     missing_items = list(report.get("missing_items") or [])
+    text_only_labels = list(report.get("text_only_labels") or [])
     return {
         "image_coverage_status": report.get("status_level"),
         "image_coverage_label": report.get("status_label"),
@@ -3628,6 +3647,8 @@ def _image_coverage_health_payload(store: Store) -> dict[str, object]:
         "image_coverage_missing_count": len(missing_items),
         "image_coverage_missing_sources": [str(item["source_name"]) for item in missing_items[:5]],
         "image_coverage_missing_items": missing_items[:5],
+        "image_coverage_text_only_count": len(text_only_labels),
+        "image_coverage_text_only_sources": text_only_labels[:8],
         "image_coverage_message": report.get("message"),
     }
 

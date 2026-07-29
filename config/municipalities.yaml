@@ -49,6 +49,8 @@ sources:
     region: 전남광주통합특별시 광주 동구
     enabled: true
     type: html_board
+    # 본문·첨부 모두 사진을 싣지 않는 게시판(2026-07-29 확인) — 사진 첨부 점검 제외
+    expects_images: false
     list_url: "https://www.donggu.kr/board.es?mid=a10102040100&bid=0243"
     include_url_contains:
       - "board.es"
@@ -82,6 +84,8 @@ sources:
     enabled: true
     type: html_board
     verify_ssl: false
+    # 첨부가 hwpx 문서뿐이고 사진은 싣지 않는다(2026-07-29 확인) — 사진 첨부 점검 제외
+    expects_images: false
     list_url: "https://www.namgu.gwangju.kr/api/eminwon/pressList.es?mid=a10605050000"
     include_url_contains:
       - "pressView.es"
@@ -100,6 +104,8 @@ sources:
     region: 전남광주통합특별시 광주 북구
     enabled: true
     type: html_board
+    # 상세에 첨부 자체가 없는 게시판(2026-07-29 확인) — 사진 첨부 점검 제외
+    expects_images: false
     list_url: "https://eminwon.bukgu.gwangju.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do?pageIndex=&jndinm=OfrBcAdvNewsEJB&context=NTIS&method=selectListOfrNews&methodnm=selectListOfrNewsHomepage&news_epct_no=&subCheck=N&ofr_pageSize=10&news_epct_yn=1&title=%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C&data_open_yn=1&initValue=&countYn=Y"
     include_url_contains:
       - "OfrAction.do"
@@ -432,6 +438,8 @@ sources:
     enabled: true
     type: html_board
     verify_ssl: false
+    # 본문에 QR 코드 외 사진이 없는 게시판(2026-07-29 확인) — 사진 첨부 점검 제외
+    expects_images: false
     list_url: "https://www.yeonggwang.go.kr/bbs/?b_id=news_data&site=headquarter_new&mn=9056"
     include_url_contains:
       - "b_id=news_data"

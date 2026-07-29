@@ -30,6 +30,8 @@ class Source:
     exclude_title_contains: list[str] = field(default_factory=list)
     fallback_urls: list[str] = field(default_factory=list)
     verify_ssl: bool = True
+    # 사진을 싣지 않는 게시판은 사진 첨부 점검에서 제외한다.
+    expects_images: bool = True
 
 
 @dataclass(frozen=True)
