@@ -17,7 +17,10 @@ services:
         - pyproject.toml
         - render.yaml
     buildCommand: pip install -e .
-    startCommand: gunicorn --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT news_summary.wsgi:app
+    # 썸네일은 캐시가 비면 원본 사이트에서 받아오느라 몇 초씩 슬롯을 잡는다. 목록 한 화면이
+    # 수십 개를 한꺼번에 요청하므로 슬롯이 8개면 넘친 요청이 거절된다(실측: 14개 중 7개 실패).
+    # 대기는 대부분 네트워크라 스레드를 늘려도 부담이 적고, 실제 변환량은 앱에서 따로 묶는다.
+    startCommand: gunicorn --workers 1 --threads 16 --timeout 180 --bind 0.0.0.0:$PORT news_summary.wsgi:app
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
