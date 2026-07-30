@@ -343,9 +343,13 @@ sources:
     enabled: true
     type: html_board
     verify_ssl: false
-    # 싱가포르 서버에서만 연결이 응답 없이 끊긴다(국내 PC와 다른 해외 인프라에서는 정상,
-    # 연결 수립도 0.15초). 정부 전산망 방화벽이 봇 UA를 버리는 것으로 보여 브라우저 UA로 바꿔 시험한다.
-    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    # 싱가포르 서버에서만 연결이 응답 없이 끊긴다. 2026-07-30 실측으로 아래를 모두 기각했다.
+    #  - "해외 IP 전체 차단": 국내 PC와 무관한 해외 인프라 둘 다 200 정상
+    #  - 연결 시간 부족: TLS 핸드셰이크 0.15초 (제한 8초와 거리가 멀다)
+    #  - IPv6 경로: AAAA 레코드 없음 (A만, 152.99.169.57)
+    #  - 봇 UA 차단: 브라우저 UA로 바꿔 배포했으나 실패 누적 120 -> 121로 그대로 실패
+    # 남은 수단은 중계 경유(Cloudflare Worker 또는 한국 VPS)뿐이라 미해결로 둔다.
+    # 서버가 매시간 재시도하므로 상대 정책이 바뀌면 자동으로 살아난다.
     list_url: "https://www.gangjin.go.kr/www/government/news/press"
     fallback_urls:
       - "https://www.gangjin.go.kr/www/government/press"

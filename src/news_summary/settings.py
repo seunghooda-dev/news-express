@@ -77,7 +77,6 @@ def load_sources(config_path: Path) -> list[Source]:
                 fallback_urls=list(item.get("fallback_urls") or []),
                 verify_ssl=bool(item.get("verify_ssl", True)),
                 expects_images=bool(item.get("expects_images", True)),
-                user_agent=str(item.get("user_agent") or ""),
             )
         )
     _SOURCES_CACHE[config_path] = (stat.st_mtime_ns, stat.st_size, sources)
