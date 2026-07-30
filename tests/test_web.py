@@ -7152,6 +7152,35 @@ def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
     assert payload["auto_collector_error"] == "RuntimeError"
 
 
+def test_healthz_never_returns_500_when_status_building_breaks(monkeypatch):
+    """liveness 프로브는 어떤 코드 버그에도 500을 주면 안 된다.
+
+    Render는 이 응답으로 인스턴스를 죽일지 결정한다. 진단 코드의 버그로 500이 나가면
+    살아 있는 인스턴스가 종료되고, 재기동이 기동 보충 수집을 띄워 자동 수집이 완주하지
+    못하는 순환에 빠진다(2026-07-30 실측). 상세 조회는 진단용이라 그대로 500을 낸다.
+    """
+    db_path = Path(f"data/.test_healthz_liveness_never_500_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    import news_summary.web as web_module
+
+    def broken_summary(_payload):
+        raise ValueError("summary exploded")
+
+    monkeypatch.setattr(web_module, "_service_health_summary", broken_summary)
+
+    app = web_module.create_app()
+    app.testing = False
+    client = app.test_client()
+
+    response = client.get("/healthz")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["health_error"] == "ValueError"
+
+
 def test_healthz_restarts_enabled_auto_collector_thread(monkeypatch):
     db_path = Path(f"data/.test_healthz_restart_collector_thread_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

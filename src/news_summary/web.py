@@ -509,7 +509,26 @@ def create_app() -> Flask:
 
     @app.get("/healthz")
     def healthz():
-        return _healthz_response(include_details=False)
+        # Render가 이 응답으로 인스턴스를 죽일지 결정한다(liveness). 그래서 진단 코드의
+        # 버그가 500으로 새어 나가면 안 된다 — 2026-07-30에 실제로 그 일이 벌어져
+        # 살아 있는 인스턴스가 종료되고, 재기동이 기동 보충 수집을 띄우는 순환에 빠져
+        # 자동 수집이 8시간 넘게 완주하지 못했다.
+        # DB 자체가 죽은 경우는 _healthz_response가 503을 return하므로 여기 걸리지 않고
+        # 그대로 전달된다. 즉 재시작이 필요한 장애만 실패로 남는다.
+        try:
+            return _healthz_response(include_details=False)
+        except Exception as exc:  # noqa: BLE001 - liveness 프로브는 절대 500이 되면 안 된다.
+            logger.exception("healthz liveness probe failed")
+            return jsonify(
+                {
+                    "ok": True,
+                    "liveness": "ok",
+                    "health_error": type(exc).__name__,
+                    "generated_at": datetime.now(LOCAL_TZ).isoformat(),
+                    "timezone": "Asia/Seoul",
+                    "message": "프로세스는 정상이지만 상태 조회에 실패했습니다. 운영 로그를 확인하세요.",
+                }
+            )
 
     @app.get("/healthz/details")
     def healthz_details():
