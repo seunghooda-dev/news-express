@@ -7122,6 +7122,36 @@ def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch
     assert "자동 수집 백그라운드 스레드 중단" in operations_html
 
 
+def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
+    """진단 정보 조회 실패는 500이 되면 안 된다.
+
+    500을 주면 Render 헬스체크가 살아 있는 인스턴스를 죽이고, 재시작이 기동 보충
+    수집을 띄워 자동 수집이 완주하지 못하는 순환에 빠진다(2026-07-30 실측).
+    """
+    db_path = Path(f"data/.test_healthz_collector_status_raises_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    class BrokenCollector:
+        def snapshot(self):
+            raise RuntimeError("snapshot exploded")
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = BrokenCollector()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/healthz")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["database"] == "ok"
+    assert payload["auto_collector"] == "unavailable"
+    assert payload["auto_collector_error"] == "RuntimeError"
+
+
 def test_healthz_restarts_enabled_auto_collector_thread(monkeypatch):
     db_path = Path(f"data/.test_healthz_restart_collector_thread_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))

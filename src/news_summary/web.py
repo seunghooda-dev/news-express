@@ -459,24 +459,34 @@ def create_app() -> Flask:
         auto_collector = app.config.get("AUTO_COLLECTOR")
         auto_status = None
         if auto_collector:
-            _ensure_auto_collector_running(auto_collector)
-            auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
-            auto_label = _auto_collector_health_label(auto_status)
-            timing_health = _auto_collector_timing_health(auto_status)
-            payload.update(
-                {
-                    "auto_collector": auto_label,
-                    "auto_collector_thread_alive": auto_status.get("thread_alive"),
-                    "auto_collector_timing": timing_health["status"],
-                    "auto_collector_overdue": timing_health["overdue"],
-                    "auto_collector_lag_minutes": timing_health["lag_minutes"],
-                    "auto_collector_run_minutes": timing_health["run_minutes"],
-                    "auto_collector_schedule_delay_minutes": timing_health["schedule_delay_minutes"],
-                    "auto_collector_health_message": timing_health["message"],
-                    "last_auto_finished_at": auto_status["last_auto_finished_at"],
-                    "next_run_at": auto_status["next_run_at"],
-                }
-            )
+            # 자동 수집 상태는 진단 정보다. 이걸 읽다 실패했다고 500을 주면 Render 헬스체크가
+            # 살아 있는 인스턴스를 죽이고, 재시작이 기동 보충 수집을 띄워 수집이 영원히
+            # 완주하지 못하는 순환에 빠진다(2026-07-30 실측). DB 자체가 죽은 경우만 503이다.
+            try:
+                _ensure_auto_collector_running(auto_collector)
+                auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
+                auto_label = _auto_collector_health_label(auto_status)
+                timing_health = _auto_collector_timing_health(auto_status)
+            except Exception as exc:  # noqa: BLE001 - 진단 조회 실패가 인스턴스를 죽이면 안 된다.
+                logger.exception("auto collector health payload failed")
+                auto_status = None
+                payload["auto_collector"] = "unavailable"
+                payload["auto_collector_error"] = type(exc).__name__
+            else:
+                payload.update(
+                    {
+                        "auto_collector": auto_label,
+                        "auto_collector_thread_alive": auto_status.get("thread_alive"),
+                        "auto_collector_timing": timing_health["status"],
+                        "auto_collector_overdue": timing_health["overdue"],
+                        "auto_collector_lag_minutes": timing_health["lag_minutes"],
+                        "auto_collector_run_minutes": timing_health["run_minutes"],
+                        "auto_collector_schedule_delay_minutes": timing_health["schedule_delay_minutes"],
+                        "auto_collector_health_message": timing_health["message"],
+                        "last_auto_finished_at": auto_status["last_auto_finished_at"],
+                        "next_run_at": auto_status["next_run_at"],
+                    }
+                )
         else:
             payload["auto_collector"] = "unavailable"
         if include_details:
