@@ -343,6 +343,9 @@ sources:
     enabled: true
     type: html_board
     verify_ssl: false
+    # 싱가포르 서버에서만 연결이 응답 없이 끊긴다(국내 PC와 다른 해외 인프라에서는 정상,
+    # 연결 수립도 0.15초). 정부 전산망 방화벽이 봇 UA를 버리는 것으로 보여 브라우저 UA로 바꿔 시험한다.
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     list_url: "https://www.gangjin.go.kr/www/government/news/press"
     fallback_urls:
       - "https://www.gangjin.go.kr/www/government/press"

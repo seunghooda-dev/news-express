@@ -17,7 +17,21 @@ from .ops_logging import get_logger
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; NewsSummaryBot/0.1; press-release-monitor)"
 }
-DEFAULT_TIMEOUT = httpx.Timeout(20.0, connect=8.0)
+
+
+def source_request_headers(source: Source) -> dict[str, str]:
+    # 기본은 수집기임을 밝히는 UA를 쓴다. 다만 일부 정부 전산망 방화벽은 봇 UA를 응답 없이
+    # 버려서 접속 자체가 시간 초과로 잡히므로, 그런 기관만 설정으로 UA를 바꿔 준다.
+    headers = dict(DEFAULT_HEADERS)
+    if source.user_agent:
+        headers["User-Agent"] = source.user_agent
+    return headers
+
+
+# 정부 전산망(152.99.x.x) 계열 지자체 사이트는 연결 수립이 느리다. 연결 8초로는
+# 싱가포르에서 강진이 매번 시간 초과였고, 담양도 국내에서 8초로 실패하고 30초로 성공했다.
+# 느려서 실패하던 것이면 이 값으로 살아나고, 방화벽 차단이면 실패가 조금 늦어질 뿐이다.
+DEFAULT_TIMEOUT = httpx.Timeout(30.0, connect=20.0)
 VOLATILE_DETAIL_QUERY_PARAMS = {
     "movePage",
     "nPage",
@@ -204,7 +218,7 @@ def collect_rss(source: Source, limit: int = 10) -> list[PressRelease]:
         raise CollectionError(f"{source.id} 설정에 RSS 주소가 없습니다.")
 
     with httpx.Client(
-        headers=DEFAULT_HEADERS,
+        headers=source_request_headers(source),
         timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
         verify=source.verify_ssl,
@@ -244,7 +258,7 @@ def collect_json_board(source: Source, limit: int = 10) -> list[PressRelease]:
         raise CollectionError(f"{source.id} 설정의 params는 키-값 형태여야 합니다.")
 
     with httpx.Client(
-        headers=DEFAULT_HEADERS,
+        headers=source_request_headers(source),
         timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
         verify=source.verify_ssl,
@@ -378,7 +392,7 @@ def collect_html_board(source: Source, limit: int = 10) -> list[PressRelease]:
         raise CollectionError(f"{source.id} 설정에 목록 주소가 없습니다.")
 
     with httpx.Client(
-        headers=DEFAULT_HEADERS,
+        headers=source_request_headers(source),
         timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
         verify=source.verify_ssl,

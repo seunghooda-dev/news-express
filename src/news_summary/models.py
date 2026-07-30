@@ -32,6 +32,8 @@ class Source:
     verify_ssl: bool = True
     # 사진을 싣지 않는 게시판은 사진 첨부 점검에서 제외한다.
     expects_images: bool = True
+    # 봇 UA를 차단하는 기관만 브라우저 UA로 바꿔 쓴다(비우면 기본 UA).
+    user_agent: str = ""
 
 
 @dataclass(frozen=True)
