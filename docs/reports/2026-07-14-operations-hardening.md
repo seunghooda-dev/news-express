@@ -1,6 +1,7 @@
 # 운영 하드닝·자동배포 복구 리포트 (2026-07-14)
 
-- **프로젝트**: news-express (뉴스 요약/보도자료 초안 웹앱, Flask + PostgreSQL(Neon), Render 배포)
+- **프로젝트**: news-express (뉴스 요약/보도자료 초안 웹앱, Flask + PostgreSQL, Render 배포)
+- **DB**: 작성 당시는 Neon — 이후 Supabase로 옮겼다. 아래 본문의 Neon 언급은 작성 당시 기록이며, 현재 DB는 Supabase(Session pooler)다.
 - **저장소/브랜치**: `seunghooda-dev/news-express` · `codex/news-express`
 - **라이브**: https://news-express-5uq0.onrender.com (작성 당시 주소 — 2026-07-16 싱가포르 이전 후 현재 주소는 https://news-express-1.onrender.com)
 

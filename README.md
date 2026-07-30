@@ -130,9 +130,9 @@ PostgreSQL 모드에서는 앱 백업 ZIP 안에 `data/postgres_export.json` 논
 
 - 서비스 이름: `news-express`
 - 플랜: Starter
-- 실행 방식: `gunicorn` 단일 워커, 8스레드
+- 실행 방식: `gunicorn` 단일 워커, 16스레드
 - 헬스체크: `/healthz`
-- DB: Render가 아닌 외부 PostgreSQL, 예: Neon `DATABASE_URL`
+- DB: Render가 아닌 외부 PostgreSQL(Supabase) `DATABASE_URL`
 - 자동 수집: 웹 서비스 프로세스 안에서 매시간 정각 실행
 
 배포 순서:
@@ -144,7 +144,7 @@ PostgreSQL 모드에서는 앱 백업 ZIP 안에 `data/postgres_export.json` 논
 5. 아래 비밀 환경변수를 Render 화면에서 직접 입력합니다.
 
 ```text
-DATABASE_URL=Neon PostgreSQL 연결 문자열
+DATABASE_URL=Supabase PostgreSQL 연결 문자열(Session pooler)
 GEMINI_API_KEY=Gemini API 키
 NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해시
 ```

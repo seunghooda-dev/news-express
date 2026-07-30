@@ -1,4 +1,4 @@
-# 해외 IP가 차단되는 강진군 보도자료를 로컬(한국 IP)에서 수집해 공유 DB(Neon)에 저장한다.
+# 해외 IP가 차단되는 강진군 보도자료를 로컬(한국 IP)에서 수집해 공유 DB(Supabase)에 저장한다.
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")

@@ -124,7 +124,7 @@ def test_prune_operation_events_removes_old_rows_only():
 
 
 def test_postgres_schema_init_uses_transaction_advisory_lock():
-    store = Store("postgresql://user:password@example.com/neondb")
+    store = Store("postgresql://user:password@example.com/postgres")
     calls = []
 
     class FakeConnection:
