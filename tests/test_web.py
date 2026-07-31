@@ -7152,6 +7152,49 @@ def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
     assert payload["auto_collector_error"] == "RuntimeError"
 
 
+def test_page_retries_once_when_the_pooled_connection_was_dropped(monkeypatch):
+    """끊긴 풀 연결 때문에 사용자 화면에 오류 페이지가 뜨면 안 된다.
+
+    before_request가 연결을 잡다 실패하면 핸들러 실행 전에 500이 나간다.
+    2026-07-31 실측으로 이 예외가 psycopg OperationalError임을 확인했다.
+    첫 실패가 상한 연결을 닫으므로 두 번째는 새 연결로 간다.
+    """
+    db_path = Path(f"data/.test_request_conn_retry_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.storage import Store
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+    client = app.test_client()
+
+    original_scope = Store.reusable_connection_scope
+    calls = {"count": 0}
+
+    class DroppedConnectionScope:
+        """실제와 같은 지점에서 실패시킨다 — contextmanager는 __enter__에서 몸통이 돈다."""
+
+        def __enter__(self):
+            raise RuntimeError("server closed the connection unexpectedly")
+
+        def __exit__(self, *_exc):
+            return False
+
+    def flaky_scope(self):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return DroppedConnectionScope()
+        return original_scope(self)
+
+    monkeypatch.setattr(Store, "reusable_connection_scope", flaky_scope)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert calls["count"] >= 2
+
+
 def test_healthz_recovers_from_a_single_dropped_database_connection(monkeypatch):
     """연결이 한 번 튄 것으로 인스턴스를 죽이면 안 된다.
 

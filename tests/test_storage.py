@@ -123,6 +123,32 @@ def test_prune_operation_events_removes_old_rows_only():
     assert [row["event_type"] for row in rows] == ["backup_restored"]
 
 
+def test_postgres_connection_enables_keepalives_and_connect_timeout(monkeypatch):
+    """스레드마다 연결을 오래 붙들기 때문에 유휴 중 끊기면 OperationalError가 난다.
+
+    TCP keepalive로 끊김을 줄이고, 연결 수립도 무한정 기다리지 않게 한다.
+    """
+    from news_summary import storage
+
+    store = Store("postgresql://user:password@example.com/postgres")
+    captured: dict[str, object] = {}
+
+    class FakePsycopg:
+        @staticmethod
+        def connect(dsn, **kwargs):
+            captured["dsn"] = dsn
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(storage, "psycopg", FakePsycopg)
+
+    store._new_connection()
+
+    assert captured["keepalives"] == 1
+    assert captured["keepalives_idle"] == 30
+    assert captured["connect_timeout"] == storage.POSTGRES_CONNECT_TIMEOUT_SECONDS
+
+
 def test_postgres_schema_init_uses_transaction_advisory_lock():
     store = Store("postgresql://user:password@example.com/postgres")
     calls = []

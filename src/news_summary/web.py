@@ -336,8 +336,22 @@ def create_app() -> Flask:
         # healthz는 인증 면제라 이 지점이 유일한 DB 접근이다.
         if endpoint in CONNECTION_SCOPE_EXEMPT_ENDPOINTS:
             return None
-        scope = store.reusable_connection_scope()
-        scope.__enter__()
+        # 끊긴 풀 연결을 물으면 여기서 OperationalError가 나고, 그대로 두면 핸들러가
+        # 실행되기도 전에 사용자 화면에 오류 페이지가 뜬다(2026-07-31 실측).
+        # 첫 시도가 실패하면서 상한 연결이 닫히므로 두 번째는 새 연결로 간다.
+        # 두 번 다 실패하면 진짜 DB 장애이므로 그대로 올려보낸다.
+        try:
+            scope = store.reusable_connection_scope()
+            scope.__enter__()
+        except Exception as exc:  # noqa: BLE001 - 끊긴 연결 한 번은 재시도로 회복한다.
+            logger.warning(
+                "request db connection retry endpoint=%s error=%s: %s",
+                endpoint,
+                type(exc).__name__,
+                exc,
+            )
+            scope = store.reusable_connection_scope()
+            scope.__enter__()
         g.store_connection_scope = scope
         return None
 

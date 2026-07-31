@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS operation_events (
 """
 
 POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
+POSTGRES_CONNECT_TIMEOUT_SECONDS = 10
 POSTGRES_SCHEMA_INIT_LOCK_ID = 907_260_718_101
 
 
@@ -501,7 +502,18 @@ class Store:
         if self.is_postgres:
             if psycopg is None:
                 raise RuntimeError("PostgreSQL을 사용하려면 psycopg 패키지가 필요합니다. python -m pip install -e .")
-            conn = psycopg.connect(self.location, row_factory=dict_row)
+            # 스레드마다 연결을 오래 붙들기 때문에, 유휴 중 상대가 조용히 끊으면 다음
+            # 사용에서 OperationalError가 난다(2026-07-31 실측). TCP keepalive로 연결이
+            # 살아 있음을 알려 끊김을 줄이고, 연결 수립도 무한정 기다리지 않게 한다.
+            conn = psycopg.connect(
+                self.location,
+                row_factory=dict_row,
+                connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=3,
+            )
             return _PostgresConnection(conn)
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
