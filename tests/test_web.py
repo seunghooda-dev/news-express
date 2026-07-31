@@ -7152,6 +7152,66 @@ def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
     assert payload["auto_collector_error"] == "RuntimeError"
 
 
+def test_healthz_recovers_from_a_single_dropped_database_connection(monkeypatch):
+    """연결이 한 번 튄 것으로 인스턴스를 죽이면 안 된다.
+
+    재시작은 상대 DB의 일시적 연결 거절을 고치지 못하고 진행 중이던 수집만 잃는다.
+    첫 시도가 실패해도 두 번째가 새 연결로 성공하면 정상으로 본다.
+    """
+    db_path = Path(f"data/.test_healthz_db_retry_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.storage import Store
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+    client = app.test_client()
+
+    original_scope = Store.reusable_connection_scope
+    attempts = {"count": 0}
+
+    def flaky_scope(self):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("connection reset by peer")
+        return original_scope(self)
+
+    monkeypatch.setattr(Store, "reusable_connection_scope", flaky_scope)
+
+    response = client.get("/healthz")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["database"] == "ok"
+    assert attempts["count"] >= 2
+
+
+def test_healthz_reports_503_when_the_database_keeps_failing(monkeypatch):
+    """진짜 DB 장애는 여전히 503으로 보고한다 — 재시작이 실제로 도움이 되는 경우다."""
+    db_path = Path(f"data/.test_healthz_db_down_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.storage import Store
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+    client = app.test_client()
+
+    def always_broken(self):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(Store, "reusable_connection_scope", always_broken)
+
+    response = client.get("/healthz")
+    payload = response.get_json()
+
+    assert response.status_code == 503
+    assert payload["ok"] is False
+    assert payload["database"] == "error"
+
+
 def test_healthz_survives_when_request_scoped_connection_cannot_open(monkeypatch):
     """요청 시작 시 DB 연결 확보에 실패해도 헬스체크는 죽으면 안 된다.
 
@@ -7176,8 +7236,11 @@ def test_healthz_survives_when_request_scoped_connection_cannot_open(monkeypatch
 
     response = client.get("/healthz")
 
-    assert response.status_code == 200
-    assert response.get_json()["ok"] is True
+    # 핵심은 500이 아니라는 것이다. 고치기 전에는 before_request의 scope.__enter__()가
+    # 그대로 터져 핸들러 실행 전에 500이 나갔고, 그래서 아래 503 경로 자체가 실행되지
+    # 못했다. 지금은 DB를 못 잡으면 "저하 상태"로 정직하게 503을 낸다.
+    assert response.status_code == 503
+    assert response.get_json()["database"] == "error"
 
 
 def test_healthz_fails_when_scheduler_is_wedged_so_the_instance_restarts(monkeypatch):

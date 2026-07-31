@@ -458,11 +458,23 @@ def create_app() -> Flask:
             "generated_at_label": format_datetime_label(generated_at),
             "timezone": "Asia/Seoul",
         }
-        try:
-            with store.connect() as conn:
-                conn.execute("SELECT 1").fetchone()
-        except Exception as exc:  # noqa: BLE001 - health endpoint should return a clear degraded state.
-            logger.warning("health check failed error=%s", exc)
+        # 연결이 한 번 튀었다고 인스턴스를 죽이면 안 된다. 재시작은 상대 DB의 일시적인
+        # 연결 거절을 고쳐 주지 않고, 진행 중이던 수집만 잃는다(2026-07-30 실측).
+        # reusable_connection_scope는 실패 시 상한 연결을 닫으므로, 두 번째 시도는 새
+        # 연결로 간다 — 끊긴 풀 연결을 물었을 때 스스로 회복하는 경로다.
+        # 두 번 연속 실패해야 진짜 DB 장애로 보고 503을 낸다.
+        db_error: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                with store.reusable_connection_scope() as conn:
+                    conn.execute("SELECT 1").fetchone()
+            except Exception as exc:  # noqa: BLE001 - 헬스체크는 명확한 저하 상태를 돌려줘야 한다.
+                db_error = exc
+                logger.warning("health check db probe failed attempt=%s error=%s", attempt, exc)
+            else:
+                db_error = None
+                break
+        if db_error is not None:
             return jsonify({**base_payload, "ok": False, "database": "error"}), 503
         payload: dict[str, object] = {
             **base_payload,
