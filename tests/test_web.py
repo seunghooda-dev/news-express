@@ -7152,6 +7152,34 @@ def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
     assert payload["auto_collector_error"] == "RuntimeError"
 
 
+def test_healthz_survives_when_request_scoped_connection_cannot_open(monkeypatch):
+    """요청 시작 시 DB 연결 확보에 실패해도 헬스체크는 죽으면 안 된다.
+
+    before_request의 scope.__enter__()가 실패하면 핸들러 실행 전에 500이 되어
+    liveness 래퍼도 "DB 오류는 503" 경로도 건너뛴다. 그러면 Render가 살아 있는
+    인스턴스를 죽인다(2026-07-31 실측: 래퍼 도입 후에도 일반 오류 페이지로 500 발생).
+    """
+    db_path = Path(f"data/.test_healthz_scope_open_fails_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.storage import Store
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+    client = app.test_client()
+
+    def broken_scope(self):
+        raise RuntimeError("connection pool exhausted")
+
+    monkeypatch.setattr(Store, "reusable_connection_scope", broken_scope)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+
+
 def test_healthz_fails_when_scheduler_is_wedged_so_the_instance_restarts(monkeypatch):
     """살아 있는 채로 먹통이 된 스케줄러는 재시작으로만 복구된다.
 

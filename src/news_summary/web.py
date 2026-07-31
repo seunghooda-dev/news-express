@@ -88,6 +88,9 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "operations_login", "static"}
+# 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
+# open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
+CONNECTION_SCOPE_EXEMPT_ENDPOINTS = {"static", "healthz", "healthz_details"}
 OPERATIONS_ACCESS_ENDPOINTS = {
     "operations",
     "ops_logs",
@@ -323,7 +326,15 @@ def create_app() -> Flask:
         g.request_id = _request_id_from_header()
         g.request_started_at = time.perf_counter()
         endpoint = request.endpoint or ""
-        if endpoint == "static":
+        # 헬스체크는 여기서 DB 연결을 미리 열지 않는다. scope.__enter__()가 실패하면
+        # 핸들러가 실행되기도 전에 500이 되어, _healthz_response가 준비해 둔 "DB 오류는
+        # 503" 경로도 liveness 래퍼도 건너뛴다. 그러면 Render가 살아 있는 인스턴스를
+        # 죽인다. 헬스체크는 자기 안에서 try로 감싼 store.connect()를 쓰므로 여기서
+        # 미리 열어 줄 필요가 없다.
+        # 2026-07-31 실측 근거: liveness 래퍼 도입 후에도 /healthz가 일반 오류 페이지로
+        # 500을 냈다 — 래퍼가 잡지 못했다는 건 예외 지점이 핸들러 이전이라는 뜻이고,
+        # healthz는 인증 면제라 이 지점이 유일한 DB 접근이다.
+        if endpoint in CONNECTION_SCOPE_EXEMPT_ENDPOINTS:
             return None
         scope = store.reusable_connection_scope()
         scope.__enter__()
