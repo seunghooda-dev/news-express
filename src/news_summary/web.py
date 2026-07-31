@@ -162,6 +162,9 @@ DEFAULT_AUTO_RUNNING_STALE_MINUTES = 240
 DEFAULT_AUTO_RUNNING_WARN_MINUTES = 180
 DEFAULT_AUTO_FINISH_OVERDUE_MINUTES = 90
 DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES = 10
+# 정각이 이만큼 지나도록 수집이 시작되지 않으면 스케줄러가 먹통이라고 본다.
+# 경고(grace 10분)보다 넉넉히 잡아, 잠깐 밀린 것과 영구 정지를 구분한다.
+DEFAULT_AUTO_SCHEDULER_WEDGED_MINUTES = 30
 DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
 DEFAULT_AUTO_BACKUP_MAX_AGE_HOURS = 24
 DEFAULT_OPERATIONS_SNAPSHOT_STALE_MINUTES = 180
@@ -487,6 +490,15 @@ def create_app() -> Flask:
                         "next_run_at": auto_status["next_run_at"],
                     }
                 )
+                if _auto_collector_scheduler_wedged(auto_status, timing_health):
+                    payload["auto_collector_wedged"] = True
+                    logger.error(
+                        "auto collector scheduler wedged schedule_delay_minutes=%s next_run_at=%s "
+                        "last_auto_finished_at=%s — 재시작이 필요해 헬스체크를 실패로 보고한다",
+                        timing_health["schedule_delay_minutes"],
+                        auto_status["next_run_at"],
+                        auto_status["last_auto_finished_at"],
+                    )
         else:
             payload["auto_collector"] = "unavailable"
         if include_details:
@@ -505,6 +517,10 @@ def create_app() -> Flask:
         else:
             payload["details_url"] = url_for("healthz_details")
         payload.update(_service_health_summary(payload))
+        if payload.get("auto_collector_wedged"):
+            # 재시작만이 복구 수단인 상태다. 헬스체크를 실패로 내려 Render가 인스턴스를
+            # 교체하게 한다(DB 다운과 같은 취급 — 재시작이 실제로 문제를 푸는 경우).
+            return jsonify({**payload, "ok": False}), 503
         return jsonify(payload)
 
     @app.get("/healthz")
@@ -5116,6 +5132,41 @@ def _auto_next_run_grace_minutes() -> int:
         return max(1, int(raw_value))
     except ValueError:
         return DEFAULT_AUTO_NEXT_RUN_GRACE_MINUTES
+
+
+def _auto_scheduler_wedged_minutes() -> int:
+    raw_value = os.getenv("NEWS_SUMMARY_AUTO_SCHEDULER_WEDGED_MINUTES", str(DEFAULT_AUTO_SCHEDULER_WEDGED_MINUTES))
+    try:
+        return max(15, int(raw_value))
+    except ValueError:
+        return DEFAULT_AUTO_SCHEDULER_WEDGED_MINUTES
+
+
+def _auto_collector_scheduler_wedged(auto_status: object | None, timing_health: dict[str, object]) -> bool:
+    """정각 스케줄러가 살아 있는 채로 먹통이 됐는지 판정한다.
+
+    자동 유지보수는 정각 대기 루프 안에서 동기로 실행된다. 그 안에서 멎으면 스레드는
+    살아 있는데 정각 검사로 영영 돌아오지 못해 수집이 완전히 멈춘다(2026-07-31 실측:
+    next_run_at이 09:00에 고정된 채 80분 경과, running False, thread_alive True).
+    파이썬은 스레드를 죽일 수 없어 프로세스 재시작만이 복구 수단이고, 스레드가 살아
+    있으니 _ensure_auto_collector_running의 자체 복구 대상도 아니다. 그래서 이 상태를
+    헬스체크 실패로 알려 Render가 재시작하게 한다 — 재시작하면 기동 보충 수집이
+    밀린 회차를 채운다.
+
+    실행 중인 회차는 제외하므로, 오래 걸리는 정상 회차를 죽이지 않는다.
+    """
+    if not auto_status:
+        return False
+    if not bool(_auto_status_value(auto_status, "enabled")):
+        return False
+    if bool(_auto_status_value(auto_status, "running")):
+        return False
+    if _auto_status_value(auto_status, "thread_alive") is False:
+        return False
+    delay_minutes = timing_health.get("schedule_delay_minutes")
+    if not isinstance(delay_minutes, int):
+        return False
+    return delay_minutes >= _auto_scheduler_wedged_minutes()
 
 
 def _ensure_auto_collector_running(auto_collector: object | None) -> bool:

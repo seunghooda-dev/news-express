@@ -7152,6 +7152,85 @@ def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
     assert payload["auto_collector_error"] == "RuntimeError"
 
 
+def test_healthz_fails_when_scheduler_is_wedged_so_the_instance_restarts(monkeypatch):
+    """살아 있는 채로 먹통이 된 스케줄러는 재시작으로만 복구된다.
+
+    자동 유지보수가 정각 대기 루프 안에서 멎으면 스레드는 살아 있는데 정각 수집이 영영
+    시작되지 않는다(2026-07-31 실측: next_run_at 09:00 고정, 80분 경과, running False).
+    파이썬은 스레드를 죽일 수 없고 스레드가 살아 있어 자체 복구 대상도 아니므로,
+    헬스체크를 실패로 내려 Render가 인스턴스를 교체하게 한다.
+    """
+    db_path = Path(f"data/.test_healthz_scheduler_wedged_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    wedged_next_run_at = (datetime.now(LOCAL_TZ) - timedelta(minutes=45)).isoformat()
+
+    class WedgedCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=False,
+                thread_alive=True,
+                interval_seconds=3600,
+                next_run_at=wedged_next_run_at,
+                progress_total=27,
+                progress_message="다음 정각 자동 수집 대기 중",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = WedgedCollector()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/healthz")
+    payload = response.get_json()
+
+    assert response.status_code == 503
+    assert payload["ok"] is False
+    assert payload["auto_collector_wedged"] is True
+
+
+def test_healthz_stays_healthy_while_a_slow_collection_is_still_running(monkeypatch):
+    """오래 걸리는 정상 회차를 죽이면 안 된다.
+
+    2026-07-30에 실행 중인 회차가 재시작으로 끊겨 완주하지 못하는 일이 반복됐다.
+    실행 중이면 정각이 한참 지났어도 먹통이 아니다.
+    """
+    db_path = Path(f"data/.test_healthz_slow_run_not_wedged_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    started_at = (datetime.now(LOCAL_TZ) - timedelta(minutes=50)).isoformat()
+    passed_next_run_at = (datetime.now(LOCAL_TZ) - timedelta(minutes=45)).isoformat()
+
+    class SlowRunningCollector:
+        def snapshot(self):
+            return AutoCollectorStatus(
+                enabled=True,
+                running=True,
+                thread_alive=True,
+                interval_seconds=3600,
+                last_started_at=started_at,
+                next_run_at=passed_next_run_at,
+                progress_total=27,
+                progress_message="수집 중",
+            )
+
+    app = create_app()
+    app.config["AUTO_COLLECTOR"] = SlowRunningCollector()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/healthz")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert "auto_collector_wedged" not in payload
+
+
 def test_healthz_never_returns_500_when_status_building_breaks(monkeypatch):
     """liveness 프로브는 어떤 코드 버그에도 500을 주면 안 된다.
 
