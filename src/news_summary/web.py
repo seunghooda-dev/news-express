@@ -88,6 +88,21 @@ DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2})
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
 AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "operations_login", "static"}
+# 뉴스 열람은 로그인 없이 공개다(2026-08-03 사용자 지시 "사이트는 누구든지 볼 수 있게").
+# 로그인은 상태를 바꾸는 조작(수집 실행·초안 수정·설정 변경)과 내부 화면에만 요구한다 —
+# 인증 없는 /recrawl·/writing-settings가 외부에서 호출 가능하던 것이 원래 문제였지,
+# 기사 열람을 막자는 것이 아니었다. 읽기 전용 GET 페이지만 여기 올린다.
+PUBLIC_READ_ENDPOINTS = {
+    "dashboard",
+    "drafts",
+    "draft_detail",
+    "press_releases",
+    "press_release_detail",
+    "source_detail",
+    "preview_press_release_asset",
+    "download_press_release_asset",
+    "recrawl_status",
+}
 # 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
 # open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
 CONNECTION_SCOPE_EXEMPT_ENDPOINTS = {"static", "healthz", "healthz_details"}
@@ -275,8 +290,9 @@ def create_app() -> Flask:
     app.config["NEWS_SUMMARY_LOG_PATH"] = log_path
     asset_preview_cache: AssetPreviewCache = OrderedDict()
     asset_preview_cache_lock = RLock()
-    # 백업과 같은 디스크(Render에서는 /var/data)를 쓴다 — 새 환경변수 없이 영구 보관.
-    preview_disk_dir = backup_dir.parent / "previews"
+    # 백업과 같은 디스크(Render에서는 /var/data)를 쓴다 — 기본값은 영구 보관 경로.
+    # 테스트는 conftest가 이 변수를 테스트별 임시 경로로 고정해 서로 격리한다.
+    preview_disk_dir = env_path("NEWS_SUMMARY_PREVIEW_CACHE_DIR", str(backup_dir.parent / "previews"))
 
     @app.context_processor
     def inject_auth_state():
@@ -397,6 +413,10 @@ def create_app() -> Flask:
         if config.setup_required:
             return redirect(url_for("admin_setup", next=_current_next_path()))
         if session.get("admin_authenticated"):
+            return None
+        # 읽기 전용 공개 페이지는 로그인 없이 통과 — GET 계열만이다. 같은 경로라도
+        # POST(초안 수정 등)는 별도 엔드포인트라 여기 걸리지 않고 로그인으로 보낸다.
+        if request.method in {"GET", "HEAD", "OPTIONS"} and endpoint in PUBLIC_READ_ENDPOINTS:
             return None
         return redirect(url_for("login", next=_current_next_path()))
 

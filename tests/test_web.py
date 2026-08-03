@@ -2302,7 +2302,7 @@ def test_asset_preview_disk_cache_survives_restart(monkeypatch, tmp_path):
     """
     db_path = Path(f"data/.test_asset_preview_disk_cache_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
-    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setenv("NEWS_SUMMARY_PREVIEW_CACHE_DIR", str(tmp_path / "previews"))
     store = Store(db_path)
     store.init_db()
     release_id = store.add_press_release(
@@ -2553,7 +2553,9 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    response = client.get("/", follow_redirects=False)
+    # 열람은 공개, 내부 화면은 로그인(2026-08-03 "보기는 누구나, 변경은 관리자만").
+    assert client.get("/", follow_redirects=False).status_code == 200
+    response = client.get("/writing-settings", follow_redirects=False)
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
 
@@ -2582,10 +2584,12 @@ def test_sensitive_routes_require_login_when_auth_is_enabled(monkeypatch):
     app.testing = True
     client = app.test_client()
 
+    # 열람 페이지는 공개다(2026-08-03 "보기는 누구나, 변경은 관리자만").
+    for path in ("/", "/drafts", "/press-releases"):
+        assert client.get(path, follow_redirects=False).status_code == 200, path
+
     protected_get_paths = [
-        "/",
-        "/drafts",
-        "/press-releases",
+        "/writing-settings",
         "/gemini-usage",
         "/ops-logs",
         "/operations",
@@ -3124,7 +3128,9 @@ def test_admin_setup_enables_login_without_env_password(monkeypatch):
     assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
 
     client.post("/logout")
-    protected = client.get("/", follow_redirects=False)
+    # 열람(/)은 공개로 남고, 내부 화면이 로그인으로 잠긴다.
+    assert client.get("/", follow_redirects=False).status_code == 200
+    protected = client.get("/writing-settings", follow_redirects=False)
     assert protected.status_code == 302
     assert "/login" in protected.headers["Location"]
 
@@ -7281,6 +7287,46 @@ def test_page_retries_once_when_the_pooled_connection_was_dropped(monkeypatch):
 
     assert response.status_code == 200
     assert calls["count"] >= 2
+
+
+def test_public_can_read_news_but_writes_require_admin_login(monkeypatch):
+    """로그인 보호가 켜져도 뉴스 열람은 공개다(2026-08-03 사용자 지시).
+
+    원래 문제는 인증 없는 /recrawl·/writing-settings 같은 조작 경로였지 열람이
+    아니다. 읽기 GET은 통과, 조작·내부 화면은 로그인으로 보낸다.
+    """
+    db_path = Path(f"data/.test_public_read_admin_write_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "0")
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary.auth import set_admin_password
+
+    set_admin_password(store, "Str0ng!AdminPass123")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 읽기 전용 페이지: 로그인 없이 200
+    for path in ("/", "/drafts", "/press-releases"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+
+    # 내부 화면·조작: 로그인으로 리다이렉트
+    for method, path in (
+        ("GET", "/writing-settings"),
+        ("GET", "/gemini-usage"),
+        ("POST", "/recrawl"),
+        ("POST", "/collect"),
+        ("POST", "/drafts/1"),
+    ):
+        response = client.open(path, method=method)
+        assert response.status_code == 302, f"{method} {path}"
+        assert "/login" in response.headers.get("Location", ""), f"{method} {path}"
 
 
 def test_healthz_exposes_memory_and_preview_cache_size(monkeypatch):
