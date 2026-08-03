@@ -23,6 +23,7 @@ build/
 data/*.png
 data/backups/
 data/logs/
+data/previews/
 data/tmp/
 data/raw/
 exports/

@@ -275,6 +275,8 @@ def create_app() -> Flask:
     app.config["NEWS_SUMMARY_LOG_PATH"] = log_path
     asset_preview_cache: AssetPreviewCache = OrderedDict()
     asset_preview_cache_lock = RLock()
+    # 백업과 같은 디스크(Render에서는 /var/data)를 쓴다 — 새 환경변수 없이 영구 보관.
+    preview_disk_dir = backup_dir.parent / "previews"
 
     @app.context_processor
     def inject_auth_state():
@@ -1267,6 +1269,13 @@ def create_app() -> Flask:
         if cached_preview:
             response_content_type, response_content = cached_preview
             return _asset_preview_response(response_content_type, response_content, "HIT")
+        # 디스크 캐시는 재시작 후에도 남는다 — 있으면 원본을 펼치지 않고 바로 낸다.
+        disk_preview = _preview_disk_get(preview_disk_dir, asset_id, asset_url)
+        if disk_preview:
+            response_content_type, response_content = disk_preview
+            with asset_preview_cache_lock:
+                _asset_preview_cache_put(asset_preview_cache, cache_key, response_content_type, response_content)
+            return _asset_preview_response(response_content_type, response_content, "DISK")
         # 원본 내려받기와 축소는 이미지 한 장당 수십 MB를 잡는다. 목록 화면이 썸네일
         # 수십 개를 한꺼번에 요청하는데 인스턴스 메모리는 512MB뿐이라, 캐시가 빈 요청은
         # 동시 실행 수를 묶어 순서대로 처리한다.
@@ -1277,6 +1286,12 @@ def create_app() -> Flask:
             if cached_preview:
                 response_content_type, response_content = cached_preview
                 return _asset_preview_response(response_content_type, response_content, "HIT")
+            disk_preview = _preview_disk_get(preview_disk_dir, asset_id, asset_url)
+            if disk_preview:
+                response_content_type, response_content = disk_preview
+                with asset_preview_cache_lock:
+                    _asset_preview_cache_put(asset_preview_cache, cache_key, response_content_type, response_content)
+                return _asset_preview_response(response_content_type, response_content, "DISK")
             try:
                 response_content_type, response_content = _download_asset_content_from_url(
                     asset_url,
@@ -1295,6 +1310,7 @@ def create_app() -> Flask:
             response_content_type, response_content = _downscale_preview_image(
                 response_content_type, response_content
             )
+        _preview_disk_put(preview_disk_dir, asset_id, asset_url, response_content_type, response_content)
         with asset_preview_cache_lock:
             _asset_preview_cache_put(
                 asset_preview_cache,
@@ -2510,6 +2526,99 @@ def _asset_preview_cache_prune(
 
 def _asset_preview_cache_size(cache: AssetPreviewCache) -> int:
     return sum(len(content) for _fresh_expires_at, _stale_expires_at, _content_type, content in cache.values())
+
+
+# ---- 썸네일 디스크 캐시 ----
+# 메모리 캐시는 재시작마다 사라져 썸네일을 전부 다시 만들었다. 그 재생성(원본
+# 내려받기 + 메모리에서 펼쳐 축소)이 물음표 실패와 RSS 폭식의 뿌리다(2026-08-03
+# 실측: 썸네일 ~10장 생성 순간 +139MB, 반납 없음). 영구 디스크에 두면 자산당
+# 평생 한 번만 원본을 펼치고, 재시작 직후에도 물음표가 나지 않는다.
+_PREVIEW_DISK_EXTENSION_BY_TYPE = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
+_PREVIEW_DISK_TYPE_BY_EXTENSION = {
+    extension: content_type for content_type, extension in _PREVIEW_DISK_EXTENSION_BY_TYPE.items()
+}
+
+
+def _max_preview_disk_cache_bytes() -> int:
+    # 영구 디스크는 1GB를 백업·로그와 나눠 쓰므로 상한을 둔다.
+    raw_value = os.getenv("NEWS_SUMMARY_PREVIEW_DISK_CACHE_MB", "200")
+    try:
+        megabytes = float(raw_value)
+    except ValueError:
+        megabytes = 200.0
+    if megabytes <= 0:
+        return 0
+    return int(min(megabytes, 500.0) * 1024 * 1024)
+
+
+def _preview_disk_stem(asset_id: int, asset_url: str) -> str:
+    url_hash = hashlib.sha1(asset_url.encode("utf-8")).hexdigest()[:12]
+    return f"{int(asset_id)}-{url_hash}"
+
+
+def _preview_disk_get(disk_dir: Path, asset_id: int, asset_url: str) -> tuple[str, bytes] | None:
+    if _max_preview_disk_cache_bytes() <= 0:
+        # 0은 완전 비활성이다 — 이미 쌓인 파일도 읽지 않는다.
+        return None
+    stem = _preview_disk_stem(asset_id, asset_url)
+    try:
+        for path in disk_dir.glob(f"{stem}.*"):
+            if path.suffix == ".tmp":
+                continue
+            content = path.read_bytes()
+            content_type = _PREVIEW_DISK_TYPE_BY_EXTENSION.get(
+                path.suffix.lstrip(".").lower(), "application/octet-stream"
+            )
+            return content_type, content
+    except OSError:
+        return None
+    return None
+
+
+def _preview_disk_put(disk_dir: Path, asset_id: int, asset_url: str, content_type: str, content: bytes) -> None:
+    max_bytes = _max_preview_disk_cache_bytes()
+    if max_bytes <= 0 or not content or len(content) > max_bytes:
+        return
+    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+    extension = _PREVIEW_DISK_EXTENSION_BY_TYPE.get(normalized_type, "bin")
+    try:
+        disk_dir.mkdir(parents=True, exist_ok=True)
+        target = disk_dir / f"{_preview_disk_stem(asset_id, asset_url)}.{extension}"
+        tmp_path = target.with_suffix(f"{target.suffix}.tmp")
+        tmp_path.write_bytes(content)
+        tmp_path.replace(target)
+        _preview_disk_evict(disk_dir, max_bytes)
+    except OSError as exc:
+        # 디스크 캐시는 보조 수단이다 — 실패해도 응답은 정상 경로로 나간다.
+        logger.warning("preview disk cache write failed asset_id=%s error=%s", asset_id, exc)
+
+
+def _preview_disk_evict(disk_dir: Path, max_bytes: int) -> None:
+    try:
+        entries = []
+        for path in disk_dir.iterdir():
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            entries.append((stat.st_mtime, stat.st_size, path))
+    except OSError:
+        return
+    total = sum(size for _mtime, size, _path in entries)
+    if total <= max_bytes:
+        return
+    for _mtime, size, path in sorted(entries):
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        total -= size
+        if total <= max_bytes:
+            break
 
 
 def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, bytes]:

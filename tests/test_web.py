@@ -2077,6 +2077,8 @@ def test_asset_request_headers_include_press_referer_for_image_assets():
 def test_asset_preview_sends_browser_like_headers(monkeypatch):
     db_path = Path(f"data/.test_asset_preview_headers_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    # 이 테스트는 다운로드 요청 헤더를 검증하므로 디스크 캐시(응답 지름길)를 끈다.
+    monkeypatch.setenv("NEWS_SUMMARY_PREVIEW_DISK_CACHE_MB", "0")
     store = Store(db_path)
     store.init_db()
     release_url = "https://www.example.go.kr/news/press?idx=20&mode=view"
@@ -2216,6 +2218,8 @@ def test_gangjin_asset_preview_redirects_to_source_image(monkeypatch):
 def test_asset_preview_retries_ssl_certificate_failure_without_verification(monkeypatch):
     db_path = Path(f"data/.test_asset_preview_ssl_retry_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    # 이 테스트는 SSL 재시도 다운로드 경로를 검증하므로 디스크 캐시(응답 지름길)를 끈다.
+    monkeypatch.setenv("NEWS_SUMMARY_PREVIEW_DISK_CACHE_MB", "0")
     store = Store(db_path)
     store.init_db()
     release_id = store.add_press_release(
@@ -2290,11 +2294,95 @@ def test_asset_preview_retries_ssl_certificate_failure_without_verification(monk
     assert client_verify_values == [True, False]
 
 
+def test_asset_preview_disk_cache_survives_restart(monkeypatch, tmp_path):
+    """썸네일은 재시작 후에도 디스크에서 나와야 한다.
+
+    메모리 캐시는 재시작마다 사라져 전부 다시 만들었고, 그 재생성이 물음표
+    실패와 RSS 폭식의 뿌리였다(2026-08-03 실측: ~10장 생성 순간 +139MB).
+    """
+    db_path = Path(f"data/.test_asset_preview_disk_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(tmp_path / "backups"))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="디스크 캐시 테스트 원문",
+            url="https://example.com/disk-cache-release",
+            content="테스트 군은 썸네일 영구 캐시를 점검한다고 밝혔다.",
+            published_at="2026-08-03",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=disk",
+                    title="첨부 사진",
+                    filename="",
+                    content_type="",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    assert release_id is not None
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    from news_summary.web import create_app
+
+    calls = {"count": 0}
+
+    def fake_download(url, asset, max_bytes=None):
+        calls["count"] += 1
+        return "image/png", b"\x89PNG\r\n\x1a\n" + b"\x22" * 40
+
+    monkeypatch.setattr("news_summary.web._download_asset_content_from_url", fake_download)
+    app = create_app()
+    app.testing = True
+    first = app.test_client().get(f"/press-releases/assets/{asset_id}/preview")
+    assert first.status_code == 200
+    assert calls["count"] == 1
+    assert list((tmp_path / "previews").glob("*.png"))
+
+    # 재시작(새 앱 = 메모리 캐시 초기화) + 원본 호스트 다운 상황에서도 디스크에서 나온다.
+    def broken_download(url, asset, max_bytes=None):
+        raise httpx.ReadTimeout("image host down")
+
+    monkeypatch.setattr("news_summary.web._download_asset_content_from_url", broken_download)
+    restarted_app = create_app()
+    restarted_app.testing = True
+    second = restarted_app.test_client().get(f"/press-releases/assets/{asset_id}/preview")
+    assert second.status_code == 200
+    assert second.data == first.data
+    assert calls["count"] == 1
+
+
+def test_preview_disk_cache_evicts_oldest_when_over_budget(monkeypatch, tmp_path):
+    """디스크는 백업·로그와 1GB를 나눠 쓰므로 상한을 넘으면 오래된 것부터 지운다."""
+    import os as os_module
+
+    from news_summary.web import _preview_disk_get, _preview_disk_put
+
+    monkeypatch.setenv("NEWS_SUMMARY_PREVIEW_DISK_CACHE_MB", "0.001")  # 1048바이트
+
+    _preview_disk_put(tmp_path, 1, "https://example.com/a", "image/jpeg", b"a" * 600)
+    old_file = next(tmp_path.glob("1-*.jpg"))
+    os_module.utime(old_file, (1000, 1000))
+    _preview_disk_put(tmp_path, 2, "https://example.com/b", "image/jpeg", b"b" * 600)
+
+    assert _preview_disk_get(tmp_path, 1, "https://example.com/a") is None
+    assert _preview_disk_get(tmp_path, 2, "https://example.com/b") is not None
+
+
 def test_asset_preview_serves_stale_cache_when_refresh_fails(monkeypatch):
     db_path = Path(f"data/.test_asset_preview_stale_cache_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
     monkeypatch.setenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_SECONDS", "1")
     monkeypatch.setenv("NEWS_SUMMARY_ASSET_PREVIEW_STALE_SECONDS", "5")
+    # 디스크 캐시가 있으면 만료 시 STALE 대신 DISK로 응답한다(더 나은 경로).
+    # 이 테스트는 디스크가 비어 있거나 꺼진 상황의 스테일 폴백을 검증하므로 끈다.
+    monkeypatch.setenv("NEWS_SUMMARY_PREVIEW_DISK_CACHE_MB", "0")
     store = Store(db_path)
     store.init_db()
     release_id = store.add_press_release(
