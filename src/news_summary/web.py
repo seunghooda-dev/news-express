@@ -503,10 +503,16 @@ def create_app() -> Flask:
             # 살아 있는 인스턴스를 죽이고, 재시작이 기동 보충 수집을 띄워 수집이 영원히
             # 완주하지 못하는 순환에 빠진다(2026-07-30 실측). DB 자체가 죽은 경우만 503이다.
             try:
-                _ensure_auto_collector_running(auto_collector)
-                auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
-                auto_label = _auto_collector_health_label(auto_status)
-                timing_health = _auto_collector_timing_health(auto_status)
+                # 연결 범위를 열어 두면 아래 DB 조회가 스레드의 상한 연결을 재사용한다.
+                # 열지 않으면 store.connect()가 조회마다 새 연결을 만드는데, 헬스체크는
+                # 폴링 주기가 짧아 연결 생성이 잦고 그중 일부가 OperationalError로
+                # 실패했다(2026-08-03 09:48 실측 — keepalive는 이미 열려 있는 연결을
+                # 지켜 줄 뿐, 새로 여는 연결의 실패는 막지 못한다).
+                with store.reusable_connection_scope():
+                    _ensure_auto_collector_running(auto_collector)
+                    auto_status = _auto_collector_status_payload(store, auto_collector.snapshot())
+                    auto_label = _auto_collector_health_label(auto_status)
+                    timing_health = _auto_collector_timing_health(auto_status)
             except Exception as exc:  # noqa: BLE001 - 진단 조회 실패가 인스턴스를 죽이면 안 된다.
                 logger.exception("auto collector health payload failed")
                 auto_status = None
