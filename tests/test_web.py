@@ -7195,6 +7195,26 @@ def test_page_retries_once_when_the_pooled_connection_was_dropped(monkeypatch):
     assert calls["count"] >= 2
 
 
+def test_healthz_exposes_memory_and_preview_cache_size(monkeypatch):
+    """512MB OOM의 원인을 추측하지 않으려면 메모리 수치가 밖에서 보여야 한다."""
+    db_path = Path(f"data/.test_healthz_memory_metrics_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    payload = client.get("/healthz").get_json()
+
+    # 캐시 크기는 플랫폼 무관하게 항상 노출된다(비어 있으면 0.0).
+    assert payload["asset_preview_cache_mb"] == 0.0
+    # 프로세스 메모리는 리눅스(/proc)에서만 노출된다 — 있으면 양수여야 한다.
+    if "process_memory_mb" in payload:
+        assert payload["process_memory_mb"] > 0
+
+
 def test_healthz_recovers_from_a_single_dropped_database_connection(monkeypatch):
     """연결이 한 번 튄 것으로 인스턴스를 죽이면 안 된다.
 

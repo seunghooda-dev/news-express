@@ -142,7 +142,7 @@ DEFAULT_ASSET_PREVIEW_MAX_EDGE = 480
 # 캐시가 빈 썸네일 요청은 원본 내려받기와 축소로 메모리를 크게 쓴다. 512MB 인스턴스에서
 # 목록 한 화면 분량을 한꺼번에 처리하면 프로세스가 버티지 못하므로 동시 실행 수를 묶는다.
 _asset_preview_fetch_limit = BoundedSemaphore(3)
-DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
+DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 16 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
 LATEST_GITHUB_COMMIT_CACHE_SECONDS = 60
@@ -496,6 +496,13 @@ def create_app() -> Flask:
             "database": "ok",
             "commit": _running_commit_short(),
         }
+        memory_mb = _process_memory_mb()
+        if memory_mb is not None:
+            payload["process_memory_mb"] = memory_mb
+        with asset_preview_cache_lock:
+            payload["asset_preview_cache_mb"] = round(
+                sum(len(entry[3]) for entry in asset_preview_cache.values()) / 1024 / 1024, 1
+            )
         auto_collector = app.config.get("AUTO_COLLECTOR")
         auto_status = None
         if auto_collector:
@@ -2397,8 +2404,26 @@ def _max_asset_preview_bytes() -> int:
     return int(megabytes * 1024 * 1024)
 
 
+def _process_memory_mb() -> float | None:
+    """이 프로세스가 실제로 쓰는 메모리(MB). 리눅스가 아니면 None.
+
+    Render Starter는 512MB에서 인스턴스를 죽인다(2026-07-31·08-03 실측). 무엇이
+    한도를 밀어올리는지 추측하지 않으려면 값을 밖에서 볼 수 있어야 한다.
+    """
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _max_asset_preview_cache_bytes() -> int:
-    raw_value = os.getenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_MB", "64")
+    # 512MB 인스턴스에서 64MB는 너무 큰 몫이었다. 썸네일은 480px 다운스케일로
+    # 한 장 45KB 수준이라 16MB로도 350장 넘게 담는다(2026-08-03 축소).
+    raw_value = os.getenv("NEWS_SUMMARY_ASSET_PREVIEW_CACHE_MB", "16")
     try:
         megabytes = float(raw_value)
     except ValueError:
