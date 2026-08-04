@@ -139,6 +139,35 @@ CSRF_FORM_FIELD = "_csrf_token"
 REQUEST_ID_HEADER = "X-Request-ID"
 OPERATIONS_ACCESS_UNLOCKED_KEY = "operations_access_unlocked"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
+# 운영 관리는 카드가 31개라 한 페이지에서 스크롤로 찾아야 했다. 그룹별 탭으로 나눈다
+# (2026-08-04). 첫 화면은 핵심 상태 — 운영자가 가장 먼저 볼 항목이다.
+OPERATIONS_TABS = (
+    {"id": "core", "label": "핵심 상태"},
+    {"id": "collect", "label": "수집·초안"},
+    {"id": "backup", "label": "백업·보안"},
+    {"id": "log", "label": "로그·접속"},
+    {"id": "access", "label": "접속 이력"},
+    {"id": "detail", "label": "상세 진단"},
+)
+OPERATIONS_TAB_IDS = frozenset(tab["id"] for tab in OPERATIONS_TABS)
+# 탭으로 나눈 뒤에는 "#카드" 앵커만으로는 다른 탭의 카드로 갈 수 없다. 카드가 어느
+# 탭에 있는지 알아야 링크가 끊기지 않는다(테스트가 템플릿과 어긋남을 감시한다).
+OPERATIONS_CARD_TAB = {
+    "ops-service-status": "core",
+    "ops-production-readiness": "core",
+    "ops-recovery-health": "core",
+    "ops-auto-collect": "collect",
+    "ops-attention-sources": "collect",
+    "ops-priority-sources": "collect",
+    "ops-gemini-retry-queue": "collect",
+    "ops-db-backup": "backup",
+    "ops-log-summary": "log",
+    "ops-audit-events": "log",
+    "ops-collection-coverage": "detail",
+    "ops-image-coverage": "detail",
+    "ops-draft-conversion": "detail",
+    "ops-deployment-version": "detail",
+}
 OPERATIONS_ACCESS_UNLOCKED_AT_KEY = "operations_access_unlocked_at"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
@@ -760,7 +789,11 @@ def create_app() -> Flask:
                 pending_queue = store.pending_press_release_summary()
                 draft_failure_summary = _draft_failure_display_summary(store, store.draft_generation_failure_summary())
                 log_path = Path(app.config["NEWS_SUMMARY_LOG_PATH"])
+                requested_tab = (request.args.get("tab") or "").strip()
+                active_tab = requested_tab if requested_tab in OPERATIONS_TAB_IDS else OPERATIONS_TABS[0]["id"]
                 context = {
+                    "ops_tabs": OPERATIONS_TABS,
+                    "ops_tab": active_tab,
                     "auto_collector_status": auto_status,
                     "pending_queue": pending_queue,
                     "draft_failure_summary": draft_failure_summary,
@@ -807,7 +840,7 @@ def create_app() -> Flask:
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if not auto_collector:
             flash("자동 수집 컨트롤러가 준비되지 않았습니다. 프로그램을 다시 실행해 주세요.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="collect"))
         enabled = request.form.get("enabled") == "true"
         auto_collector.set_enabled(enabled)
         _clear_operations_report_cache()
@@ -819,7 +852,7 @@ def create_app() -> Flask:
         )
         logger.info("auto collector setting changed enabled=%s", enabled)
         flash("자동 수집을 켰습니다." if enabled else "자동 수집을 껐습니다.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="collect"))
 
     @app.post("/operations/write-access/unlock")
     def unlock_operations_write_access():
@@ -844,7 +877,7 @@ def create_app() -> Flask:
             _auth_rate_limit_record_failure(app, "operations_write_unlock")
             logger.warning("operations write access unlock failed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호가 올바르지 않습니다.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.post("/operations/write-access/lock")
     def lock_operations_write_access():
@@ -852,7 +885,7 @@ def create_app() -> Flask:
         session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
         _record_operation_event(store, "operations_write_locked", target="operations", detail="운영 변경 잠금")
         flash("운영 변경 기능을 다시 잠갔습니다.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.post("/operations/password")
     def change_operations_password():
@@ -865,29 +898,29 @@ def create_app() -> Flask:
             _auth_rate_limit_record_failure(app, "operations_password_change")
             logger.warning("operations password change failed remote_addr=%s", _masked_request_ip())
             flash("현재 운영 관리 비밀번호가 올바르지 않습니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         _auth_rate_limit_clear("operations_password_change")
         issues = operations_password_issues(new_password)
         if issues:
             flash("새 비밀번호를 사용할 수 없습니다: " + ", ".join(issues) + ".")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         if new_password != confirm_password:
             flash("새 비밀번호 확인이 일치하지 않습니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         set_operations_password(store, new_password)
         _record_operation_event(
             store, "operations_password_changed", target="operations", detail="운영 관리 비밀번호 변경"
         )
         logger.info("operations password changed remote_addr=%s", _masked_request_ip())
         flash("운영 관리 비밀번호를 변경했습니다.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.post("/operations/admin-password/unlock")
     def unlock_admin_password_panel():
         source = _configured_admin_password_source(store)
         if source == "environment":
             flash(".env의 관리자 비밀번호 설정이 우선 적용 중이라 화면에서 변경할 수 없습니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         if not source:
             flash("관리자 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup"))
@@ -911,14 +944,14 @@ def create_app() -> Flask:
             _auth_rate_limit_record_failure(app, "admin_password_unlock")
             logger.warning("admin password panel unlock failed remote_addr=%s", _masked_request_ip())
             flash("현재 관리자 비밀번호가 올바르지 않습니다.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.post("/operations/admin-password")
     def change_admin_password():
         source = _configured_admin_password_source(store)
         if source == "environment":
             flash(".env의 관리자 비밀번호 설정이 우선 적용 중이라 화면에서 변경할 수 없습니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         if not source:
             flash("관리자 비밀번호를 먼저 설정하세요.")
             return redirect(url_for("admin_setup"))
@@ -953,7 +986,7 @@ def create_app() -> Flask:
             )
             logger.info("admin password changed remote_addr=%s", _masked_request_ip())
             flash("관리자 비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용하세요.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.post("/operations/backup")
     def create_backup_route():
@@ -970,13 +1003,13 @@ def create_app() -> Flask:
                 detail=f"{type(exc).__name__}: {exc}",
             )
             flash(f"백업 생성에 실패했습니다: {type(exc).__name__}: {exc}")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         _persist_backup_verification_result(store, backup_path)
         _clear_operations_report_cache()
         _record_operation_event(store, "backup_created", target=backup_path.name, detail="DB 백업 생성")
         logger.info("backup created path=%s", backup_path)
         flash(f"백업을 생성했습니다: {backup_path.name}")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.post("/operations/visitor-logs/proxy-cleanup")
     def purge_proxy_visitor_logs():
@@ -995,7 +1028,7 @@ def create_app() -> Flask:
             flash(f"프록시 IP로 기록된 접속 이력 {removed}건을 정리했습니다.")
         else:
             flash("정리할 프록시 IP 기록이 없습니다.")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="access"))
 
     @app.get("/operations/visitor-logs/export")
     def export_visitor_logs():
@@ -1049,12 +1082,12 @@ def create_app() -> Flask:
         backup_path = _safe_backup_file(backup_dir, request.form.get("backup_name") or "")
         if not backup_path:
             flash("복구할 백업 파일을 선택하세요.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
 
         restored = restore_backup(PROJECT_ROOT, backup_path, dry_run=True)
         if not restored:
             flash("복구 가능한 항목이 없는 백업 파일입니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
 
         action = request.form.get("action") or "preview"
         sensitive_targets = _sensitive_restore_targets(restored)
@@ -1062,14 +1095,14 @@ def create_app() -> Flask:
             flash("복구 대상: " + ", ".join(restored))
             if sensitive_targets:
                 flash("주의: 설정 파일도 덮어씁니다: " + ", ".join(sensitive_targets))
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
 
         if request.form.get("confirm_restore") != "yes":
             flash("복구를 실행하려면 확인 체크박스를 선택해야 합니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
         if sensitive_targets and request.form.get("confirm_config_restore") != "yes":
             flash("설정 파일 복구를 실행하려면 설정 파일 덮어쓰기 확인 체크박스를 선택해야 합니다.")
-            return redirect(url_for("operations"))
+            return redirect(url_for("operations", tab="backup"))
 
         auto_collector = app.config.get("AUTO_COLLECTOR")
         if auto_collector:
@@ -1091,7 +1124,7 @@ def create_app() -> Flask:
             safety_backup,
         )
         flash(f"백업을 복구했습니다. 복구 전 안전 백업: {safety_backup.name}")
-        return redirect(url_for("operations"))
+        return redirect(url_for("operations", tab="backup"))
 
     @app.get("/gemini-usage")
     def gemini_usage():
@@ -3378,6 +3411,16 @@ def _operations_cached_report_bundle(
     return dict(reports)
 
 
+def _operations_card_href(anchor_id: str) -> str:
+    """운영 관리 카드로 가는 링크. 탭이 다르면 그 탭을 열고 앵커로 간다."""
+    if not anchor_id:
+        return ""
+    tab = OPERATIONS_CARD_TAB.get(anchor_id)
+    if not tab:
+        return f"#{anchor_id}"
+    return f"{url_for('operations', tab=tab)}#{anchor_id}"
+
+
 def _operations_overview_items(
     pending_queue: dict[str, object],
     draft_failure_summary: dict[str, object],
@@ -3423,7 +3466,7 @@ def _operations_overview_items(
             "label": "재처리 대기",
             "value": f"{retry_total}건",
             "detail": retry_detail,
-            "href": "#ops-gemini-retry-queue",
+            "href": _operations_card_href("ops-gemini-retry-queue"),
             "tone": "warning" if retry_total else "ok",
         },
         {
@@ -3437,7 +3480,7 @@ def _operations_overview_items(
             "label": "반복 실패",
             "value": f"{priority_sources}곳",
             "detail": "우선 확인 기관",
-            "href": "#ops-priority-sources",
+            "href": _operations_card_href("ops-priority-sources"),
             "tone": "warning" if priority_sources else "ok",
         },
     ]
@@ -5643,7 +5686,9 @@ def _require_operations_write_access(store: Store):
         flash("운영 변경 기능을 사용하려면 관리자 비밀번호를 먼저 설정하세요.")
         return redirect(url_for("admin_setup"))
     flash("운영 변경 기능은 관리자 비밀번호 확인 후 사용할 수 있습니다.")
-    return redirect(url_for("operations"))
+    # 잠금 해제 버튼이 있는 탭으로 보낸다 — 안내만 하고 다른 탭에 떨어뜨리면
+    # 사용자가 해제 방법을 다시 찾아야 한다(2026-08-04 탭 분리 후).
+    return redirect(url_for("operations", tab="backup"))
 
 
 def _sensitive_restore_targets(targets: list[str]) -> list[str]:
@@ -7016,6 +7061,7 @@ def _operations_service_status_report(
         anchor_id, card_label = OPERATIONS_COMPONENT_CARD_MAP.get(component, ("", component))
         enriched = dict(issue)
         enriched["anchor_id"] = anchor_id
+        enriched["anchor_href"] = _operations_card_href(anchor_id)
         enriched["card_label"] = card_label
         issues.append(enriched)
     return {

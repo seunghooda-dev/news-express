@@ -2984,3 +2984,14 @@ h3 {
     display: none;
   }
 }
+
+/* 운영 관리 탭 — 현재 보고 있는 그룹을 분명히 드러낸다. */
+.ops-jump a.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.ops-jump a.active:hover {
+  background: var(--ink);
+}

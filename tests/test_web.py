@@ -45,6 +45,21 @@ from news_summary.web import (
     review_flags,
     source_display_label,
 )
+from news_summary.web import OPERATIONS_TABS
+
+
+def operations_html(client, **params) -> str:
+    """운영 관리 전체 화면(모든 탭)을 이어 붙여 돌려준다.
+
+    2026-08-04에 운영 관리를 그룹별 탭으로 나눴다. 기존 테스트들은 "운영 관리에
+    이 내용이 있다"를 검증하던 것이므로, 어느 탭에 있든 찾을 수 있게 한다.
+    특정 탭에 있는지 자체를 검증하려면 client.get("/operations?tab=...")를 직접 쓴다.
+    """
+    parts = []
+    for tab in OPERATIONS_TABS:
+        response = client.get("/operations", query_string={"tab": tab["id"], **params})
+        parts.append(response.data.decode("utf-8"))
+    return "\n".join(parts)
 
 
 def test_group_drafts_by_recent_dates_builds_five_daily_categories():
@@ -2834,19 +2849,12 @@ def test_operations_page_hosts_moved_menus_and_group_jumps(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert 'href="/gemini-usage"' in html
     assert 'href="/writing-settings"' in html
-    for anchor in (
-        "ops-group-access",
-        "ops-group-core",
-        "ops-group-collect",
-        "ops-group-backup",
-        "ops-group-log",
-    ):
-        assert f'href="#{anchor}"' in html, anchor
-        assert f'id="{anchor}"' in html, anchor
+    for tab_id in ("core", "collect", "backup", "log", "access", "detail"):
+        assert f"tab={tab_id}" in html, tab_id
 
 
 def test_visitor_overview_separates_humans_from_bots(monkeypatch):
@@ -2874,7 +2882,7 @@ def test_visitor_overview_separates_humans_from_bots(monkeypatch):
     ):
         client.get("/", headers={"CF-Connecting-IP": forwarded_ip, "User-Agent": user_agent})
 
-    html = client.get("/operations").data.decode("utf-8")
+    html = client.get("/operations", query_string={"tab": "access"}).data.decode("utf-8")
 
     assert "실사용자 2명 · 3건" in html
     assert "봇·자동화 2건" in html
@@ -3386,12 +3394,12 @@ def test_dangerous_operations_render_confirmation_prompts(monkeypatch):
     client = app.test_client()
 
     dashboard_html = client.get("/").data.decode("utf-8")
-    operations_html = client.get("/operations").data.decode("utf-8")
+    operations_page = operations_html(client)
     gemini_html = client.get("/gemini-usage").data.decode("utf-8")
 
     assert "수동 재수집을 시작할까요?" in dashboard_html
-    assert "자동 수집 설정을 변경할까요?" in operations_html
-    assert "백업 복구 작업을 진행할까요?" in operations_html
+    assert "자동 수집 설정을 변경할까요?" in operations_page
+    assert "백업 복구 작업을 진행할까요?" in operations_page
     assert "로컬 Gemini 사용량 기록을 초기화할까요?" in gemini_html
 
 
@@ -3559,10 +3567,10 @@ def test_operations_page_changes_database_admin_password(monkeypatch):
     client = app.test_client()
 
     client.post("/login", data={"password": "oldpass123", "next": "/"})
-    operations_html = client.get("/operations").data.decode("utf-8")
-    assert "관리자 비밀번호" in operations_html
-    assert "확인 후 변경 열기" in operations_html
-    assert 'action="/operations/admin-password"' not in operations_html
+    operations_page = operations_html(client)
+    assert "관리자 비밀번호" in operations_page
+    assert "확인 후 변경 열기" in operations_page
+    assert 'action="/operations/admin-password"' not in operations_page
 
     wrong_unlock = client.post(
         "/operations/admin-password/unlock",
@@ -3618,8 +3626,8 @@ def test_operations_page_does_not_override_environment_admin_password(monkeypatc
     client = app.test_client()
 
     client.post("/login", data={"password": "envpass123", "next": "/"})
-    operations_html = client.get("/operations").data.decode("utf-8")
-    assert ".env 관리" in operations_html
+    operations_page = operations_html(client)
+    assert ".env 관리" in operations_page
 
     response = client.post(
         "/operations/admin-password",
@@ -4439,7 +4447,7 @@ def test_operations_page_shows_recent_log_summary(monkeypatch, tmp_path):
         "2026-07-10 WARNING [news_summary.web] slow web request path=/drafts\n",
         encoding="utf-8",
     )
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "최근 운영 로그" in html
     assert "최근 운영 로그 3줄 중 오류/경고 1줄을 확인했습니다." in html
@@ -4478,7 +4486,7 @@ def test_operations_page_toggles_auto_collection(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
 
     assert "운영 관리" in html
     assert "자동 수집 켜기" in html
@@ -4637,7 +4645,7 @@ def test_operations_page_shows_retention_queue_and_tunnel_status(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
 
     assert "수집 보관 기준" in html
     assert "공휴일이 있으면" in html
@@ -5243,7 +5251,7 @@ def test_operations_page_shows_attention_source_queue(monkeypatch):
 
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "즉시 확인 기관" in html
     assert "테스트군청 보도자료" in html
@@ -5362,7 +5370,7 @@ def test_operations_page_shows_actionable_overview_links(monkeypatch):
 
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "운영 핵심 현황" in html
     assert "전체 미변환" in html
@@ -5371,12 +5379,12 @@ def test_operations_page_shows_actionable_overview_links(monkeypatch):
     assert "오늘 미변환" in html
     assert 'href="/press-releases?draft=missing&amp;date=2026-07-10"' in html
     assert "재처리 대기" in html
-    assert 'href="#ops-gemini-retry-queue"' in html
+    assert '#ops-gemini-retry-queue' in html
     assert "자동 처리 대기 3건" in html
     assert "게시일 확인" in html
     assert 'href="/press-releases?draft=date_issue"' in html
     assert "반복 실패" in html
-    assert 'href="#ops-priority-sources"' in html
+    assert '#ops-priority-sources' in html
 
 
 def test_operations_page_collapses_secondary_reference_cards_by_default(monkeypatch):
@@ -5387,7 +5395,7 @@ def test_operations_page_collapses_secondary_reference_cards_by_default(monkeypa
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert '<details class="ops-secondary-section">' in html
     assert '<details class="ops-secondary-section" open' not in html
@@ -5462,7 +5470,7 @@ def test_operations_page_shows_repeated_failure_priority_sources(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "반복 실패 기관 우선순위" in html
     assert "알파군청 보도자료" in html
@@ -5508,7 +5516,7 @@ def test_operations_page_links_date_issue_items_to_filtered_press_releases(monke
     app = web_module.create_app()
     app.testing = True
 
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert 'href="/press-releases?draft=date_issue"' in html
     assert 'href="/press-releases?draft=date_issue&amp;source=sample"' in html
@@ -5574,7 +5582,7 @@ def test_operations_page_warns_when_gemini_retry_failures_are_due(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
 
     assert "자동 복구 점검" in html
     assert "주의" in html
@@ -5621,7 +5629,7 @@ def test_operations_page_formats_collection_anomaly_counts_without_duplication(m
     )
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert 'href="/sources/zero-source"' in html
     assert "강진군청 보도자료</a>" in html
@@ -5668,7 +5676,7 @@ def test_operations_page_shows_gemini_cooldown_reason(monkeypatch):
 
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "Gemini 처리 재개 대기:" in html
     assert "메모: 자동 초안 생성 재개 대기" in html
@@ -6142,7 +6150,7 @@ def test_operations_page_records_masked_visitor_access(monkeypatch):
             "User-Agent": "Mozilla/5.0 Chrome/120.0",
         },
     )
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
 
     assert "접속자 현황" in html
     assert "최근 7일" in html
@@ -6213,7 +6221,7 @@ def test_operations_page_filters_visitor_access_by_recent_date(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    html = client.get(f"/operations?access_date={yesterday.isoformat()}").data.decode("utf-8")
+    html = client.get(f"/operations?tab=access&access_date={yesterday.isoformat()}").data.decode("utf-8")
 
     assert "접속자 현황" in html
     assert "10.20.xxx.xxx" in html
@@ -6237,12 +6245,12 @@ def test_operations_page_summarizes_top_visitor_paths_and_errors(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "오류 응답 1건" in html
     assert "자주 열린 경로:" in html
     assert "GET /drafts 2건" in html
-    assert "GET /operations 1건" in html
+    assert "GET /operations" in html
 
 
 def test_cloudflare_tunnel_status_detects_active_connection(tmp_path, monkeypatch):
@@ -7498,11 +7506,11 @@ def test_healthz_and_operations_report_stopped_auto_collector_thread(monkeypatch
     client = app.test_client()
 
     health = client.get("/healthz").get_json()
-    operations_html = client.get("/operations").data.decode("utf-8")
+    operations_page = operations_html(client)
 
     assert health["auto_collector"] == "stopped"
     assert health["auto_collector_thread_alive"] is False
-    assert "자동 수집 백그라운드 스레드 중단" in operations_html
+    assert "자동 수집 백그라운드 스레드 중단" in operations_page
 
 
 def test_healthz_stays_healthy_when_auto_collector_status_raises(monkeypatch):
@@ -7929,13 +7937,13 @@ def test_healthz_and_operations_report_missed_next_auto_run(monkeypatch):
     client = app.test_client()
 
     health = client.get("/healthz").get_json()
-    operations_html = client.get("/operations").data.decode("utf-8")
+    operations_page = operations_html(client)
 
     assert health["auto_collector_timing"] == "warning"
     assert health["auto_collector_overdue"] is True
     assert health["auto_collector_schedule_delay_minutes"] >= 19
     assert "다음 실행 예정 시각" in health["auto_collector_health_message"]
-    assert "다음 실행 예정 시각" in operations_html
+    assert "다음 실행 예정 시각" in operations_page
 
 
 def test_healthz_and_operations_warn_long_running_auto_collection(monkeypatch):
@@ -7967,14 +7975,14 @@ def test_healthz_and_operations_warn_long_running_auto_collection(monkeypatch):
     client = app.test_client()
 
     health = client.get("/healthz").get_json()
-    operations_html = client.get("/operations").data.decode("utf-8")
+    operations_page = operations_html(client)
 
     assert health["auto_collector"] == "running"
     assert health["auto_collector_timing"] == "warning"
     assert health["auto_collector_overdue"] is True
     assert health["auto_collector_run_minutes"] >= 119
     assert "분째 실행 중" in health["auto_collector_health_message"]
-    assert "분째 실행 중" in operations_html
+    assert "분째 실행 중" in operations_page
 
 
 def test_source_coverage_report_covers_required_municipal_sources():
@@ -8035,7 +8043,7 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
 
     assert "수집 대상 커버리지" in html
     # 강진을 당분간 비활성화했으므로 27/28로 표시되고 비활성화 경고가 뜬다.
@@ -8163,7 +8171,7 @@ def test_operations_page_shows_collection_check_coverage_card(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "오늘 수집 점검 커버리지" in html
     assert "1/2" in html
@@ -8521,7 +8529,7 @@ def test_operations_page_shows_draft_conversion_coverage_card(monkeypatch):
     )
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "오늘 초안 변환 커버리지" in html
     assert "3/4" in html
@@ -8567,7 +8575,7 @@ def test_operations_page_shows_hidden_pending_source_count(monkeypatch):
     )
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "미변환 기관" in html
     assert "기관0 보도자료 1건" in html
@@ -8605,7 +8613,7 @@ def test_operations_page_hides_zero_ready_retry_counts(monkeypatch):
     )
     app = web_module.create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "자동 처리 대기 0건" not in html
     assert "예약 대기 1건" in html
@@ -8684,7 +8692,7 @@ def test_operations_page_shows_recovery_candidate_card(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "자동 복구 예정" in html
     assert "다음 자동 유지보수에서 1곳을 우선 재검증합니다." in html
@@ -8712,6 +8720,7 @@ def test_operations_page_shows_service_status_summary_card(monkeypatch):
                     "component": "draft_conversion_coverage",
                     "message": "오늘 수집 원문 중 초안 미변환 4건이 남아 있습니다.",
                     "anchor_id": "ops-draft-conversion",
+                    "anchor_href": "/operations?tab=detail#ops-draft-conversion",
                     "card_label": "오늘 초안 변환 커버리지",
                 },
                 {
@@ -8719,6 +8728,7 @@ def test_operations_page_shows_service_status_summary_card(monkeypatch):
                     "component": "gemini_queue",
                     "message": "Gemini 자동 재처리 대기 원문 2건",
                     "anchor_id": "ops-gemini-retry-queue",
+                    "anchor_href": "/operations?tab=collect#ops-gemini-retry-queue",
                     "card_label": "Gemini 재처리 대기열",
                 },
             ],
@@ -8727,12 +8737,12 @@ def test_operations_page_shows_service_status_summary_card(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "서비스 상태 요약" in html
     assert "오늘 수집 원문 중 초안 미변환 4건이 남아 있습니다. 외 1건" in html
-    assert 'href="#ops-draft-conversion"' in html
-    assert 'href="#ops-gemini-retry-queue"' in html
+    assert '#ops-draft-conversion' in html
+    assert '#ops-gemini-retry-queue' in html
     assert "오늘 초안 변환 커버리지" in html
     assert "Gemini 재처리 대기열" in html
 
@@ -8786,7 +8796,7 @@ def test_operations_page_links_fallback_and_url_discovery_items(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "대체 URL 준비" in html
     assert 'href="/sources/gangjin"' in html
@@ -8834,15 +8844,15 @@ def test_operations_page_creates_and_restores_backup(monkeypatch):
     assert len(backups) == 1
 
     backup_name = backups[0].name
-    operations_html = client.get("/operations").data.decode("utf-8")
-    assert f"검증 대상 {backup_name}" in operations_html
-    assert "SQLite 무결성" in operations_html
-    assert "최신 백업 다운로드" in operations_html
-    assert "최신 백업 복구 대상 확인" in operations_html
-    assert f'value="{backup_name}"' in operations_html
-    assert "최근 운영 변경 이력" in operations_html
-    assert "백업 생성" in operations_html
-    assert backup_name in operations_html
+    operations_page = operations_html(client)
+    assert f"검증 대상 {backup_name}" in operations_page
+    assert "SQLite 무결성" in operations_page
+    assert "최신 백업 다운로드" in operations_page
+    assert "최신 백업 복구 대상 확인" in operations_page
+    assert f'value="{backup_name}"' in operations_page
+    assert "최근 운영 변경 이력" in operations_page
+    assert "백업 생성" in operations_page
+    assert backup_name in operations_page
 
     download_response = client.get(f"/operations/backups/{backup_name}")
     assert download_response.status_code == 200
@@ -8913,10 +8923,10 @@ def test_public_operations_write_access_can_be_locked_again(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    operations_html = client.get("/operations").data.decode("utf-8")
-    assert "운영 변경 잠금" in operations_html
-    assert "운영 변경 잠금 해제" in operations_html
-    assert "disabled>지금 백업 생성</button>" in operations_html
+    operations_page = operations_html(client)
+    assert "운영 변경 잠금" in operations_page
+    assert "운영 변경 잠금 해제" in operations_page
+    assert "disabled>지금 백업 생성</button>" in operations_page
 
     wrong_unlock = client.post(
         "/operations/write-access/unlock",
@@ -8960,7 +8970,7 @@ def test_operations_write_access_expires_automatically(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    locked_html = client.get("/operations").data.decode("utf-8")
+    locked_html = operations_html(client)
     assert "5분 동안 사용할 수 있습니다." in locked_html
 
     unlocked = client.post(
@@ -9007,7 +9017,7 @@ def test_operations_write_access_unlocks_with_operations_password(monkeypatch):
     client = app.test_client()
 
     # 관리자 비밀번호가 없어도 운영 전용 비밀번호가 있으면 잠금 해제 폼이 보인다.
-    locked_html = client.get("/operations").data.decode("utf-8")
+    locked_html = operations_html(client)
     assert "운영 관리 비밀번호 확인 후" in locked_html
 
     # 운영 전용 비밀번호로 쓰기 작업 잠금을 해제할 수 있다.
@@ -9168,7 +9178,7 @@ def test_operations_page_warns_for_temporary_backup_storage(monkeypatch):
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    html = operations_html(app.test_client())
 
     assert "DB 백업" in html
     assert "백업 필요" in html
@@ -9402,7 +9412,7 @@ def test_recrawl_status_ignores_stale_running_snapshot(monkeypatch):
     client = app.test_client()
 
     status = client.get("/recrawl/status").get_json()
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
     health = client.get("/healthz").get_json()
 
     assert status["running"] is False
@@ -9445,7 +9455,7 @@ def test_operations_uses_persisted_next_auto_run_time(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    html = client.get("/operations").data.decode("utf-8")
+    html = operations_html(client)
     health = client.get("/healthz").get_json()
 
     assert "매시간 정각 실행" in html
