@@ -2728,6 +2728,85 @@ def test_visitor_logs_export_returns_csv_for_excel(monkeypatch):
     assert "/drafts" in body
 
 
+def test_visitor_overview_separates_humans_from_bots(monkeypatch):
+    """실사용자 수를 세려면 감시 스크립트·크롤러를 빼야 한다(2026-08-04 요청)."""
+    db_path = Path(f"data/.test_visitor_humans_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    browser_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1"
+    for masked_ip, user_agent in (
+        ("211.234.x.x", browser_ua),
+        ("211.234.x.x", browser_ua),  # 같은 사람의 두 번째 조회 → 1명으로 센다
+        ("117.111.x.x", browser_ua),
+        ("34.82.x.x", "Mozilla/5.0 (compatible; Googlebot/2.1)"),
+        ("222.102.x.x", "python-httpx/0.28.1"),
+        ("222.102.x.x", ""),
+    ):
+        store.record_visitor_access(
+            masked_ip=masked_ip,
+            method="GET",
+            path="/",
+            endpoint="dashboard",
+            status_code=200,
+            user_agent=user_agent,
+            visited_at=now_iso,
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert "실사용자 2명 · 3건" in html
+    assert "봇·자동화 3건" in html
+
+
+def test_operations_health_ignores_disabled_source_failures(monkeypatch, tmp_path):
+    """비활성 기관의 마지막 실패 기록이 영원히 경고로 남으면 안 된다.
+
+    강진은 2026-07-30에 수집에서 뺐는데 마지막 상태가 "failed"로 굳어
+    "반복 실패 1곳"이 계속 떴다. 수집 대상이 아니면 실패 목록에서 제외한다.
+    """
+    db_path = Path(f"data/.test_ops_health_disabled_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.record_source_collection_status(
+        "gangjin-county",
+        "강진군청 보도자료",
+        "failed",
+        "연결 실패",
+        failure_stage="연결",
+        failure_reason="timeout",
+    )
+
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+sources:
+  - id: gangjin-county
+    name: 강진군청 보도자료
+    region: 전남 강진
+    type: html_board
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    from news_summary.web import _operations_health_report
+
+    with_config = _operations_health_report(store, None, {"total": 0}, config_path)
+    without_config = _operations_health_report(store, None, {"total": 0})
+
+    assert with_config["priority_sources"] == []
+    # 설정을 못 읽는 경우에는 종전대로 보수적으로 남긴다.
+    assert len(without_config["priority_sources"]) == 1
+
+
 def test_visitor_logs_export_requires_operations_password(monkeypatch):
     """CSV 내보내기도 운영 관리 잠금 뒤에 있어야 한다."""
     db_path = Path(f"data/.test_visitor_csv_auth_{uuid4().hex}.sqlite").resolve()
@@ -5130,7 +5209,7 @@ def test_operations_page_shows_actionable_overview_links(monkeypatch):
     monkeypatch.setattr(
         web_module,
         "_operations_health_report",
-        lambda store, auto_status, pending_queue: {
+        lambda store, auto_status, pending_queue, config_path=None: {
             "status_label": "주의",
             "status_level": "warning",
             "failure_count": 4,

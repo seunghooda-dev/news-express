@@ -38,8 +38,9 @@
       {% endfor %}
     </div>
     <div class="visitor-summary">
+      <span class="visitor-humans">실사용자 {{ visitor_access.human_visitors }}명 · {{ visitor_access.human_hits }}건</span>
+      <span>봇·자동화 {{ visitor_access.bot_hits }}건</span>
       <span>선택 날짜 {{ visitor_access.selected_count }}건</span>
-      <span>마스킹 IP {{ visitor_access.unique_masked_ips }}개</span>
       <span>오류 응답 {{ visitor_access.error_count }}건</span>
       <a class="visitor-export" href="{{ url_for('export_visitor_logs') }}">최근 30일 CSV 내려받기</a>
     </div>

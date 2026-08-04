@@ -996,17 +996,21 @@ def create_app() -> Flask:
         rows = store.visitor_access_logs_since(cutoff_iso, limit=10000)
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["방문 시각", "마스킹 IP", "메서드", "경로", "엔드포인트", "상태코드", "브라우저(UA)"])
+        writer.writerow(
+            ["방문 시각", "구분", "마스킹 IP", "메서드", "경로", "엔드포인트", "상태코드", "브라우저(UA)"]
+        )
         for row in rows:
+            user_agent = str(row["user_agent"] or "")
             writer.writerow(
                 [
                     row["visited_at"],
+                    "봇·자동화" if _is_bot_user_agent(user_agent) else "사람",
                     row["masked_ip"],
                     row["method"],
                     row["path"],
                     row["endpoint"],
                     row["status_code"],
-                    row["user_agent"],
+                    user_agent,
                 ]
             )
         filename = f"visitor-logs-{datetime.now(LOCAL_TZ).strftime('%Y%m%d-%H%M')}.csv"
@@ -3320,7 +3324,7 @@ def _operations_cached_report_bundle(
     backup_verify_report = _backup_verify_report(store, backup_dir)
     reports = {
         "retention_policy": _retention_policy_summary(),
-        "operations_health": _operations_health_report(store, auto_status, pending_queue),
+        "operations_health": _operations_health_report(store, auto_status, pending_queue, config_path),
         "attention_source_report": _operations_attention_source_report(store, config_path),
         "recovery_candidate_report": _recovery_candidate_report(store, config_path),
         "deployment_version": _deployment_version_report(),
@@ -4769,6 +4773,7 @@ def _operations_health_report(
     store: Store,
     auto_status: object | None,
     pending_queue: dict[str, object],
+    config_path: Path | None = None,
 ) -> dict[str, object]:
     now = datetime.now(LOCAL_TZ)
     since = (now - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
@@ -4847,6 +4852,19 @@ def _operations_health_report(
     ]
 
     consecutive_failures = _consecutive_failure_counts(status_sequence_rows)
+    # 비활성 기관(예: 강진)은 마지막 상태가 "실패"로 굳어 영원히 경고에 남는다.
+    # 수집 대상이 아니므로 실패 목록에서 뺀다(2026-08-04). 필수 기관 목록에서
+    # 빠진 것은 별도 "27/28 비활성" 경고가 이미 상기시킨다.
+    disabled_source_ids: set[str] = set()
+    if config_path is not None:
+        try:
+            disabled_source_ids = {
+                source.id for source in load_sources(config_path) if not source.enabled
+            }
+        except Exception as exc:  # noqa: BLE001 - 설정 오류가 운영 화면을 막으면 안 된다.
+            logger.warning("operations health could not read source config error=%s", exc)
+    latest_rows = [row for row in latest_rows if str(row["source_id"]) not in disabled_source_ids]
+
     unresolved_rows = [
         row
         for row in latest_rows
@@ -5781,6 +5799,42 @@ def _recent_visitor_dates(days: int = 7) -> list[date]:
     return [today - timedelta(days=offset) for offset in range(days)]
 
 
+# 사람이 실제로 본 접속만 세기 위한 판별. 브라우저가 아닌 것(감시 스크립트·크롤러·
+# 각종 자동화)은 방문자 수에서 뺀다(2026-08-04 요청: 실사용자 카운팅).
+BOT_USER_AGENT_TOKENS = (
+    "bot",
+    "spider",
+    "crawler",
+    "crawl",
+    "slurp",
+    "monitor",
+    "healthcheck",
+    "uptime",
+    "python-httpx",
+    "python-requests",
+    "httpx",
+    "curl",
+    "wget",
+    "go-http-client",
+    "java/",
+    "okhttp",
+    "headlesschrome",
+    "lighthouse",
+    "preview",
+)
+
+
+def _is_bot_user_agent(user_agent: str) -> bool:
+    text = (user_agent or "").strip().lower()
+    if not text:
+        # UA를 아예 안 보내는 쪽은 사람 브라우저가 아니다.
+        return True
+    if "mozilla" not in text:
+        # 정상 브라우저는 예외 없이 Mozilla/5.0으로 시작한다.
+        return True
+    return any(token in text for token in BOT_USER_AGENT_TOKENS)
+
+
 def _visitor_cutoff_iso(days: int = 7) -> str:
     oldest = _recent_visitor_dates(days)[-1]
     local_start = datetime.combine(oldest, datetime.min.time(), tzinfo=LOCAL_TZ)
@@ -5891,6 +5945,9 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
     counts = {key: 0 for key in date_keys}
     selected_rows: list[dict[str, object]] = []
     selected_ips: set[str] = set()
+    selected_human_ips: set[str] = set()
+    selected_human_hits = 0
+    selected_bot_hits = 0
     selected_path_counts: Counter[tuple[str, str]] = Counter()
     selected_error_count = 0
     for row in store.visitor_access_logs_since(_visitor_cutoff_iso()):
@@ -5913,6 +5970,13 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
             status_code = int(row["status_code"] or 0)
             if status_code >= 400:
                 selected_error_count += 1
+            user_agent = str(row["user_agent"] or "")
+            is_bot = _is_bot_user_agent(user_agent)
+            if is_bot:
+                selected_bot_hits += 1
+            else:
+                selected_human_hits += 1
+                selected_human_ips.add(masked_ip)
         if row_key == selected_key and len(selected_rows) < 200:
             selected_rows.append(
                 {
@@ -5920,7 +5984,8 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
                     "method": method,
                     "path": path,
                     "status_code": status_code,
-                    "user_agent": str(row["user_agent"] or "브라우저 미상"),
+                    "user_agent": user_agent or "브라우저 미상",
+                    "is_bot": is_bot,
                     "visited_at": local_visited_at.isoformat(),
                 }
             )
@@ -5939,6 +6004,9 @@ def _visitor_access_overview(store: Store) -> dict[str, object]:
         "rows": selected_rows,
         "selected_count": counts[selected_key],
         "unique_masked_ips": len(selected_ips),
+        "human_visitors": len(selected_human_ips),
+        "human_hits": selected_human_hits,
+        "bot_hits": selected_bot_hits,
         "error_count": selected_error_count,
         "top_paths": [
             {"method": method, "path": path, "count": count}
