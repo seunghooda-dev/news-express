@@ -2728,6 +2728,21 @@ def test_visitor_logs_export_returns_csv_for_excel(monkeypatch):
     assert "/drafts" in body
 
 
+def test_font_is_served_with_long_cache(monkeypatch):
+    """2MB 폰트를 방문마다 재확인하면 로딩도 전송량도 손해다(2026-08-04)."""
+    db_path = Path(f"data/.test_font_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    response = app.test_client().get("/static/fonts/PretendardVariable.woff2")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
 def test_search_route_sends_query_to_draft_and_release_lists(monkeypatch):
     """검색 진입 경로가 없어 이용자가 /search를 직접 쳤고 404가 반복됐다(2026-08-04).
 
