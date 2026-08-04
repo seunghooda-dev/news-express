@@ -14,6 +14,13 @@
       <span>NEWS EXPRESS</span>
     </a>
     <nav class="topnav" aria-label="주요 메뉴">
+      {# 검색은 기사 목록·원문 목록에 이미 있었지만 진입 경로가 없어 이용자가 /search를
+         직접 쳤다(404 반복 관측). 모든 화면에서 바로 찾을 수 있게 상단에 둔다. #}
+      <form class="nav-search" method="get" action="{{ url_for('search') }}" role="search">
+        <input type="search" name="q" value="{{ request.args.get('q', '') }}"
+               placeholder="기사 검색" aria-label="기사 검색">
+        <button type="submit" aria-label="검색">검색</button>
+      </form>
       <div class="desktop-nav-links">
         <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
         <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>

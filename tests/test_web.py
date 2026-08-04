@@ -2728,6 +2728,70 @@ def test_visitor_logs_export_returns_csv_for_excel(monkeypatch):
     assert "/drafts" in body
 
 
+def test_search_route_sends_query_to_draft_and_release_lists(monkeypatch):
+    """검색 진입 경로가 없어 이용자가 /search를 직접 쳤고 404가 반복됐다(2026-08-04).
+
+    검색 자체는 기사 목록·원문 목록에 이미 있으므로, /search는 그 검색으로 넘긴다.
+    """
+    db_path = Path(f"data/.test_search_route_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    to_drafts = client.get("/search", query_string={"q": "담양군"}, follow_redirects=False)
+    assert to_drafts.status_code == 302
+    assert "/drafts" in to_drafts.headers["Location"]
+    assert "q=%EB%8B%B4%EC%96%91%EA%B5%B0" in to_drafts.headers["Location"]
+
+    to_releases = client.get(
+        "/search", query_string={"q": "담양군", "scope": "releases"}, follow_redirects=False
+    )
+    assert "/press-releases" in to_releases.headers["Location"]
+
+    # 빈 검색어는 목록으로만 보낸다.
+    empty = client.get("/search", query_string={"q": "  "}, follow_redirects=False)
+    assert empty.status_code == 302
+    assert empty.headers["Location"].endswith("/drafts")
+
+
+def test_search_finds_collected_article_by_title_and_source(monkeypatch):
+    """검색은 제목·기관명·원문 본문을 모두 훑어야 한다."""
+    db_path = Path(f"data/.test_search_matching_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="담양군, 여름철 교통안전 캠페인 전개",
+            url="https://example.com/damyang-traffic",
+            content="담양군은 죽녹원 일대에서 교통안전 캠페인을 벌였다고 밝혔다.",
+            published_at="2026-08-04",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    by_title = client.get("/press-releases", query_string={"q": "교통안전"}).data.decode("utf-8")
+    assert "여름철 교통안전 캠페인" in by_title
+
+    by_content = client.get("/press-releases", query_string={"q": "죽녹원"}).data.decode("utf-8")
+    assert "여름철 교통안전 캠페인" in by_content
+
+    no_hit = client.get("/press-releases", query_string={"q": "존재하지않는단어zzz"}).data.decode("utf-8")
+    assert "여름철 교통안전 캠페인" not in no_hit
+
+
 def test_visitor_overview_separates_humans_from_bots(monkeypatch):
     """실사용자 수를 세려면 감시 스크립트·크롤러를 빼야 한다(2026-08-04 요청)."""
     db_path = Path(f"data/.test_visitor_humans_{uuid4().hex}.sqlite").resolve()

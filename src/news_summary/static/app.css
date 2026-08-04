@@ -89,7 +89,57 @@ a {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
   min-width: 0;
+}
+
+/* 상단 검색 — 어두운 헤더 위에 올라가므로 반투명 배경으로 대비를 준다. */
+.nav-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 260px;
+  min-width: 0;
+}
+
+.nav-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.nav-search input::placeholder {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.nav-search input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.nav-search button {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f2330;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nav-search button:hover {
+  background: #fff;
 }
 
 .desktop-nav-links {
@@ -2219,6 +2269,22 @@ h3 {
     position: relative;
     width: auto;
     margin-left: auto;
+    gap: 6px;
+  }
+
+  /* 좁은 화면에서는 검색창을 줄이고 버튼은 돋보기 아이콘만 남긴다. */
+  .nav-search {
+    flex: 0 1 150px;
+  }
+
+  .nav-search button {
+    padding: 0 10px;
+    font-size: 0;
+  }
+
+  .nav-search button::before {
+    content: "🔍";
+    font-size: 13px;
   }
 
   .desktop-nav-links {

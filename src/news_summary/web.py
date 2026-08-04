@@ -103,6 +103,7 @@ PUBLIC_READ_ENDPOINTS = {
     "preview_press_release_asset",
     "download_press_release_asset",
     "recrawl_status",
+    "search",
 }
 # 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
 # open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
@@ -1195,6 +1196,17 @@ def create_app() -> Flask:
             flash("검수할 대기 초안이 없습니다.")
             return redirect(url_for("drafts", status="needs_review"))
         return redirect(url_for("draft_detail", draft_id=next_draft_id))
+
+    @app.get("/search")
+    def search():
+        # 접속 기록에 /search 404가 반복 관측됐다(2026-08-04) — 검색은 기사 목록과
+        # 원문 목록에 이미 있었지만 진입 경로가 없어 이용자가 주소를 직접 쳤다.
+        # 기본은 기사 초안 검색이고, scope=releases면 수집 원문에서 찾는다.
+        query = (request.args.get("q") or "").strip()
+        target = "press_releases" if request.args.get("scope") == "releases" else "drafts"
+        if not query:
+            return redirect(url_for(target))
+        return redirect(url_for(target, q=query))
 
     @app.get("/press-releases")
     def press_releases():
