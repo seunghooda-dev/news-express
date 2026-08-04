@@ -15,9 +15,7 @@
     </a>
     <nav class="topnav" aria-label="주요 메뉴">
       <div class="desktop-nav-links">
-        <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
         <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
-        <a href="{{ url_for('writing_settings') }}" {% if request.endpoint == 'writing_settings' %}class="active" aria-current="page"{% endif %}>기사 설정</a>
         <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
         {% if auth_state.enabled %}
           {% if admin_authenticated %}
@@ -33,9 +31,7 @@
       <details class="mobile-dash-menu">
         <summary>메뉴</summary>
         <div class="mobile-dash-panel">
-          <a href="{{ url_for('gemini_usage') }}" {% if request.endpoint == 'gemini_usage' %}class="active" aria-current="page"{% endif %}>Gemini 사용량</a>
           <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
-          <a href="{{ url_for('writing_settings') }}" {% if request.endpoint == 'writing_settings' %}class="active" aria-current="page"{% endif %}>기사 설정</a>
           <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
           {% if auth_state.enabled %}
             {% if admin_authenticated %}

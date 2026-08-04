@@ -145,7 +145,8 @@ OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
 SENSITIVE_RESTORE_TARGETS = {".env", "config/municipalities.yaml"}
 LIST_PAGE_SIZE = 50
 MAX_LIST_LIMIT = 500
-DASHBOARD_PENDING_LIMIT = 20
+# 첫 화면은 양쪽 목록 10건씩만 보여주고 나머지는 "더 보기"로 넘긴다(2026-08-04 요청).
+DASHBOARD_PENDING_LIMIT = 10
 DASHBOARD_RELEASE_LIMIT = 10
 FILTER_FETCH_LIMIT = 1000
 REGION_DISPLAY_PREFIXES = ("전남광주통합특별시", "전남광주특별시")
@@ -286,6 +287,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["public_press_release_url"] = public_press_release_url
     app.jinja_env.globals["asset_version"] = _static_asset_version()
     app.jinja_env.filters["date_label"] = format_datetime_label
+    app.jinja_env.filters["relative_label"] = format_relative_time_label
 
     store = Store(env_database())
     config_path = env_path("NEWS_SUMMARY_CONFIG", "config/municipalities.yaml")
@@ -484,6 +486,8 @@ def create_app() -> Flask:
             pending_drafts=dashboard_pending_drafts,
             draft_thumbnails=_draft_thumbnail_map(store, dashboard_pending_drafts[:DASHBOARD_PENDING_LIMIT]),
             recent_releases=recent_releases,
+            dashboard_pending_limit=DASHBOARD_PENDING_LIMIT,
+            dashboard_release_limit=DASHBOARD_RELEASE_LIMIT,
             auto_collector_status=auto_status,
             source_summaries=source_summaries,
             duplicate_titles=duplicate_titles,
@@ -6161,6 +6165,39 @@ def file_size_label(size: object) -> str:
     if index == 0:
         return f"{int(value)} {units[index]}"
     return f"{value:.1f} {units[index]}"
+
+
+def format_relative_time_label(value: object) -> str:
+    """목록에서 "방금 전 / 2시간 전"처럼 읽히게 한다(2026-08-04 요청).
+
+    뉴스는 신속성이 핵심이라 목록에서는 절대 시각보다 경과 시간이 잘 읽힌다.
+    다만 하루가 넘어가면 상대 표기가 오히려 헷갈리므로 날짜로 되돌린다.
+    절대 시각이 필요한 상세 화면은 기존 format_datetime_label을 그대로 쓴다.
+    """
+    if not value:
+        return "일시 미상"
+    parsed = _parse_datetime(value)
+    if parsed is None:
+        return format_datetime_label(value)
+
+    seconds = (datetime.now(LOCAL_TZ) - parsed.astimezone(LOCAL_TZ)).total_seconds()
+    if seconds < 0:
+        # 시계 차이로 미래로 찍힌 경우 — 방금으로 본다.
+        return "방금 전"
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "방금 전"
+    if minutes < 60:
+        return f"{minutes}분 전"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}시간 전"
+    days = hours // 24
+    if days == 1:
+        return "어제"
+    if days < 7:
+        return f"{days}일 전"
+    return format_datetime_label(value)
 
 
 def format_datetime_label(value: object) -> str:

@@ -2935,3 +2935,52 @@ h3 {
 .ops-fold .toolbar {
   margin-bottom: 14px;
 }
+
+/* 운영 관리 바로가기 — 카드가 30개가 넘어 스크롤로만 찾아야 했다.
+   그룹으로 바로 뛰게 하고, 상단 메뉴에서 내린 Gemini 사용량·기사 설정도 여기 둔다. */
+.ops-jump {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ops-jump a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.ops-jump a:hover {
+  border-color: var(--ink);
+  background: var(--panel-soft);
+}
+
+.ops-jump-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+/* 앵커로 뛰었을 때 상단 고정 바에 제목이 가리지 않게 한다. */
+.ops-group-title {
+  scroll-margin-top: 84px;
+}
+
+@media (max-width: 900px) {
+  .ops-jump-sep {
+    display: none;
+  }
+}

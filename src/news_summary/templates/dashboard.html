@@ -16,7 +16,7 @@
       <a class="source-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}">전체 보기</a>
     </div>
     <div class="list">
-      {% for draft in pending_drafts[:20] %}
+      {% for draft in pending_drafts[:dashboard_pending_limit] %}
         {% set thumbnail = draft_thumbnails.get(draft.press_release_id) %}
         <a class="row draft-row" href="{{ url_for('draft_detail', draft_id=draft.id) }}">
           <span class="draft-thumbnail{% if not thumbnail %} draft-thumbnail-empty{% endif %}">
@@ -34,9 +34,9 @@
               <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
             </span>
             <span class="row-meta row-meta-secondary">
-              <span>초안 {{ draft.created_at|date_label }}</span>
+              <span title="초안 {{ draft.created_at|date_label }}">{{ draft.created_at|relative_label }}</span>
               {% if draft.published_at %}
-                <span>게시 {{ draft.published_at|date_label }}</span>
+                <span title="게시 {{ draft.published_at|date_label }}">게시 {{ draft.published_at|relative_label }}</span>
               {% endif %}
               {% for flag in review_flags(draft, duplicate_titles)[:3] %}
                 <span class="badge badge-warning">{{ flag }}</span>
@@ -47,9 +47,9 @@
       {% else %}
         <p class="empty">검수 대기 초안이 없습니다.</p>
       {% endfor %}
-      {% if pending_drafts|length > 20 %}
+      {% if pending_drafts|length > dashboard_pending_limit %}
         <a class="more-summary" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}">
-          <span>전체 보기</span>
+          <span>더 보기</span>
         </a>
       {% endif %}
     </div>
@@ -61,16 +61,16 @@
       <a class="source-link" href="{{ url_for('press_releases', region=selected_regions) }}">전체 보기</a>
     </div>
     <div class="list">
-      {% for item in recent_releases[:10] %}
+      {% for item in recent_releases[:dashboard_release_limit] %}
         <a class="row" href="{% if item.draft_id %}{{ url_for('draft_detail', draft_id=item.draft_id) }}{% else %}{{ public_press_release_url(item.url) }}{% endif %}" {% if not item.draft_id %}target="_blank" rel="noopener noreferrer"{% endif %}>
           <span class="row-content">
             <strong>{{ item.title }}</strong>
             <span class="row-meta row-meta-main">
               <span>{{ source_display_label(item.source_name) }}</span>
               {% if item.published_at %}
-                <span>게시 {{ item.published_at|date_label }}</span>
+                <span title="게시 {{ item.published_at|date_label }}">{{ item.published_at|relative_label }}</span>
               {% else %}
-                <span>수집 {{ item.collected_at|date_label }}</span>
+                <span title="수집 {{ item.collected_at|date_label }}">수집 {{ item.collected_at|relative_label }}</span>
               {% endif %}
               {% if item.draft_id %}
                 <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
@@ -87,9 +87,9 @@
       {% else %}
         <p class="empty">수집 원문이 없습니다.</p>
       {% endfor %}
-      {% if recent_releases|length > 10 %}
+      {% if recent_releases|length > dashboard_release_limit %}
         <a class="more-summary" href="{{ url_for('press_releases', region=selected_regions) }}">
-          <span>전체 보기</span>
+          <span>더 보기</span>
         </a>
       {% endif %}
     </div>

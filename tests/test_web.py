@@ -2743,6 +2743,21 @@ def test_font_is_served_with_long_cache(monkeypatch):
     assert response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
 
 
+def test_relative_time_label_reads_as_elapsed_time():
+    """목록에서는 절대 시각보다 경과 시간이 잘 읽힌다(2026-08-04 요청)."""
+    from news_summary.web import LOCAL_TZ, format_relative_time_label
+
+    now = datetime.now(LOCAL_TZ)
+    assert format_relative_time_label(now.isoformat()) == "방금 전"
+    assert format_relative_time_label((now - timedelta(minutes=25)).isoformat()) == "25분 전"
+    assert format_relative_time_label((now - timedelta(hours=3)).isoformat()) == "3시간 전"
+    assert format_relative_time_label((now - timedelta(days=1, hours=2)).isoformat()) == "어제"
+    assert format_relative_time_label((now - timedelta(days=3)).isoformat()) == "3일 전"
+    # 일주일이 넘으면 상대 표기가 오히려 헷갈려 날짜로 되돌린다.
+    assert "." in format_relative_time_label((now - timedelta(days=40)).isoformat())
+    assert format_relative_time_label(None) == "일시 미상"
+
+
 def test_search_route_sends_query_to_draft_and_release_lists(monkeypatch):
     """검색 진입 경로가 없어 이용자가 /search를 직접 쳤고 404가 반복됐다(2026-08-04).
 
@@ -2805,6 +2820,33 @@ def test_search_finds_collected_article_by_title_and_source(monkeypatch):
 
     no_hit = client.get("/press-releases", query_string={"q": "존재하지않는단어zzz"}).data.decode("utf-8")
     assert "여름철 교통안전 캠페인" not in no_hit
+
+
+def test_operations_page_hosts_moved_menus_and_group_jumps(monkeypatch):
+    """상단 메뉴에서 내린 두 화면은 운영 관리에서 들어갈 수 있어야 한다.
+
+    카드가 30개가 넘어 스크롤로만 찾던 문제도 그룹 바로가기로 함께 해결한다.
+    """
+    db_path = Path(f"data/.test_ops_jump_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    html = app.test_client().get("/operations").data.decode("utf-8")
+
+    assert 'href="/gemini-usage"' in html
+    assert 'href="/writing-settings"' in html
+    for anchor in (
+        "ops-group-access",
+        "ops-group-core",
+        "ops-group-collect",
+        "ops-group-backup",
+        "ops-group-log",
+    ):
+        assert f'href="#{anchor}"' in html, anchor
+        assert f'id="{anchor}"' in html, anchor
 
 
 def test_visitor_overview_separates_humans_from_bots(monkeypatch):
@@ -4274,8 +4316,9 @@ def test_recrawl_route_runs_collect_and_gemini_draft_cycle(monkeypatch):
     assert "<summary>메뉴</summary>" in dashboard_html
     assert "대시 모드" not in dashboard_html
     assert "초안 검수" in dashboard_html
-    assert "Gemini 사용량" in dashboard_html
-    assert 'href="/gemini-usage"' in dashboard_html
+    # Gemini 사용량·기사 설정은 상단 메뉴에서 내려 운영 관리 안으로 옮겼다(2026-08-04).
+    assert "Gemini 사용량" not in dashboard_html
+    assert 'href="/gemini-usage"' not in dashboard_html
     assert "초안 목록" not in dashboard_html
     assert "승인 기사</a>" not in dashboard_html
     assert 'href="/drafts?status=approved"' in dashboard_html

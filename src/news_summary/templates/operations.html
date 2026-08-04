@@ -11,6 +11,19 @@
   </div>
 </section>
 
+{# 카드가 30개가 넘어 스크롤로만 찾아야 했다. 그룹으로 바로 뛰게 한다(2026-08-04).
+   상단 메뉴에서 내린 Gemini 사용량·기사 설정도 여기서 들어간다. #}
+<nav class="ops-jump" aria-label="운영 관리 바로가기">
+  <a href="#ops-group-access">접속 이력</a>
+  <a href="#ops-group-core">핵심 상태</a>
+  <a href="#ops-group-collect">수집·초안</a>
+  <a href="#ops-group-backup">백업·보안</a>
+  <a href="#ops-group-log">로그·접속</a>
+  <span class="ops-jump-sep" aria-hidden="true"></span>
+  <a href="{{ url_for('gemini_usage') }}">Gemini 사용량</a>
+  <a href="{{ url_for('writing_settings') }}">기사 설정</a>
+</nav>
+
 <section class="ops-overview" aria-label="운영 핵심 현황">
   {% for item in operations_overview_items %}
     <a class="ops-overview-link ops-overview-link-{{ item.tone }}" href="{{ item.href }}">
@@ -21,7 +34,7 @@
   {% endfor %}
 </section>
 
-<h2 class="ops-group-title">접속 이력</h2>
+<h2 class="ops-group-title" id="ops-group-access">접속 이력</h2>
 <section class="ops-grid">
   <article class="ops-card visitor-card">
     <div class="ops-card-head">
@@ -78,7 +91,7 @@
     {% endif %}
   </article>
 </section>
-<h2 class="ops-group-title">핵심 상태</h2>
+<h2 class="ops-group-title" id="ops-group-core">핵심 상태</h2>
 <section class="ops-grid">
   <article class="ops-card" id="ops-service-status">
     <div class="ops-card-head">
@@ -179,7 +192,7 @@
     {% endif %}
   </article>
 </section>
-<h2 class="ops-group-title">수집·초안</h2>
+<h2 class="ops-group-title" id="ops-group-collect">수집·초안</h2>
 <section class="ops-grid">
   <article class="ops-card" id="ops-auto-collect">
     <div class="ops-card-head">
@@ -389,7 +402,7 @@
     {% endif %}
   </article>
 </section>
-<h2 class="ops-group-title">백업·보안</h2>
+<h2 class="ops-group-title" id="ops-group-backup">백업·보안</h2>
 <section class="ops-grid">
   <article class="ops-card">
     <div class="ops-card-head">
@@ -529,7 +542,7 @@
     {% endif %}
   </article>
 </section>
-<h2 class="ops-group-title">로그·접속</h2>
+<h2 class="ops-group-title" id="ops-group-log">로그·접속</h2>
 <section class="ops-grid">
   <article class="ops-card" id="ops-log-summary">
     <div class="ops-card-head">
