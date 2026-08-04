@@ -2735,34 +2735,28 @@ def test_visitor_overview_separates_humans_from_bots(monkeypatch):
     store = Store(db_path)
     store.init_db()
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    browser_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1"
-    for masked_ip, user_agent in (
-        ("211.234.x.x", browser_ua),
-        ("211.234.x.x", browser_ua),  # 같은 사람의 두 번째 조회 → 1명으로 센다
-        ("117.111.x.x", browser_ua),
-        ("34.82.x.x", "Mozilla/5.0 (compatible; Googlebot/2.1)"),
-        ("222.102.x.x", "python-httpx/0.28.1"),
-        ("222.102.x.x", ""),
-    ):
-        store.record_visitor_access(
-            masked_ip=masked_ip,
-            method="GET",
-            path="/",
-            endpoint="dashboard",
-            status_code=200,
-            user_agent=user_agent,
-            visited_at=now_iso,
-        )
-
     from news_summary.web import create_app
 
     app = create_app()
     app.testing = True
-    html = app.test_client().get("/operations").data.decode("utf-8")
+    client = app.test_client()
+
+    # 실제 요청 경로로 기록한다 — 저장되는 값은 원본 UA가 아니라 요약 표기라서,
+    # 직접 넣으면 운영과 다른 데이터로 검증하게 된다(2026-08-04 실수).
+    iphone_safari = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1"
+    for forwarded_ip, user_agent in (
+        ("211.234.10.5", iphone_safari),
+        ("211.234.10.5", iphone_safari),  # 같은 사람의 두 번째 조회 → 1명으로 센다
+        ("117.111.20.7", "Mozilla/5.0 (Windows NT 10.0; Win64) Chrome/126.0 Safari/537.36"),
+        ("222.102.30.9", "python-httpx/0.28.1"),
+        ("222.102.30.9", ""),
+    ):
+        client.get("/", headers={"CF-Connecting-IP": forwarded_ip, "User-Agent": user_agent})
+
+    html = client.get("/operations").data.decode("utf-8")
 
     assert "실사용자 2명 · 3건" in html
-    assert "봇·자동화 3건" in html
+    assert "봇·자동화 2건" in html
 
 
 def test_operations_health_ignores_disabled_source_failures(monkeypatch, tmp_path):

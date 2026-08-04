@@ -5799,40 +5799,20 @@ def _recent_visitor_dates(days: int = 7) -> list[date]:
     return [today - timedelta(days=offset) for offset in range(days)]
 
 
-# 사람이 실제로 본 접속만 세기 위한 판별. 브라우저가 아닌 것(감시 스크립트·크롤러·
-# 각종 자동화)은 방문자 수에서 뺀다(2026-08-04 요청: 실사용자 카운팅).
-BOT_USER_AGENT_TOKENS = (
-    "bot",
-    "spider",
-    "crawler",
-    "crawl",
-    "slurp",
-    "monitor",
-    "healthcheck",
-    "uptime",
-    "python-httpx",
-    "python-requests",
-    "httpx",
-    "curl",
-    "wget",
-    "go-http-client",
-    "java/",
-    "okhttp",
-    "headlesschrome",
-    "lighthouse",
-    "preview",
-)
+# 사람이 실제로 본 접속만 세기 위한 판별(2026-08-04 요청: 실사용자 카운팅).
+# 접속 기록에 저장되는 값은 원본 User-Agent가 아니라 _browser_label이 요약한
+# 표기다("Chrome", "모바일 Safari", "기타", "브라우저 미상"). 원본 UA 기준으로
+# 판별했다가 모든 접속이 봇으로 잡혀 "실사용자 0명"이 됐다 — 저장 형식을 확인하지
+# 않은 실수였고, 테스트도 저장 경로를 우회해 원본 UA를 직접 넣는 바람에 통과했다.
+# 실제 브라우저로 기록되는 표기만 사람으로 센다.
+HUMAN_BROWSER_LABEL_TOKENS = ("chrome", "safari", "firefox", "edge")
 
 
 def _is_bot_user_agent(user_agent: str) -> bool:
     text = (user_agent or "").strip().lower()
     if not text:
-        # UA를 아예 안 보내는 쪽은 사람 브라우저가 아니다.
         return True
-    if "mozilla" not in text:
-        # 정상 브라우저는 예외 없이 Mozilla/5.0으로 시작한다.
-        return True
-    return any(token in text for token in BOT_USER_AGENT_TOKENS)
+    return not any(token in text for token in HUMAN_BROWSER_LABEL_TOKENS)
 
 
 def _visitor_cutoff_iso(days: int = 7) -> str:
