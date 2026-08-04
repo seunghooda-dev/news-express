@@ -2653,6 +2653,100 @@ def test_operations_page_requires_password_when_site_auth_is_disabled(monkeypatc
     assert logs.status_code == 200
 
 
+def test_operations_access_expires_after_unlock_window(monkeypatch):
+    """운영 관리는 열어 둔 지 30분(기본)이 지나면 다시 비밀번호를 요구한다.
+
+    자리를 비운 사이 운영 화면이 계속 열려 있지 않게 한다(2026-08-04 사용자 지시).
+    """
+    db_path = Path(f"data/.test_operations_access_ttl_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.web import OPERATIONS_ACCESS_UNLOCKED_AT_KEY, create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    unlocked = client.post(
+        "/operations/login",
+        data={"password": "secret1234", "next": "/operations"},
+        follow_redirects=True,
+    )
+    assert "운영 관리" in unlocked.data.decode("utf-8")
+    assert client.get("/operations", follow_redirects=False).status_code == 200
+
+    # 해제한 지 31분이 지난 세션으로 되돌린다.
+    stale_at = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+    with client.session_transaction() as sess:
+        sess[OPERATIONS_ACCESS_UNLOCKED_AT_KEY] = stale_at
+
+    expired = client.get("/operations", follow_redirects=False)
+    assert expired.status_code == 302
+    assert "/operations/login" in expired.headers["Location"]
+
+    # 다시 로그인하면 정상 진입한다.
+    again = client.post(
+        "/operations/login",
+        data={"password": "secret1234", "next": "/operations"},
+        follow_redirects=True,
+    )
+    assert "운영 관리" in again.data.decode("utf-8")
+
+
+def test_visitor_logs_export_returns_csv_for_excel(monkeypatch):
+    """접속 이력을 CSV로 내려받아 밖에서 분석할 수 있어야 한다(2026-08-04 요청)."""
+    db_path = Path(f"data/.test_visitor_csv_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.record_visitor_access(
+        masked_ip="211.234.x.x",
+        method="GET",
+        path="/drafts",
+        endpoint="drafts",
+        status_code=200,
+        user_agent="Mozilla/5.0 (iPhone)",
+        visited_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/operations/visitor-logs/export")
+    assert response.status_code == 200
+    assert response.headers["Content-Type"].startswith("text/csv")
+    assert "visitor-logs-" in response.headers["Content-Disposition"]
+    body = response.data.decode("utf-8-sig")  # 엑셀 호환 BOM 확인을 겸한다
+    assert "마스킹 IP" in body.splitlines()[0]
+    assert "211.234.x.x" in body
+    assert "/drafts" in body
+
+
+def test_visitor_logs_export_requires_operations_password(monkeypatch):
+    """CSV 내보내기도 운영 관리 잠금 뒤에 있어야 한다."""
+    db_path = Path(f"data/.test_visitor_csv_auth_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "secret1234")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    blocked = client.get("/operations/visitor-logs/export", follow_redirects=False)
+    assert blocked.status_code == 302
+    assert "/operations/login" in blocked.headers["Location"]
+
+
 def test_operations_requires_dedicated_password_even_when_admin_logged_in(monkeypatch):
     from werkzeug.security import generate_password_hash
 

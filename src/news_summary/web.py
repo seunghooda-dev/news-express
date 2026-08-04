@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import ipaddress
 import hashlib
@@ -119,6 +120,7 @@ OPERATIONS_ACCESS_ENDPOINTS = {
     "download_backup",
     "restore_backup_route",
     "purge_proxy_visitor_logs",
+    "export_visitor_logs",
 }
 NO_STORE_ENDPOINTS = {
     "admin_setup",
@@ -136,6 +138,7 @@ CSRF_FORM_FIELD = "_csrf_token"
 REQUEST_ID_HEADER = "X-Request-ID"
 OPERATIONS_ACCESS_UNLOCKED_KEY = "operations_access_unlocked"
 OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY = "operations_admin_password_unlocked"
+OPERATIONS_ACCESS_UNLOCKED_AT_KEY = "operations_access_unlocked_at"
 OPERATIONS_WRITE_UNLOCKED_KEY = "operations_write_unlocked"
 OPERATIONS_WRITE_UNLOCKED_AT_KEY = "operations_write_unlocked_at"
 SENSITIVE_RESTORE_TARGETS = {".env", "config/municipalities.yaml"}
@@ -187,6 +190,9 @@ DEFAULT_COLLECTION_COVERAGE_CHECK_HOUR = 9
 DEFAULT_AUTO_BACKUP_MAX_AGE_HOURS = 24
 DEFAULT_OPERATIONS_SNAPSHOT_STALE_MINUTES = 180
 DEFAULT_OPERATIONS_WRITE_UNLOCK_MINUTES = 30
+# 운영 관리 접속 잠금 해제의 유효 시간. 열어 두고 자리를 비워도 이 시간이 지나면
+# 비밀번호를 다시 요구한다(2026-08-04 사용자 지시: 30분).
+DEFAULT_OPERATIONS_ACCESS_UNLOCK_MINUTES = 30
 DEFAULT_GEMINI_RETRY_DUE_WARNING_COUNT = 10
 DEFAULT_AUTH_RATE_LIMIT_MAX_FAILURES = 5
 DEFAULT_AUTH_RATE_LIMIT_WINDOW_SECONDS = 10 * 60
@@ -650,6 +656,7 @@ def create_app() -> Flask:
     def logout():
         session.pop("admin_authenticated", None)
         session.pop(OPERATIONS_ACCESS_UNLOCKED_KEY, None)
+        session.pop(OPERATIONS_ACCESS_UNLOCKED_AT_KEY, None)
         session.pop(OPERATIONS_ADMIN_PASSWORD_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_WRITE_UNLOCKED_KEY, None)
         session.pop(OPERATIONS_WRITE_UNLOCKED_AT_KEY, None)
@@ -696,6 +703,7 @@ def create_app() -> Flask:
             if verify_operations_password(store, password):
                 _auth_rate_limit_clear("operations_access_login")
                 session[OPERATIONS_ACCESS_UNLOCKED_KEY] = True
+                session[OPERATIONS_ACCESS_UNLOCKED_AT_KEY] = datetime.now(timezone.utc).isoformat()
                 if auth_config(store).enabled:
                     session["admin_authenticated"] = True
                 _record_operation_event(store, "operations_access_unlocked", target="operations", detail="운영 관리 접속")
@@ -979,6 +987,37 @@ def create_app() -> Flask:
         else:
             flash("정리할 프록시 IP 기록이 없습니다.")
         return redirect(url_for("operations"))
+
+    @app.get("/operations/visitor-logs/export")
+    def export_visitor_logs():
+        # 접속 이력을 CSV로 내려받아 밖에서 분석할 수 있게 한다(2026-08-04 사용자 요청).
+        # 저장 자체가 마스킹 IP라 원본 IP는 파일에도 들어가지 않는다.
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        rows = store.visitor_access_logs_since(cutoff_iso, limit=10000)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["방문 시각", "마스킹 IP", "메서드", "경로", "엔드포인트", "상태코드", "브라우저(UA)"])
+        for row in rows:
+            writer.writerow(
+                [
+                    row["visited_at"],
+                    row["masked_ip"],
+                    row["method"],
+                    row["path"],
+                    row["endpoint"],
+                    row["status_code"],
+                    row["user_agent"],
+                ]
+            )
+        filename = f"visitor-logs-{datetime.now(LOCAL_TZ).strftime('%Y%m%d-%H%M')}.csv"
+        # 엑셀이 한글을 깨뜨리지 않도록 UTF-8 BOM을 붙인다.
+        return Response(
+            "﻿" + buffer.getvalue(),
+            headers={
+                "Content-Type": "text/csv; charset=utf-8",
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            },
+        )
 
     @app.get("/operations/backups/<path:filename>")
     def download_backup(filename: str):
@@ -1740,12 +1779,38 @@ def _operations_access_unlocked(app: Flask, store: Store) -> bool:
     if app.testing and not _env_flag("NEWS_SUMMARY_TEST_OPERATIONS_AUTH"):
         return True
     if session.get(OPERATIONS_ACCESS_UNLOCKED_KEY):
-        return True
+        # 열어 둔 지 30분(기본)이 지나면 다시 잠근다 — 자리를 비운 사이 운영 화면이
+        # 계속 열려 있지 않도록(2026-08-04 사용자 지시). 해제 시각이 없는 세션은
+        # 이 기능 도입 전 것이므로 만료로 취급한다.
+        unlocked_at = _parse_datetime(session.get(OPERATIONS_ACCESS_UNLOCKED_AT_KEY))
+        if unlocked_at is not None:
+            expires_at = unlocked_at + timedelta(minutes=_operations_access_unlock_minutes())
+            if datetime.now(LOCAL_TZ) < expires_at.astimezone(LOCAL_TZ):
+                return True
+        for key in (
+            OPERATIONS_ACCESS_UNLOCKED_KEY,
+            OPERATIONS_ACCESS_UNLOCKED_AT_KEY,
+            OPERATIONS_WRITE_UNLOCKED_KEY,
+            OPERATIONS_WRITE_UNLOCKED_AT_KEY,
+        ):
+            session.pop(key, None)
     # 운영 전용 비밀번호가 설정돼 있으면 관리자 로그인만으로는 통과시키지 않고
     # 운영 관리 진입 시 항상 비밀번호를 다시 확인한다.
     if operations_password_configured(store):
         return False
     return bool(session.get("admin_authenticated"))
+
+
+def _operations_access_unlock_minutes() -> int:
+    raw_value = os.getenv(
+        "NEWS_SUMMARY_OPERATIONS_ACCESS_UNLOCK_MINUTES",
+        str(DEFAULT_OPERATIONS_ACCESS_UNLOCK_MINUTES),
+    )
+    try:
+        minutes = int(raw_value)
+    except ValueError:
+        return DEFAULT_OPERATIONS_ACCESS_UNLOCK_MINUTES
+    return max(5, min(minutes, 240))
 
 
 def _public_health_details_enabled() -> bool:

@@ -41,6 +41,7 @@
       <span>선택 날짜 {{ visitor_access.selected_count }}건</span>
       <span>마스킹 IP {{ visitor_access.unique_masked_ips }}개</span>
       <span>오류 응답 {{ visitor_access.error_count }}건</span>
+      <a href="{{ url_for('export_visitor_logs') }}">최근 30일 CSV 내려받기</a>
     </div>
     {% if visitor_access.top_paths %}
       <p class="gemini-models">
