@@ -93,53 +93,54 @@ a {
   min-width: 0;
 }
 
-/* 상단 검색 — 어두운 헤더 위에 올라가므로 반투명 배경으로 대비를 준다. */
-.nav-search {
+/* 대시보드 검색 — 기관별 수집 상태 아래에서 가로 전체 폭을 쓴다. */
+.dash-search {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex: 0 1 260px;
-  min-width: 0;
+  gap: 8px;
+  width: 100%;
+  margin: 14px 0 4px;
 }
 
-.nav-search input {
+.dash-search input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font-size: 13px;
+  background: #fff;
+  color: inherit;
+  font-size: 14px;
   font-weight: 700;
 }
 
-.nav-search input::placeholder {
-  color: rgba(255, 255, 255, 0.62);
+.dash-search input::placeholder {
+  color: var(--muted);
+  font-weight: 600;
 }
 
-.nav-search input:focus {
+.dash-search input:focus {
   outline: none;
-  border-color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.nav-search button {
-  height: 32px;
-  padding: 0 12px;
+.dash-search button {
+  height: 44px;
+  padding: 0 22px;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #1f2330;
-  font-size: 13px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
   font-weight: 900;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.nav-search button:hover {
-  background: #fff;
+.dash-search button:hover {
+  background: var(--accent-strong);
 }
 
 .desktop-nav-links {
@@ -2269,22 +2270,17 @@ h3 {
     position: relative;
     width: auto;
     margin-left: auto;
-    gap: 6px;
   }
 
-  /* 좁은 화면에서는 검색창을 줄이고 버튼은 돋보기 아이콘만 남긴다. */
-  .nav-search {
-    flex: 0 1 150px;
-  }
-
-  .nav-search button {
-    padding: 0 10px;
+  /* 좁은 화면에서도 가로로 길게 유지하되 버튼은 아이콘만 남겨 입력칸을 넓힌다. */
+  .dash-search button {
+    padding: 0 16px;
     font-size: 0;
   }
 
-  .nav-search button::before {
+  .dash-search button::before {
     content: "🔍";
-    font-size: 13px;
+    font-size: 16px;
   }
 
   .desktop-nav-links {

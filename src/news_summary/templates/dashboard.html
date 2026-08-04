@@ -96,6 +96,13 @@
   </div>
 </details>
 
+{# 기관별 수집 상태 바로 아래, 목록으로 내려가기 직전에 가로로 길게 둔다. #}
+<form class="dash-search" method="get" action="{{ url_for('search') }}" role="search">
+  <input type="search" name="q" value="{{ request.args.get('q', '') }}"
+         placeholder="기사 검색 — 제목, 기관명, 원문 내용" aria-label="기사 검색">
+  <button type="submit">검색</button>
+</form>
+
 <section class="split">
   <div>
     <div class="section-head compact">
