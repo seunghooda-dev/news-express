@@ -1,102 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="toolbar">
-  {% if auto_collector_status %}
-    <section class="auto-status">
-      <div class="auto-status-head">
-        <h1>자동 수집</h1>
-        <span class="badge badge-gemini">
-          {% if auto_collector_status.running %}
-            실행 중
-          {% elif auto_collector_status.enabled %}
-            {{ interval_label(auto_collector_status.interval_seconds) }} 실행
-          {% else %}
-            꺼짐
-          {% endif %}
-        </span>
-      </div>
-      {% if auto_collector_status.enabled %}
-        <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
-          <div class="crawl-progress-head">
-            <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
-            <span data-progress-count>
-              {% if auto_collector_status.progress_total %}
-                {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
-              {% else %}
-                -/-
-              {% endif %}
-            </span>
-          </div>
-          <div class="crawl-progress-track"><span data-progress-bar></span></div>
-          <p data-progress-source>
-            {% if auto_collector_status.progress_source_name %}
-              현재 기관: {{ source_display_label(auto_collector_status.progress_source_name) }}
-            {% else %}
-              대기 중
-            {% endif %}
-          </p>
-        </div>
-      {% else %}
-        <p class="auto-status-message">자동 수집은 꺼져 있습니다. 운영 관리에서 다시 켤 수 있습니다.</p>
-      {% endif %}
-      {% if auto_collector_status.last_error %}
-        <p class="auto-status-error">{{ auto_collector_status.last_error }}</p>
-      {% elif auto_collector_status.last_messages %}
-        <p class="auto-status-message">{{ auto_collector_status.last_messages|last }}</p>
-      {% endif %}
-    </section>
-  {% endif %}
-  <form class="manual-recrawl" method="post" action="{{ url_for('recrawl') }}" data-confirm="수동 재수집을 시작할까요? 실행 중에는 시간이 걸릴 수 있습니다.">
-    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" aria-label="수동 재수집"><span>수동</span><span>재수집</span></button>
-  </form>
-</section>
-
-<section class="dashboard-summary" aria-label="전체 현황 요약">
-  <a class="summary-link" href="{{ url_for('press_releases', region=selected_regions) }}"><span>수집 원문</span><b>{{ counts.press_releases }}</b></a>
-  <a class="summary-link" href="{{ url_for('drafts', region=selected_regions) }}"><span>기사 초안</span><b>{{ counts.drafts }}</b></a>
-  <a class="summary-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}"><span>검수 대기</span><b>{{ counts.needs_review }}</b></a>
-  <a class="summary-link summary-warning" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}"><span>주의 필요</span><b>{{ attention_count }}</b></a>
-  <a class="summary-link" href="{{ url_for('drafts', status='approved', region=selected_regions) }}"><span>승인 완료</span><b>{{ counts.approved }}</b></a>
-</section>
-
 {% include "_region_filter.html" %}
 
-<details class="source-board">
-  <summary class="source-board-toggle">
-    <span>기관별 수집 상태</span>
-    <b>{{ source_summaries|length }}개</b>
-  </summary>
-  <div class="source-board-body">
-    <div class="section-head compact">
-      <span class="meta">기관별 상세 수집 상태</span>
-      <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}">주의 필요 보기</a>
-    </div>
-    <div class="source-grid">
-      {% for source in source_summaries %}
-        <a class="source-card {% if source.status_level in ['warning', 'error'] %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
-          <span class="source-card-titleline">
-            <strong>{{ source_display_label(source.name) }}</strong>
-            <em>{{ source.status_label }}</em>
-          </span>
-          <span class="source-card-counts"><span class="source-card-region">{{ region_display_label(source.region) }} · </span>어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
-          <span class="source-card-detail">최근 수집 {{ source.last_collected|date_label }}</span>
-          <span class="source-card-detail">마지막 점검 {{ source.last_checked_at|date_label }}</span>
-          {% if source.issue %}
-            <span class="source-card-detail">상태 {{ source.issue }}</span>
-            {% if source.failure_stage or source.failure_reason %}
-              <span class="source-card-detail">원인 {{ source.failure_stage }}{% if source.failure_stage and source.failure_reason %} · {% endif %}{{ source.failure_reason }}</span>
-            {% endif %}
-          {% elif source.status_detail %}
-            <span class="source-card-detail">{{ source.status_detail }}</span>
-          {% endif %}
-        </a>
-      {% endfor %}
-    </div>
-  </div>
-</details>
-
-{# 기관별 수집 상태 바로 아래, 목록으로 내려가기 직전에 가로로 길게 둔다. #}
+{# 목록을 거르는 도구(지역 필터·검색)는 목록 바로 위에 둔다. #}
 <form class="dash-search" method="get" action="{{ url_for('search') }}" role="search">
   <input type="search" name="q" value="{{ request.args.get('q', '') }}"
          placeholder="기사 검색 — 제목, 기관명, 원문 내용" aria-label="기사 검색">
@@ -254,4 +160,100 @@
     })();
   </script>
 {% endif %}
+
+<section class="ops-fold" aria-label="수집 운영 현황">
+<section class="toolbar">
+  {% if auto_collector_status %}
+    <section class="auto-status">
+      <div class="auto-status-head">
+        <h1>자동 수집</h1>
+        <span class="badge badge-gemini">
+          {% if auto_collector_status.running %}
+            실행 중
+          {% elif auto_collector_status.enabled %}
+            {{ interval_label(auto_collector_status.interval_seconds) }} 실행
+          {% else %}
+            꺼짐
+          {% endif %}
+        </span>
+      </div>
+      {% if auto_collector_status.enabled %}
+        <div class="crawl-progress" data-status-url="{{ url_for('recrawl_status') }}" data-initial-running="{{ 'true' if auto_collector_status.running else 'false' }}">
+          <div class="crawl-progress-head">
+            <strong data-progress-message>{{ auto_collector_status.progress_message }}</strong>
+            <span data-progress-count>
+              {% if auto_collector_status.progress_total %}
+                {{ auto_collector_status.progress_current }}/{{ auto_collector_status.progress_total }}
+              {% else %}
+                -/-
+              {% endif %}
+            </span>
+          </div>
+          <div class="crawl-progress-track"><span data-progress-bar></span></div>
+          <p data-progress-source>
+            {% if auto_collector_status.progress_source_name %}
+              현재 기관: {{ source_display_label(auto_collector_status.progress_source_name) }}
+            {% else %}
+              대기 중
+            {% endif %}
+          </p>
+        </div>
+      {% else %}
+        <p class="auto-status-message">자동 수집은 꺼져 있습니다. 운영 관리에서 다시 켤 수 있습니다.</p>
+      {% endif %}
+      {% if auto_collector_status.last_error %}
+        <p class="auto-status-error">{{ auto_collector_status.last_error }}</p>
+      {% elif auto_collector_status.last_messages %}
+        <p class="auto-status-message">{{ auto_collector_status.last_messages|last }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+  <form class="manual-recrawl" method="post" action="{{ url_for('recrawl') }}" data-confirm="수동 재수집을 시작할까요? 실행 중에는 시간이 걸릴 수 있습니다.">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" aria-label="수동 재수집"><span>수동</span><span>재수집</span></button>
+  </form>
+</section>
+
+<section class="dashboard-summary" aria-label="전체 현황 요약">
+  <a class="summary-link" href="{{ url_for('press_releases', region=selected_regions) }}"><span>수집 원문</span><b>{{ counts.press_releases }}</b></a>
+  <a class="summary-link" href="{{ url_for('drafts', region=selected_regions) }}"><span>기사 초안</span><b>{{ counts.drafts }}</b></a>
+  <a class="summary-link" href="{{ url_for('drafts', status='needs_review', region=selected_regions) }}"><span>검수 대기</span><b>{{ counts.needs_review }}</b></a>
+  <a class="summary-link summary-warning" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}"><span>주의 필요</span><b>{{ attention_count }}</b></a>
+  <a class="summary-link" href="{{ url_for('drafts', status='approved', region=selected_regions) }}"><span>승인 완료</span><b>{{ counts.approved }}</b></a>
+</section>
+<details class="source-board">
+  <summary class="source-board-toggle">
+    <span>기관별 수집 상태</span>
+    <b>{{ source_summaries|length }}개</b>
+  </summary>
+  <div class="source-board-body">
+    <div class="section-head compact">
+      <span class="meta">기관별 상세 수집 상태</span>
+      <a class="source-link" href="{{ url_for('drafts', status='needs_review', review='attention', region=selected_regions) }}">주의 필요 보기</a>
+    </div>
+    <div class="source-grid">
+      {% for source in source_summaries %}
+        <a class="source-card {% if source.status_level in ['warning', 'error'] %}source-card-warning{% endif %}" href="{{ url_for('source_detail', source_id=source.id) }}">
+          <span class="source-card-titleline">
+            <strong>{{ source_display_label(source.name) }}</strong>
+            <em>{{ source.status_label }}</em>
+          </span>
+          <span class="source-card-counts"><span class="source-card-region">{{ region_display_label(source.region) }} · </span>어제 {{ source.yesterday_releases }}건 · 오늘 {{ source.today_releases }}건</span>
+          <span class="source-card-detail">최근 수집 {{ source.last_collected|date_label }}</span>
+          <span class="source-card-detail">마지막 점검 {{ source.last_checked_at|date_label }}</span>
+          {% if source.issue %}
+            <span class="source-card-detail">상태 {{ source.issue }}</span>
+            {% if source.failure_stage or source.failure_reason %}
+              <span class="source-card-detail">원인 {{ source.failure_stage }}{% if source.failure_stage and source.failure_reason %} · {% endif %}{{ source.failure_reason }}</span>
+            {% endif %}
+          {% elif source.status_detail %}
+            <span class="source-card-detail">{{ source.status_detail }}</span>
+          {% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+</details>
+</section>
+
 {% endblock %}

@@ -2922,3 +2922,16 @@ h3 {
     gap: 8px;
   }
 }
+
+/* 기사 목록을 위로 올리면서 운영 정보(자동 수집·지표·기관 현황)를 아래로 내렸다.
+   본문과 섞이지 않도록 위쪽에 여백과 구분선을 둔다(2026-08-04). */
+.ops-fold {
+  display: block;
+  margin-top: 44px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.ops-fold .toolbar {
+  margin-bottom: 14px;
+}
