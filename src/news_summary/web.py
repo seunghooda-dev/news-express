@@ -6219,6 +6219,22 @@ def file_size_label(size: object) -> str:
     return f"{value:.1f} {units[index]}"
 
 
+def _is_date_only(value: object) -> bool:
+    """"2026-08-05"처럼 시각이 없는 값인지 — 있으면 시간 단위 상대표기를 쓰면 안 된다."""
+    return bool(re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", str(value).strip()))
+
+
+def _relative_day_label(parsed: datetime) -> str:
+    days = (datetime.now(LOCAL_TZ).date() - parsed.astimezone(LOCAL_TZ).date()).days
+    if days <= 0:
+        return "오늘"
+    if days == 1:
+        return "어제"
+    if days < 7:
+        return f"{days}일 전"
+    return format_datetime_label(parsed.date().isoformat())
+
+
 def format_relative_time_label(value: object) -> str:
     """목록에서 "방금 전 / 2시간 전"처럼 읽히게 한다(2026-08-04 요청).
 
@@ -6231,6 +6247,12 @@ def format_relative_time_label(value: object) -> str:
     parsed = _parse_datetime(value)
     if parsed is None:
         return format_datetime_label(value)
+
+    # 원문 사이트가 날짜만 주는 경우가 많다(예: "2026-08-05"). 이때 _parse_datetime이
+    # 00:00으로 채우므로, 방금 들어온 기사도 오후엔 "17시간 전"으로 보인다(2026-08-05
+    # 사용자 신고). 시각을 모르는 값에서 시·분을 지어내지 않고 날짜 단위로만 말한다.
+    if _is_date_only(value):
+        return _relative_day_label(parsed)
 
     seconds = (datetime.now(LOCAL_TZ) - parsed.astimezone(LOCAL_TZ)).total_seconds()
     if seconds < 0:

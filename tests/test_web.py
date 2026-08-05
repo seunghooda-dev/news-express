@@ -2827,6 +2827,73 @@ def test_list_pages_show_relative_time(monkeypatch):
         assert "title=" in html, path
 
 
+def test_date_only_publish_date_never_shows_fabricated_hours(monkeypatch):
+    """원문이 날짜만 줄 때 시각을 지어내면 안 된다(2026-08-05 사용자 신고).
+
+    "2026-08-05"를 00:00으로 채우는 바람에, 방금 수집한 기사가 오후에는
+    "17시간 전"으로 보였다. 시각을 모르면 날짜 단위로만 말해야 한다.
+    """
+    from news_summary.web import format_relative_time_label
+
+    today = datetime.now(LOCAL_TZ).date()
+    # 신고 상황 그대로 — 오늘 날짜, 시각 없음
+    assert format_relative_time_label(today.isoformat()) == "오늘"
+    assert format_relative_time_label(today.strftime("%Y.%m.%d")) == "오늘"
+    assert format_relative_time_label((today - timedelta(days=1)).isoformat()) == "어제"
+    assert format_relative_time_label((today - timedelta(days=3)).isoformat()) == "3일 전"
+
+    # 시각이 있는 값은 종전대로 시·분 단위로 읽힌다.
+    precise = (datetime.now(LOCAL_TZ) - timedelta(hours=2)).isoformat()
+    assert format_relative_time_label(precise) == "2시간 전"
+
+
+def test_lists_lead_with_known_time_not_publish_date(monkeypatch):
+    """목록의 앞 시각은 정확히 아는 값(수집·초안 생성)이어야 한다.
+
+    게시일은 원문이 날짜만 주는 일이 잦아 신선도를 나타내지 못한다.
+    """
+    db_path = Path(f"data/.test_list_lead_time_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    today = datetime.now(LOCAL_TZ).date().isoformat()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="방금 수집한 기사",
+            url="https://example.com/just-collected",
+            content="담양군은 폭염 현장을 점검했다고 밝혔다.",
+            published_at=today,  # 날짜만 — 실제 사이트가 주는 형태
+        )
+    )
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="방금 만든 초안",
+            body="본문",
+            review_note="점검",
+            model="gemini-3.5-flash-lite",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    import re
+
+    for path in ("/", "/drafts", "/press-releases"):
+        html = client.get(path).data.decode("utf-8")
+        # 방금 들어온 항목이니 앞 시각은 분 단위로 최신이어야 한다.
+        assert re.search(r"(방금 전|\d+분 전)", html), path
+        # 날짜만 아는 게시일을 시간 단위로 지어내지 않는다.
+        assert "게시 오늘" in html or "게시" not in html, path
+
+
 def test_hourly_collection_does_not_warn_between_normal_runs(monkeypatch):
     """정상 운영에서 매시간 경고가 켜지면 진짜 이상을 가린다.
 

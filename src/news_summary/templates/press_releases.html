@@ -71,7 +71,11 @@
         <strong>{{ item.title }}</strong>
         <span class="row-meta row-meta-main">
           <span>{{ source_display_label(item.source_name) }}</span>
-          <span title="{{ item.published_at|date_label }}">{{ item.published_at|relative_label }}</span>
+          {# 대시보드와 같은 규칙 — 정확히 아는 수집 시각이 앞, 게시는 뒤. #}
+          <span title="수집 {{ item.collected_at|date_label }}">{{ item.collected_at|relative_label }}</span>
+          {% if item.published_at %}
+            <span title="게시 {{ item.published_at|date_label }}">게시 {{ item.published_at|relative_label }}</span>
+          {% endif %}
           {% if item.draft_id %}
             <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
             <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
