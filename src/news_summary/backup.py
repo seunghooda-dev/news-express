@@ -74,7 +74,7 @@ def create_backup(
     return backup_path
 
 
-def backup_include_env(default: bool = True) -> bool:
+def backup_include_env(default: bool = False) -> bool:
     value = os.getenv(BACKUP_INCLUDE_ENV_ENV)
     if value is None:
         return default

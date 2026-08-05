@@ -23,7 +23,12 @@ def test_create_backup_includes_sqlite_and_config_files(tmp_path):
     (project_root / "config" / "municipalities.yaml").write_text("sources: []\n", encoding="utf-8")
     (project_root / "data" / "writing_settings.json").write_text("{}\n", encoding="utf-8")
 
-    backup_path = create_backup(project_root, Path("data/news_summary.sqlite"), Path("data/backups"))
+    backup_path = create_backup(
+        project_root,
+        Path("data/news_summary.sqlite"),
+        Path("data/backups"),
+        include_env=True,
+    )
 
     assert backup_path.exists()
     restored_names = restore_backup(project_root, backup_path, dry_run=True)
@@ -62,14 +67,29 @@ def test_create_backup_can_exclude_env_file(tmp_path):
 
 
 def test_backup_include_env_reads_environment(monkeypatch):
+    # 설정이 없으면 제외가 기본이어야 한다 — 비밀 포함은 명시적 선택일 때만.
     monkeypatch.delenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", raising=False)
-    assert backup_include_env() is True
+    assert backup_include_env() is False
 
     monkeypatch.setenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", "0")
     assert backup_include_env() is False
 
     monkeypatch.setenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", "yes")
     assert backup_include_env() is True
+
+
+def test_create_backup_excludes_env_without_opt_in(tmp_path, monkeypatch):
+    monkeypatch.delenv("NEWS_SUMMARY_BACKUP_INCLUDE_ENV", raising=False)
+    project_root = tmp_path
+    db_path = project_root / "data" / "news_summary.sqlite"
+    Store(db_path).init_db()
+    (project_root / ".env").write_text("GEMINI_API_KEY=secret-value\n", encoding="utf-8")
+
+    backup_path = create_backup(project_root, db_path, project_root / "backups")
+
+    with zipfile.ZipFile(backup_path) as archive:
+        assert ".env" not in archive.namelist()
+    assert verify_backup(backup_path)["sensitive_config_keys"] == []
 
 
 def test_verify_backup_reports_sensitive_env_keys(tmp_path):
@@ -87,7 +107,12 @@ def test_verify_backup_reports_sensitive_env_keys(tmp_path):
         encoding="utf-8",
     )
 
-    backup_path = create_backup(project_root, Path("data/news_summary.sqlite"), Path("data/backups"))
+    backup_path = create_backup(
+        project_root,
+        Path("data/news_summary.sqlite"),
+        Path("data/backups"),
+        include_env=True,
+    )
     verification = verify_backup(backup_path)
 
     assert verification["ok"] is True
