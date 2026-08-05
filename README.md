@@ -130,7 +130,7 @@ PostgreSQL 모드에서는 앱 백업 ZIP 안에 `data/postgres_export.json` 논
 
 - 서비스 이름: `news-express`
 - 플랜: Starter
-- 실행 방식: `gunicorn` 단일 워커, 16스레드
+- 실행 방식: `gunicorn` 단일 워커, 8스레드
 - 헬스체크: `/healthz`
 - DB: Render가 아닌 외부 PostgreSQL(Supabase) `DATABASE_URL`
 - 자동 수집: 웹 서비스 프로세스 안에서 매시간 정각 실행
@@ -226,7 +226,7 @@ Secret이 아직 없으면 워크플로는 실패하지 않고 보완 배포를 
 
 검수 화면에서 할 수 있는 일:
 
-- 19개 기관별 최근 수집 상태와 수집량 확인
+- 기관별 최근 수집 상태와 수집량 확인(현재 활성 27곳)
 - Gemini 로컬 성공 호출 수와 Google AI Studio 사용량 페이지 확인
 - 주의 필요, 오늘 기사, 신청·모집, 행사·교육, 지원·예산, 사진·카드뉴스, 게시일 확인 필터로 검수 우선순위 정리
 - 원문과 기사 초안을 좌우로 비교

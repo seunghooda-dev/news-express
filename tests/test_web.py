@@ -2806,6 +2806,37 @@ def test_list_pages_show_relative_time(monkeypatch):
         assert "title=" in html, path
 
 
+def test_hourly_collection_does_not_warn_between_normal_runs(monkeypatch):
+    """정상 운영에서 매시간 경고가 켜지면 진짜 이상을 가린다.
+
+    완주 간격은 "주기 + 회차 소요"라 매시간 실행이면 80~95분이 정상이다.
+    2026-08-05 실측에서 lag 92분에 경고가 떴다.
+    """
+    db_path = Path(f"data/.test_hourly_no_warn_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import _auto_collector_timing_health
+
+    finished = (datetime.now(LOCAL_TZ) - timedelta(minutes=92)).isoformat()
+    status = {
+        "enabled": True,
+        "running": False,
+        "thread_alive": True,
+        "interval_seconds": 3600,
+        "last_auto_finished_at": finished,
+        "next_run_at": (datetime.now(LOCAL_TZ) + timedelta(minutes=10)).isoformat(),
+    }
+    health = _auto_collector_timing_health(status)
+    assert health["status"] == "ok", health["message"]
+    assert health["overdue"] is False
+
+    # 두 주기를 넘기면(예: 3시간) 실제 이상이므로 경고해야 한다.
+    status["last_auto_finished_at"] = (datetime.now(LOCAL_TZ) - timedelta(minutes=190)).isoformat()
+    late = _auto_collector_timing_health(status)
+    assert late["status"] == "warning"
+    assert late["overdue"] is True
+
+
 def test_relative_time_label_reads_as_elapsed_time():
     """목록에서는 절대 시각보다 경과 시간이 잘 읽힌다(2026-08-04 요청)."""
     from news_summary.web import LOCAL_TZ, format_relative_time_label

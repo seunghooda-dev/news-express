@@ -5466,7 +5466,10 @@ def _auto_finish_overdue_minutes(interval_seconds: object | None = None) -> int:
         interval_minutes = int(interval_seconds or 0) // 60
     except (TypeError, ValueError):
         interval_minutes = 0
-    return max(DEFAULT_AUTO_FINISH_OVERDUE_MINUTES, interval_minutes + 30)
+    # 완주 간격은 "주기 + 회차 소요 시간"이라 매시간 실행이면 정상값이 60분을 넘는다.
+    # 소요 18분 기준으로 90분을 쓰면 정상 운영에서도 매시간 경고가 켜져(2026-08-05 실측:
+    # lag 92분에 경고) 진짜 이상을 가린다. 주기의 두 배를 여유로 잡는다.
+    return max(DEFAULT_AUTO_FINISH_OVERDUE_MINUTES, interval_minutes * 2 + 30)
 
 
 def _auto_next_run_grace_minutes() -> int:
