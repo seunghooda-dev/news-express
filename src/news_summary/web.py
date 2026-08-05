@@ -354,7 +354,11 @@ def create_app() -> Flask:
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         # 폰트는 내용이 바뀌지 않고 파일명이 곧 버전이다. Flask 기본값(no-cache)이면
         # 2MB 파일을 방문마다 재확인하게 되므로 1년 캐시로 못박는다(2026-08-04).
-        if request.path.startswith("/static/fonts/"):
+        # app.css처럼 ?v=<커밋>이 붙은 정적 파일도 같은 이유로 캐시한다 — 배포하면
+        # 주소가 바뀌므로 낡은 파일이 남지 않는다(2026-08-05).
+        if request.path.startswith("/static/fonts/") or (
+            request.path.startswith("/static/") and request.args.get("v")
+        ):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         if request.endpoint in NO_STORE_ENDPOINTS:
             response.headers["Cache-Control"] = "no-store, max-age=0"

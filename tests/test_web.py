@@ -2758,6 +2758,27 @@ def test_font_is_served_with_long_cache(monkeypatch):
     assert response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
 
 
+def test_versioned_static_asset_is_served_with_long_cache(monkeypatch):
+    """?v=<커밋>이 붙은 정적 파일은 배포마다 주소가 바뀌므로 길게 캐시해도 안전하다."""
+    db_path = Path(f"data/.test_static_cache_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    versioned = client.get("/static/app.css?v=abc1234")
+    assert versioned.status_code == 200
+    assert versioned.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+    # 버전이 없으면 낡은 파일이 굳을 수 있으니 그대로 둔다.
+    plain = client.get("/static/app.css")
+    assert plain.status_code == 200
+    assert "immutable" not in plain.headers.get("Cache-Control", "")
+
+
 def test_list_pages_show_relative_time(monkeypatch):
     """목록 화면은 대시보드와 같은 상대 시간 표기를 써야 한다.
 
