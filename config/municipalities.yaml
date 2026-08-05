@@ -51,7 +51,6 @@ sources:
     region: 전남광주통합특별시 광주 서구
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.seogu.gwangju.kr/board.es?mid=c50501000000&bid=0154"
     include_url_contains:
       - "board.es"
@@ -66,7 +65,6 @@ sources:
     region: 전남광주통합특별시 광주 남구
     enabled: true
     type: html_board
-    verify_ssl: false
     # 첨부가 hwpx 문서뿐이고 사진은 싣지 않는다(2026-07-29 확인) — 사진 첨부 점검 제외
     expects_images: false
     list_url: "https://www.namgu.gwangju.kr/api/eminwon/pressList.es?mid=a10605050000"
@@ -120,7 +118,6 @@ sources:
     region: 전남광주통합특별시
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.jeonnam-gwangju.go.kr/boardList.do?pageId=jngj22&boardId=JG_0000000003&recordCnt=30"
     base_url: "https://www.jeonnam-gwangju.go.kr"
     include_url_contains:
@@ -139,7 +136,6 @@ sources:
     region: 전남광주통합특별시 목포
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.mokpo.go.kr/www/mokpo_news/press_release/report_material"
     include_url_contains:
       - "report_material"
@@ -156,7 +152,6 @@ sources:
     region: 전남광주통합특별시 여수
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.yeosu.go.kr/www/govt/news/release/press"
     include_url_contains:
       - "/www/govt/news/release/press"
@@ -206,7 +201,6 @@ sources:
     region: 전남광주통합특별시 광양
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://gwangyang.go.kr/board.es?mid=a11007000000&bid=0057"
     include_url_contains:
       - "board.es"
@@ -292,7 +286,6 @@ sources:
     region: 전남광주통합특별시 보성
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.boseong.go.kr/www/open_administration/city_news/press_release"
     include_url_contains:
       - "press_release"
@@ -307,7 +300,6 @@ sources:
     region: 전남광주통합특별시 화순
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.hwasun.go.kr/gallery.do?S=S01&M=020101000000&b_code=0000000001"
     include_url_contains:
       - "gallery.do"
@@ -375,7 +367,6 @@ sources:
     region: 전남광주통합특별시 해남
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.haenam.go.kr/planweb/board/list.9is?contentUid=18e3368f5d745106015d877ab2850a94&boardUid=18e3368f5fb80fdc015fdc4c2ac203e7&contentUid=18e3368f5d745106015d877ab2850a94"
     include_url_contains:
       - "view.9is"
@@ -406,7 +397,6 @@ sources:
     region: 전남광주통합특별시 무안
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.muan.go.kr/www/openmuan/new/report"
     include_url_contains:
       - "/www/openmuan/new/report"
@@ -434,7 +424,6 @@ sources:
     region: 전남광주통합특별시 영광
     enabled: true
     type: html_board
-    verify_ssl: false
     # 본문에 QR 코드 외 사진이 없는 게시판(2026-07-29 확인) — 사진 첨부 점검 제외
     expects_images: false
     list_url: "https://www.yeonggwang.go.kr/bbs/?b_id=news_data&site=headquarter_new&mn=9056"
@@ -479,7 +468,6 @@ sources:
     region: 전남광주통합특별시 진도
     enabled: true
     type: html_board
-    verify_ssl: false
     list_url: "https://www.jindo.go.kr/home/board/B0016.cs?m=626"
     include_url_contains:
       - "B0016.cs"
