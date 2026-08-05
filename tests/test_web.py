@@ -2758,6 +2758,54 @@ def test_font_is_served_with_long_cache(monkeypatch):
     assert response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
 
 
+def test_list_pages_show_relative_time(monkeypatch):
+    """목록 화면은 대시보드와 같은 상대 시간 표기를 써야 한다.
+
+    2026-08-04에 대시보드에만 적용해 초안·원문 목록은 절대 시각으로 남아 있었다.
+    """
+    db_path = Path(f"data/.test_list_relative_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    now_iso = datetime.now(LOCAL_TZ).isoformat()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="상대 시간 표기 점검 원문",
+            url="https://example.com/relative-time",
+            content="담양군은 점검을 진행했다고 밝혔다.",
+            published_at=now_iso,
+        )
+    )
+    assert release_id is not None
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="상대 시간 표기 점검 초안",
+            body="본문",
+            review_note="점검",
+            model="gemini-3.5-flash-lite",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    import re
+
+    for path in ("/drafts", "/press-releases"):
+        html = client.get(path).data.decode("utf-8")
+        # 오늘 게시분은 경과 시간으로 읽힌다(방금 전 / N분 전 / N시간 전).
+        assert re.search(r"(방금 전|\d+분 전|\d+시간 전)", html), path
+        # 마우스를 올리면 정확한 시각을 볼 수 있어야 정보가 사라지지 않는다.
+        assert "title=" in html, path
+
+
 def test_relative_time_label_reads_as_elapsed_time():
     """목록에서는 절대 시각보다 경과 시간이 잘 읽힌다(2026-08-04 요청)."""
     from news_summary.web import LOCAL_TZ, format_relative_time_label
