@@ -6446,6 +6446,13 @@ def _counts_for_regions(store: Store, selected_regions: list[str]) -> dict[str, 
     }
 
 
+def _search_like_pattern(term: str) -> str:
+    # 검색어의 %·_는 LIKE 와일드카드라 그대로 넣으면 전량이 걸린다("30%" 검색이 대표 예).
+    # 역슬래시를 먼저 escape해야 뒤에 붙는 escape가 겹치지 않는다.
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _draft_rows_for_listing(
     store: Store,
     *,
@@ -6488,15 +6495,15 @@ def _draft_rows_for_listing(
         where.append(f"{model_expr} LIKE ?")
         params.append("%:rule-based%")
     for term in [term.casefold() for term in query.split() if term.strip()]:
-        like = f"%{term}%"
+        like = _search_like_pattern(term)
         where.append(
             "("
-            "LOWER(COALESCE(ad.title, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.source_name, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.region, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.title, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.content, '')) LIKE ? OR "
-            "LOWER(COALESCE(ad.review_note, '')) LIKE ?"
+            "LOWER(COALESCE(ad.title, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.source_name, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.region, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.title, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.content, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(ad.review_note, '')) LIKE ? ESCAPE '\\'"
             ")"
         )
         params.extend([like] * 6)
@@ -6585,13 +6592,13 @@ def _press_release_rows_for_listing(
         where.append(f"{model_expr} LIKE ?")
         params.append("%:rule-based%")
     for term in [term.casefold() for term in query.split() if term.strip()]:
-        like = f"%{term}%"
+        like = _search_like_pattern(term)
         where.append(
             "("
-            "LOWER(COALESCE(pr.title, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.source_name, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.region, '')) LIKE ? OR "
-            "LOWER(COALESCE(pr.content, '')) LIKE ?"
+            "LOWER(COALESCE(pr.title, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.source_name, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.region, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(pr.content, '')) LIKE ? ESCAPE '\\'"
             ")"
         )
         params.extend([like] * 4)

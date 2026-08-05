@@ -2916,6 +2916,54 @@ def test_search_finds_collected_article_by_title_and_source(monkeypatch):
     assert "여름철 교통안전 캠페인" not in no_hit
 
 
+def test_search_treats_like_wildcards_as_literal_characters(monkeypatch):
+    """%·_는 LIKE 와일드카드가 아니라 찾는 글자여야 한다 — 아니면 전량이 걸린다."""
+    db_path = Path(f"data/.test_search_wildcard_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="담양군 관광객 30% 증가",
+            url="https://example.com/damyang-percent",
+            content="지난해 대비 30% 늘었다.",
+            published_at="2026-08-04",
+        )
+    )
+    store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="담양군 죽녹원 야간개장",
+            url="https://example.com/damyang-night",
+            content="죽녹원을 야간에 연다.",
+            published_at="2026-08-04",
+        )
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    def titles(q):
+        html = client.get("/press-releases", query_string={"q": q}).data.decode("utf-8")
+        return ("30% 증가" in html, "죽녹원 야간개장" in html)
+
+    # % 만 검색하면 %를 가진 기사만 나와야 한다(와일드카드였다면 둘 다 나온다).
+    assert titles("%") == (True, False)
+    # _ 도 마찬가지로 글자 그대로다 — 어느 기사에도 없으니 결과가 없어야 한다.
+    assert titles("_") == (False, False)
+    # 정상 검색어는 그대로 동작해야 한다.
+    assert titles("죽녹원") == (False, True)
+    assert titles("30%") == (True, False)
+
+
 def test_operations_page_hosts_moved_menus_and_group_jumps(monkeypatch):
     """상단 메뉴에서 내린 두 화면은 운영 관리에서 들어갈 수 있어야 한다.
 
