@@ -2373,6 +2373,77 @@ def test_asset_preview_disk_cache_survives_restart(monkeypatch, tmp_path):
     assert calls["count"] == 1
 
 
+def test_release_free_heap_never_raises_off_glibc():
+    """glibc가 아니면 조용히 넘어가야 한다 — 메모리 반납 실패가 이미지를 막으면 안 된다."""
+    from news_summary.web import _release_free_heap
+
+    # 반복 호출해도 예외가 없어야 하고, 반환값은 bool이다.
+    assert isinstance(_release_free_heap(), bool)
+    assert isinstance(_release_free_heap(), bool)
+
+
+def test_preview_generation_releases_free_heap(monkeypatch, tmp_path):
+    """새로 만든 썸네일 뒤에는 힙 반납을 시도해야 한다(2026-08-06 실측 대응).
+
+    생성 1건당 약 1MB가 glibc arena에 남아, 새 기사가 들어오는 낮 동안
+    4시간에 +71MB씩 올랐다. 디스크·메모리 캐시에서 나온 건은 원본을 펼치지
+    않으므로 호출할 이유가 없다.
+    """
+    db_path = Path(f"data/.test_preview_trim_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_PREVIEW_CACHE_DIR", str(tmp_path / "previews"))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="sample",
+            source_name="테스트 군청",
+            region="전남",
+            title="힙 반납 점검 원문",
+            url="https://example.com/trim-release",
+            content="테스트 군은 메모리 반납을 점검한다고 밝혔다.",
+            published_at="2026-08-06",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/download?fileId=trim",
+                    title="첨부 사진",
+                    filename="",
+                    content_type="",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    monkeypatch.setattr(
+        "news_summary.web._download_asset_content_from_url",
+        lambda url, asset, max_bytes=None: ("image/png", b"\x89PNG\r\n\x1a\n" + b"\x33" * 40),
+    )
+    calls = {"count": 0}
+    monkeypatch.setattr(
+        "news_summary.web._release_free_heap",
+        lambda: calls.__setitem__("count", calls["count"] + 1) or True,
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    first = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert first.status_code == 200
+    assert first.headers["X-News-Express-Preview-Cache"] == "MISS"
+    assert calls["count"] == 1, "새로 만든 뒤에는 반납해야 한다"
+
+    # 캐시에서 나온 건은 원본을 펼치지 않으므로 반납할 것도 없다.
+    second = client.get(f"/press-releases/assets/{asset_id}/preview")
+    assert second.headers["X-News-Express-Preview-Cache"] in {"HIT", "DISK"}
+    assert calls["count"] == 1, "캐시 적중까지 반납을 부르면 낭비다"
+
+
 def test_preview_disk_cache_evicts_oldest_when_over_budget(monkeypatch, tmp_path):
     """디스크는 백업·로그와 1GB를 나눠 쓰므로 상한을 넘으면 오래된 것부터 지운다."""
     import os as os_module
