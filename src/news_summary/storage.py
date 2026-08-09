@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 import sqlite3
 import threading
 import time
@@ -136,6 +137,22 @@ CREATE TABLE IF NOT EXISTS operation_events (
     detail TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS card_news_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id INTEGER NOT NULL,
+    press_release_id INTEGER NOT NULL,
+    publish_date TEXT NOT NULL,
+    cover TEXT NOT NULL,
+    cards TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '',
+    source_label TEXT NOT NULL DEFAULT '',
+    image_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    published_at TEXT NOT NULL DEFAULT ''
+);
 """
 
 POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
@@ -254,6 +271,22 @@ CREATE TABLE IF NOT EXISTS operation_events (
     detail TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS card_news_sets (
+    id BIGSERIAL PRIMARY KEY,
+    draft_id INTEGER NOT NULL,
+    press_release_id INTEGER NOT NULL,
+    publish_date TEXT NOT NULL,
+    cover TEXT NOT NULL,
+    cards TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '',
+    source_label TEXT NOT NULL DEFAULT '',
+    image_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    published_at TEXT NOT NULL DEFAULT ''
+);
 """
 
 INDEX_STATEMENTS = (
@@ -276,6 +309,8 @@ INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_checked_status ON source_collection_runs(checked_at, status, id)",
     "CREATE INDEX IF NOT EXISTS idx_source_collection_runs_status_id ON source_collection_runs(status, id)",
     "CREATE INDEX IF NOT EXISTS idx_visitor_access_logs_visited ON visitor_access_logs(visited_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_card_news_sets_publish ON card_news_sets(publish_date, status, id)",
+    "CREATE INDEX IF NOT EXISTS idx_card_news_sets_draft ON card_news_sets(draft_id)",
     "CREATE INDEX IF NOT EXISTS idx_operation_events_created ON operation_events(created_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_operation_events_type_created ON operation_events(event_type, created_at, id)",
 )
@@ -1892,6 +1927,117 @@ class Store:
                 """,
                 (cutoff_iso, limit),
             ).fetchall()
+
+    def save_card_news_set(
+        self,
+        *,
+        draft_id: int,
+        press_release_id: int,
+        publish_date: str,
+        cover: str,
+        cards: list[str],
+        tags: list[str],
+        source_label: str,
+        image_count: int,
+    ) -> int:
+        """카드뉴스 세트를 저장한다. 같은 초안을 다시 만들면 덮어쓴다(재생성 지원)."""
+        now = _now()
+        cards_json = json.dumps(cards, ensure_ascii=False)
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM card_news_sets WHERE draft_id = ?", (draft_id,)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE card_news_sets
+                    SET publish_date = ?, cover = ?, cards = ?, tags = ?, source_label = ?,
+                        image_count = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        publish_date,
+                        cover,
+                        cards_json,
+                        tags_json,
+                        source_label,
+                        image_count,
+                        now,
+                        existing["id"],
+                    ),
+                )
+                return int(existing["id"])
+            insert_sql = """
+                INSERT INTO card_news_sets
+                (draft_id, press_release_id, publish_date, cover, cards, tags, source_label,
+                 image_count, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+            """
+            params = (
+                draft_id,
+                press_release_id,
+                publish_date,
+                cover,
+                cards_json,
+                tags_json,
+                source_label,
+                image_count,
+                now,
+                now,
+            )
+            if self.is_postgres:
+                row = conn.execute(insert_sql + " RETURNING id", params).fetchone()
+                return int(row["id"]) if row else 0
+            cur = conn.execute(insert_sql, params)
+            return int(cur.lastrowid or 0)
+
+    def card_news_set(self, set_id: int):
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM card_news_sets WHERE id = ?", (set_id,)).fetchone()
+
+    def card_news_set_by_draft(self, draft_id: int):
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM card_news_sets WHERE draft_id = ?", (draft_id,)
+            ).fetchone()
+
+    def card_news_sets_for_date(self, publish_date: str, status: str | None = None) -> list:
+        sql = "SELECT * FROM card_news_sets WHERE publish_date = ?"
+        params: list[object] = [publish_date]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY id ASC"
+        with self.connect() as conn:
+            return conn.execute(sql, tuple(params)).fetchall()
+
+    def card_news_published_dates(self, limit: int = 30) -> list[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT publish_date
+                FROM card_news_sets
+                WHERE status = 'published'
+                ORDER BY publish_date DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [str(row["publish_date"]) for row in rows]
+
+    def set_card_news_status(self, set_id: int, status: str) -> None:
+        now = _now()
+        published_at = now if status == "published" else ""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE card_news_sets SET status = ?, published_at = ?, updated_at = ? WHERE id = ?",
+                (status, published_at, now, set_id),
+            )
+
+    def delete_card_news_set(self, set_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM card_news_sets WHERE id = ?", (set_id,))
 
     def prune_visitor_access_logs(self, cutoff_iso: str) -> int:
         with self.connect() as conn:
