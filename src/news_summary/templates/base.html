@@ -6,6 +6,12 @@
   <title>{% if page_title %}{{ page_title }} · {% endif %}KBC NEWS EXPRESS</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_version) }}">
+  {# 카톡·밴드로 퍼갈 때 표지 카드가 미리보기로 떠야 확산된다. #}
+  <meta property="og:site_name" content="KBC NEWS EXPRESS">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{% block og_title %}{% if page_title %}{{ page_title }} · {% endif %}KBC NEWS EXPRESS{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}광주·전남 지자체 소식을 매일 정리해 전합니다.{% endblock %}">
+  {% block og_image %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
@@ -16,6 +22,7 @@
     <nav class="topnav" aria-label="주요 메뉴">
       <div class="desktop-nav-links">
         <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
+        <a href="{{ url_for('card_news') }}" {% if request.endpoint in ['card_news', 'card_news_manage'] %}class="active" aria-current="page"{% endif %}>카드뉴스</a>
         <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
         {% if auth_state.enabled %}
           {% if admin_authenticated %}
@@ -32,6 +39,7 @@
         <summary>메뉴</summary>
         <div class="mobile-dash-panel">
           <a href="{{ url_for('drafts') }}" {% if request.endpoint in ['drafts', 'draft_detail', 'next_review_draft'] %}class="active" aria-current="page"{% endif %}>초안 검수</a>
+          <a href="{{ url_for('card_news') }}" {% if request.endpoint in ['card_news', 'card_news_manage'] %}class="active" aria-current="page"{% endif %}>카드뉴스</a>
           <a href="{{ url_for('operations') }}" {% if request.endpoint in ['operations', 'ops_logs'] %}class="active" aria-current="page"{% endif %}>운영 관리</a>
           {% if auth_state.enabled %}
             {% if admin_authenticated %}

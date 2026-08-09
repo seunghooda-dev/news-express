@@ -39,7 +39,7 @@ def build_set_for_draft(
     output_root: Path,
     publish_date: str | None = None,
     downloader=None,
-    copy_builder=build_card_copy,
+    copy_builder=None,
 ) -> CardNewsSet:
     """초안 하나를 카드뉴스 세트로 만든다.
 
@@ -58,6 +58,8 @@ def build_set_for_draft(
 
     source_label = str(release["source_name"] or "")
     publish_date = publish_date or datetime.now().date().isoformat()
+    # 기본 인자로 두면 정의 시점에 묶여 교체가 안 된다 — 호출 때 고른다.
+    copy_builder = copy_builder or build_card_copy
 
     copy = copy_builder(
         CardCopyRequest(
@@ -95,7 +97,11 @@ def build_set_for_draft(
 
 
 def _own_photos(store: Store, release_id: int, downloader) -> list[bytes]:
-    """**그 원문에 붙은 첨부만** 내려받는다. 다른 기사 사진이 섞일 여지를 두지 않는다."""
+    """**그 원문에 붙은 첨부만** 내려받는다. 다른 기사 사진이 섞일 여지를 두지 않는다.
+
+    downloader는 자산 행을 통째로 받는다 — 요청 헤더(리퍼러 등)를 만들려면 URL만으로
+    부족한 기관이 있다.
+    """
     if downloader is None:
         return []
     photos: list[bytes] = []
@@ -105,7 +111,7 @@ def _own_photos(store: Store, release_id: int, downloader) -> list[bytes]:
         if not asset["is_image"]:
             continue
         try:
-            content = downloader(str(asset["url"]))
+            content = downloader(asset)
         except Exception as exc:  # noqa: BLE001 - 첨부 하나가 실패해도 세트는 나와야 한다.
             logger.info("card news photo download failed asset=%s error=%s", asset["id"], exc)
             continue

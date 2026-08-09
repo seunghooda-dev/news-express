@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block og_title %}오늘의 카드뉴스 {{ date_label }} · KBC NEWS EXPRESS{% endblock %}
+{% block og_description %}광주·전남 지자체 소식을 카드뉴스로 정리했습니다.{% endblock %}
+{% block og_image %}
+  {% if sets %}
+    <meta property="og:image" content="{{ url_for('card_news_image', set_id=sets[0].id, index=1, _external=True) }}">
+  {% endif %}
+{% endblock %}
+{% block content %}
+<section class="section-head">
+  <h1>오늘의 카드뉴스</h1>
+  <span class="cardnews-date">{{ date_label }}</span>
+</section>
+
+{% if available_dates|length > 1 %}
+  <nav class="cardnews-dates" aria-label="날짜 선택">
+    {% for day in available_dates[:10] %}
+      <a href="{{ url_for('card_news', date=day) }}" {% if day == publish_date %}class="active" aria-current="page"{% endif %}>{{ day[5:] }}</a>
+    {% endfor %}
+  </nav>
+{% endif %}
+
+{% if not sets %}
+  <p class="empty-note">아직 발행된 카드뉴스가 없습니다.</p>
+{% endif %}
+
+{% for item in sets %}
+  <article class="cardnews-set">
+    <h2>{{ item.card_copy.cover }}</h2>
+    <div class="cardnews-strip" tabindex="0" aria-label="{{ item.card_copy.cover }} 카드 {{ item.image_indexes|length }}장">
+      {% for index in item.image_indexes %}
+        <a class="cardnews-slide" href="{{ url_for('card_news_image', set_id=item.id, index=index) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('card_news_image', set_id=item.id, index=index) }}"
+               alt="{{ item.card_copy.cover }} {{ index }}번째 카드" loading="lazy" width="1080" height="1350">
+        </a>
+      {% endfor %}
+    </div>
+    <p class="cardnews-meta">
+      <span>{{ item.card_copy.source_label }}</span>
+      {% for tag in item.card_copy.tags %}<span class="cardnews-tag">#{{ tag }}</span>{% endfor %}
+    </p>
+    <p class="cardnews-actions">
+      <a href="{{ url_for('draft_detail', draft_id=item.draft_id) }}">기사 전문 보기</a>
+    </p>
+  </article>
+{% endfor %}
+{% endblock %}

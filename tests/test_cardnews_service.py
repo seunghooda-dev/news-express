@@ -88,7 +88,7 @@ def test_builds_set_and_writes_images(tmp_path):
         "key",
         out,
         publish_date="2026-08-09",
-        downloader=lambda url: photo_bytes(),
+        downloader=lambda asset: photo_bytes(),
         copy_builder=fake_copy_builder,
     )
 
@@ -110,8 +110,8 @@ def test_only_downloads_photos_from_its_own_release(tmp_path):
 
     requested: list[str] = []
 
-    def downloader(url):
-        requested.append(url)
+    def downloader(asset):
+        requested.append(str(asset["url"]))
         return photo_bytes()
 
     build_set_for_draft(
@@ -134,7 +134,7 @@ def test_persists_copy_for_later_editing(tmp_path):
 
     result = build_set_for_draft(
         store, draft_id, "key", tmp_path / "cardnews",
-        publish_date="2026-08-09", downloader=lambda url: photo_bytes(),
+        publish_date="2026-08-09", downloader=lambda asset: photo_bytes(),
         copy_builder=fake_copy_builder,
     )
 
@@ -156,11 +156,11 @@ def test_rebuilding_same_draft_replaces_instead_of_duplicating(tmp_path):
 
     first = build_set_for_draft(
         store, draft_id, "key", out, publish_date="2026-08-09",
-        downloader=lambda url: photo_bytes(), copy_builder=fake_copy_builder,
+        downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
     )
     second = build_set_for_draft(
         store, draft_id, "key", out, publish_date="2026-08-09",
-        downloader=lambda url: photo_bytes(), copy_builder=fake_copy_builder,
+        downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
     )
 
     assert first.set_id == second.set_id
@@ -173,7 +173,7 @@ def test_photo_download_failure_still_produces_cards(tmp_path):
     store = make_store(tmp_path)
     _, draft_id = seed(store)
 
-    def broken(url):
+    def broken(asset):
         raise TimeoutError("image host down")
 
     result = build_set_for_draft(
@@ -190,7 +190,7 @@ def test_missing_draft_is_rejected(tmp_path):
     with pytest.raises(CardNewsServiceError, match="찾을 수 없습니다"):
         build_set_for_draft(
             store, 9999, "key", tmp_path / "cardnews",
-            downloader=lambda url: photo_bytes(), copy_builder=fake_copy_builder,
+            downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
         )
 
 
@@ -199,7 +199,7 @@ def test_publish_status_transition(tmp_path):
     _, draft_id = seed(store)
     result = build_set_for_draft(
         store, draft_id, "key", tmp_path / "cardnews", publish_date="2026-08-09",
-        downloader=lambda url: photo_bytes(), copy_builder=fake_copy_builder,
+        downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
     )
 
     assert store.card_news_sets_for_date("2026-08-09", status="published") == []
@@ -216,7 +216,7 @@ def test_delete_removes_images_and_row(tmp_path):
     out = tmp_path / "cardnews"
     result = build_set_for_draft(
         store, draft_id, "key", out, publish_date="2026-08-09",
-        downloader=lambda url: photo_bytes(), copy_builder=fake_copy_builder,
+        downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
     )
 
     delete_set_images(out, "2026-08-09", result.set_id)

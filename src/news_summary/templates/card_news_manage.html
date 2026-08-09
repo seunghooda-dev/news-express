@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-head">
+  <h1>카드뉴스 관리</h1>
+  <a class="source-link" href="{{ url_for('card_news') }}">공개 화면</a>
+</section>
+
+<form class="source-filter" method="get">
+  <label for="cardnews-date">발행일</label>
+  <input id="cardnews-date" type="date" name="date" value="{{ publish_date }}">
+  <button type="submit">이동</button>
+</form>
+
+{% if not gemini_ready %}
+  <p class="empty-note">Gemini API 키가 없어 카드 문안을 만들 수 없습니다.</p>
+{% endif %}
+
+<h2 class="cardnews-subhead">만든 카드뉴스 ({{ sets|length }})</h2>
+{% if not sets %}
+  <p class="empty-note">{{ date_label }}에 만든 카드뉴스가 없습니다. 아래에서 초안을 골라 만드세요.</p>
+{% endif %}
+
+{% for item in sets %}
+  <article class="cardnews-set">
+    <h3>
+      {{ item.card_copy.cover }}
+      <span class="badge {% if item.status == 'published' %}badge-ok{% else %}badge-neutral{% endif %}">
+        {% if item.status == 'published' %}발행됨{% else %}검수 대기{% endif %}
+      </span>
+    </h3>
+    <div class="cardnews-strip">
+      {% for index in item.image_indexes %}
+        <a class="cardnews-slide" href="{{ url_for('card_news_image', set_id=item.id, index=index) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('card_news_image', set_id=item.id, index=index) }}"
+               alt="{{ index }}번째 카드" loading="lazy" width="1080" height="1350">
+        </a>
+      {% endfor %}
+    </div>
+    <ol class="cardnews-copy-list">
+      {% for line in item.card_copy.cards %}<li>{{ line }}</li>{% endfor %}
+    </ol>
+    {# 사진과 본문이 어긋나면 신뢰 사고다 — 원문을 나란히 두어 사람이 대조하게 한다. #}
+    <p class="cardnews-actions">
+      <a href="{{ url_for('draft_detail', draft_id=item.draft_id) }}">원문·초안 대조</a>
+    </p>
+    <div class="cardnews-controls">
+      <form method="post" action="{{ url_for('card_news_build') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="draft_id" value="{{ item.draft_id }}">
+        <input type="hidden" name="publish_date" value="{{ publish_date }}">
+        <button type="submit">다시 만들기</button>
+      </form>
+      <form method="post" action="{{ url_for('card_news_publish', set_id=item.id) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="publish" value="{% if item.status == 'published' %}0{% else %}1{% endif %}">
+        <button type="submit">{% if item.status == 'published' %}발행 내리기{% else %}발행하기{% endif %}</button>
+      </form>
+      <form method="post" action="{{ url_for('card_news_delete', set_id=item.id) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">삭제</button>
+      </form>
+    </div>
+  </article>
+{% endfor %}
+
+<h2 class="cardnews-subhead">초안에서 만들기</h2>
+{% if not candidates %}
+  <p class="empty-note">{{ date_label }}에 해당하는 초안이 없습니다.</p>
+{% endif %}
+<section class="list">
+  {% for candidate in candidates %}
+    <div class="row cardnews-candidate">
+      <span class="row-content">
+        <strong>{{ candidate.title }}</strong>
+        <span class="row-meta row-meta-main">
+          <span>{{ candidate.source_name }}</span>
+          {% if candidate.has_set %}<span class="badge badge-neutral">이미 만듦</span>{% endif %}
+        </span>
+      </span>
+      <form method="post" action="{{ url_for('card_news_build') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="draft_id" value="{{ candidate.draft_id }}">
+        <input type="hidden" name="publish_date" value="{{ publish_date }}">
+        <button type="submit">카드 만들기</button>
+      </form>
+    </div>
+  {% endfor %}
+</section>
+{% endblock %}

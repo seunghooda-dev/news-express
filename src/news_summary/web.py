@@ -20,7 +20,7 @@ from threading import BoundedSemaphore, RLock
 from urllib.parse import quote, urlparse
 
 import httpx
-from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
 from .asset_filters import is_display_noise_image_asset
@@ -55,6 +55,13 @@ from .scheduler import (
     _auto_queue_drain_interval_seconds,
     _auto_queue_drain_ready_recheck_seconds,
     _source_recovery_candidates,
+)
+from .cardnews_service import (
+    build_set_for_draft,
+    decode_cards,
+    delete_set_images,
+    load_set_images,
+    prune_old_dates,
 )
 from .memory import release_free_heap
 from .models import Source
@@ -107,6 +114,9 @@ PUBLIC_READ_ENDPOINTS = {
     "download_press_release_asset",
     "recrawl_status",
     "search",
+    # 카드뉴스는 주민에게 보여 주는 것이 목적이라 로그인 없이 열린다.
+    "card_news",
+    "card_news_image",
 }
 # 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
 # open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
@@ -334,6 +344,8 @@ def create_app() -> Flask:
     # 백업과 같은 디스크(Render에서는 /var/data)를 쓴다 — 기본값은 영구 보관 경로.
     # 테스트는 conftest가 이 변수를 테스트별 임시 경로로 고정해 서로 격리한다.
     preview_disk_dir = env_path("NEWS_SUMMARY_PREVIEW_CACHE_DIR", str(backup_dir.parent / "previews"))
+    # 카드뉴스 이미지도 같은 영구 디스크에 둔다 — 재기동해도 남아야 한다.
+    cardnews_dir = env_path("NEWS_SUMMARY_CARDNEWS_DIR", str(backup_dir.parent / "cardnews"))
 
     @app.context_processor
     def inject_auth_state():
@@ -1444,6 +1456,98 @@ def create_app() -> Flask:
                 response_content,
             )
         return _asset_preview_response(response_content_type, response_content, "MISS")
+
+    @app.get("/card-news")
+    def card_news():
+        published = store.card_news_published_dates(limit=30)
+        target = (request.args.get("date") or "").strip()
+        if target not in published:
+            target = published[0] if published else datetime.now(LOCAL_TZ).date().isoformat()
+        return render_template(
+            "card_news.html",
+            publish_date=target,
+            date_label=format_datetime_label(target),
+            available_dates=published,
+            sets=_card_news_view_sets(store, cardnews_dir, target, status="published"),
+        )
+
+    @app.get("/card-news/<int:set_id>/<int:index>.png")
+    def card_news_image(set_id: int, index: int):
+        row = store.card_news_set(set_id)
+        if not row:
+            abort(404)
+        # 발행 전 세트는 관리자만 미리 볼 수 있다.
+        if str(row["status"]) != "published" and not session.get("admin_authenticated"):
+            abort(404)
+        paths = load_set_images(cardnews_dir, str(row["publish_date"]), set_id)
+        if not 1 <= index <= len(paths):
+            abort(404)
+        response = send_file(paths[index - 1], mimetype="image/png")
+        # 파일명이 곧 버전이 아니므로 재생성 시 갱신되도록 짧게 잡는다.
+        response.headers["Cache-Control"] = "public, max-age=600"
+        return response
+
+    @app.get("/card-news/manage")
+    def card_news_manage():
+        target = (request.args.get("date") or datetime.now(LOCAL_TZ).date().isoformat()).strip()
+        candidates = _card_news_candidates(store, target)
+        return render_template(
+            "card_news_manage.html",
+            publish_date=target,
+            date_label=format_datetime_label(target),
+            sets=_card_news_view_sets(store, cardnews_dir, target),
+            candidates=candidates,
+            gemini_ready=bool(gemini_api_key()),
+        )
+
+    @app.post("/card-news/build")
+    def card_news_build():
+        draft_id = _card_news_draft_id(request.form.get("draft_id"))
+        target = (request.form.get("publish_date") or datetime.now(LOCAL_TZ).date().isoformat()).strip()
+        if not draft_id:
+            flash("초안을 고르지 못했습니다.")
+            return redirect(url_for("card_news_manage", date=target))
+        api_key = gemini_api_key()
+        if not api_key:
+            flash("Gemini API 키가 없어 카드 문안을 만들 수 없습니다.")
+            return redirect(url_for("card_news_manage", date=target))
+        try:
+            result = build_set_for_draft(
+                store,
+                draft_id,
+                api_key,
+                cardnews_dir,
+                publish_date=target,
+                downloader=lambda url: _download_card_photo(url),
+            )
+        except Exception as exc:  # noqa: BLE001 - 실패 사유를 화면에 보여 준다.
+            logger.warning("card news build failed draft_id=%s error=%s", draft_id, exc)
+            flash(f"카드뉴스 생성 실패: {exc}")
+            return redirect(url_for("card_news_manage", date=target))
+        flash(f"카드뉴스 {len(result.image_paths)}장을 만들었습니다. 확인 후 발행하세요.")
+        return redirect(url_for("card_news_manage", date=target))
+
+    @app.post("/card-news/<int:set_id>/publish")
+    def card_news_publish(set_id: int):
+        row = store.card_news_set(set_id)
+        if not row:
+            abort(404)
+        target = str(row["publish_date"])
+        publish = (request.form.get("publish") or "1") == "1"
+        store.set_card_news_status(set_id, "published" if publish else "draft")
+        flash("카드뉴스를 발행했습니다." if publish else "발행을 내렸습니다.")
+        return redirect(url_for("card_news_manage", date=target))
+
+    @app.post("/card-news/<int:set_id>/delete")
+    def card_news_delete(set_id: int):
+        row = store.card_news_set(set_id)
+        if not row:
+            abort(404)
+        target = str(row["publish_date"])
+        delete_set_images(cardnews_dir, target, set_id)
+        store.delete_card_news_set(set_id)
+        flash("카드뉴스를 삭제했습니다.")
+        return redirect(url_for("card_news_manage", date=target))
 
     @app.get("/sources/<source_id>")
     def source_detail(source_id: str):
@@ -2809,6 +2913,59 @@ def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, by
     if not resized or len(resized) >= len(content):
         return content_type, content
     return "image/jpeg", resized
+
+
+def gemini_api_key() -> str:
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+
+
+def _card_news_draft_id(value: str | None) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except ValueError:
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _download_card_photo(asset) -> bytes:
+    """카드뉴스용 원본 사진을 내려받는다. 축소본(480px)은 1080 카드에 못 쓴다."""
+    _, content = _download_asset_content_from_url(str(asset["url"]), asset)
+    return content
+
+
+def _card_news_candidates(store: Store, publish_date: str, limit: int = 12) -> list[dict]:
+    """그날 카드로 만들 만한 초안 후보. 이미 세트가 있는 초안은 표시해 중복 생성을 막는다."""
+    rows = _draft_rows_for_listing(store, target_date=_parse_date(publish_date), limit=limit)
+    candidates = []
+    for row in rows:
+        existing = store.card_news_set_by_draft(int(row["id"]))
+        candidates.append(
+            {
+                "draft_id": int(row["id"]),
+                "title": str(row["title"] or ""),
+                "source_name": str(row["source_name"] or ""),
+                "has_set": existing is not None,
+            }
+        )
+    return candidates
+
+
+def _card_news_view_sets(store: Store, root: Path, publish_date: str, status: str | None = None) -> list[dict]:
+    sets = []
+    for row in store.card_news_sets_for_date(publish_date, status=status):
+        set_id = int(row["id"])
+        images = load_set_images(root, publish_date, set_id)
+        sets.append(
+            {
+                "id": set_id,
+                "draft_id": int(row["draft_id"]),
+                "status": str(row["status"]),
+                # "copy"로 두면 Jinja가 dict.copy 메서드를 먼저 집어 값이 통째로 빈다.
+                "card_copy": decode_cards(row),
+                "image_indexes": list(range(1, len(images) + 1)),
+            }
+        )
+    return sets
 
 
 def _release_free_heap() -> bool:
