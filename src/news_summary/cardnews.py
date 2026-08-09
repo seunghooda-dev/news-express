@@ -17,9 +17,15 @@ logger = logging.getLogger(__name__)
 CARD_WIDTH = 1080
 CARD_HEIGHT = 1350
 
-# 이보다 작은 사진은 확대하지 않는다 — 확대하면 화질 저하가 그대로 보인다.
+# 이보다 좁은 사진은 확대하지 않는다 — 확대하면 화질 저하가 그대로 보인다.
 # 실측상 원본의 약 40%가 여기에 걸린다(980x735, 600x400 등).
+# 판정 축은 **폭**이다. 밴드에 넣을 때 폭을 기준으로 배율을 잡으므로 긴 변으로
+# 재면 800x2000 같은 세로 사진이 1.35배로 확대돼 버린다(2026-08-09 검토에서 적발).
 MIN_PHOTO_EDGE = 1080
+
+# 카드 폭이 1080이라 원본을 그대로 들고 있을 이유가 없다. 25MB JPEG가 1억 화소면
+# RGB로 펼쳐 240MB인데 세트당 4장을 동시에 쥔다 — 이 서비스는 512MB에서 돈다.
+MAX_WORKING_EDGE = CARD_WIDTH * 2
 
 COVER_PHOTO_RATIO = 0.58
 BODY_PHOTO_RATIO = 0.42
@@ -67,11 +73,17 @@ class CardCopy:
     tags: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        # 예전 형태(문자열 리스트)로 만들어진 세트도 그대로 읽히게 한다.
-        self.cards = [
-            slide if isinstance(slide, CardSlide) else CardSlide(heading="", body=str(slide))
-            for slide in self.cards
-        ]
+        # 옛 형태(문자열)와 저장 형태(dict) 모두 받아 준다. 무엇이든 str()로 감싸면
+        # dict의 repr이 카드에 그대로 인쇄되므로 형태별로 나눠 읽는다.
+        self.cards = [_as_slide(slide) for slide in self.cards]
+
+
+def _as_slide(value: object) -> CardSlide:
+    if isinstance(value, CardSlide):
+        return value
+    if isinstance(value, dict):
+        return CardSlide(heading=str(value.get("heading") or ""), body=str(value.get("body") or ""))
+    return CardSlide(heading="", body=str(value))
 
 
 class CardNewsError(RuntimeError):
@@ -116,14 +128,18 @@ def _usable_photos(photos: Sequence[bytes]) -> list[Image.Image]:
             continue
         try:
             image = Image.open(io.BytesIO(raw))
+            # JPEG는 디코딩 단계에서 미리 줄여 펼치는 메모리 자체를 아낀다.
+            image.draft("RGB", (MAX_WORKING_EDGE, MAX_WORKING_EDGE))
             image.load()
+            if image.width < MIN_PHOTO_EDGE:
+                logger.info("card news photo too narrow size=%sx%s", image.width, image.height)
+                image.close()
+                continue
             image = image.convert("RGB")
+            if max(image.size) > MAX_WORKING_EDGE:
+                image.thumbnail((MAX_WORKING_EDGE, MAX_WORKING_EDGE), Image.LANCZOS)
         except Exception as exc:  # noqa: BLE001 - 첨부 하나가 깨져도 카드는 나와야 한다.
             logger.info("card news photo skipped error=%s", exc)
-            continue
-        if max(image.size) < MIN_PHOTO_EDGE:
-            logger.info("card news photo too small size=%sx%s", image.width, image.height)
-            image.close()
             continue
         usable.append(image)
     return usable
@@ -280,7 +296,9 @@ def _render_body(slide: CardSlide, index: int, total: int, photo: Image.Image | 
     block_height = sum(len(lines) * step for _, lines, _, step in blocks)
     block_height += HEADING_GAP * (len(blocks) - 1) if len(blocks) > 1 else 0
     available = CARD_HEIGHT - text_area_top - 130
-    y = text_area_top + max(60, (available - block_height) // 2)
+    # 하한만 두면 블록이 available보다 클 때 글자가 카드 밖으로 흘러 장수 표시와 겹친다
+    # (2026-08-09 검토에서 적발 — 줄 수는 통과하는데 높이가 넘치는 대역이 있다).
+    y = text_area_top + min(max(60, (available - block_height) // 2), max(0, available - block_height))
     for order, (font, lines, colour, step) in enumerate(blocks):
         if order:
             y += HEADING_GAP

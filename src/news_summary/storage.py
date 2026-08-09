@@ -1953,7 +1953,7 @@ class Store:
                     """
                     UPDATE card_news_sets
                     SET publish_date = ?, cover = ?, cards = ?, tags = ?, source_label = ?,
-                        image_count = ?, updated_at = ?
+                        image_count = ?, updated_at = ?, status = 'draft', published_at = ''
                     WHERE id = ?
                     """,
                     (
@@ -2030,8 +2030,13 @@ class Store:
         """사람이 손질한 문안을 저장한다. AI 재생성 말고 한 글자만 고치고 싶을 때 쓴다."""
         with self.connect() as conn:
             conn.execute(
-                "UPDATE card_news_sets SET cover = ?, cards = ?, updated_at = ? WHERE id = ?",
-                (cover, json.dumps(cards, ensure_ascii=False), _now(), set_id),
+                """
+                UPDATE card_news_sets
+                SET cover = ?, cards = ?, image_count = ?, updated_at = ?,
+                    status = 'draft', published_at = ''
+                WHERE id = ?
+                """,
+                (cover, json.dumps(cards, ensure_ascii=False), len(cards) + 1, _now(), set_id),
             )
 
     def set_card_news_status(self, set_id: int, status: str) -> None:

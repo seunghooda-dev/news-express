@@ -130,6 +130,18 @@ def test_plain_string_card_is_read_as_body_without_heading():
         build_card_copy(sample_request(), "key", models=("m1",), generator=responder(json.dumps(payload)))
 
 
+def test_extra_keys_from_model_are_ignored():
+    """장수를 세게 하려고 slots 같은 키를 출력에 넣었다 — 검증이 그것 때문에 깨지면 안 된다."""
+    payload = good_payload()
+    payload["slots"] = ["자격", "일정", "비용"]
+    payload["card_count"] = 3
+
+    copy = build_card_copy(sample_request(), "key", generator=responder(json.dumps(payload)))
+
+    assert len(copy.cards) == 3
+    assert copy.cover
+
+
 def test_rejects_overlong_cover():
     payload = good_payload()
     payload["cover"] = "가" * (MAX_COVER_CHARS + 1)
@@ -185,8 +197,31 @@ def test_falls_back_to_next_model_when_first_breaks_spec():
         sample_request(), "key", models=("first", "second"), generator=responder(payload_for, calls)
     )
 
-    assert calls == ["first", "second"]
+    # 첫 모델은 일시 장애일 수 있어 한 번 더 준다 — 그래도 안 되면 다음 모델로 넘어간다.
+    assert calls == ["first", "first", "second"]
     assert copy.cover == "담양 무더위쉼터 전면 점검"
+
+
+def test_primary_model_gets_a_second_chance():
+    """좋은 모델을 일시 장애 한 번으로 버리면 규격을 잘 못 맞추는 예비 모델만 남는다.
+
+    실측(2026-08-09): flash 규격 통과 11/12, lite 1/2. 유일한 실패가 flash 503 뒤 lite였다.
+    """
+    calls: list[str] = []
+
+    def payload_for(model_name):
+        # 첫 호출만 망가뜨리고 두 번째부터는 정상 — 재시도가 없으면 lite로 넘어간다.
+        if model_name == "flash" and calls.count("flash") == 1:
+            raise RuntimeError("503 UNAVAILABLE")
+        return json.dumps(good_payload())
+
+    copy = build_card_copy(
+        sample_request(), "key", models=("flash", "lite"), generator=responder(payload_for, calls)
+    )
+
+    assert calls[:2] == ["flash", "flash"], "첫 모델에 한 번 더 기회를 줘야 한다"
+    assert "lite" not in calls, "재시도로 통과했으면 예비 모델까지 가지 않는다"
+    assert copy.cover
 
 
 def test_reports_every_attempted_model_when_all_fail():

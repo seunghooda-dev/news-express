@@ -159,7 +159,9 @@ def load_set_images(output_root: Path, publish_date: str, set_id: int) -> list[P
     directory = set_directory(output_root, publish_date, set_id)
     if not directory.is_dir():
         return []
-    return sorted(directory.glob(f"*{CARD_IMAGE_SUFFIX}"), key=lambda p: int(p.stem))
+    # 숫자가 아닌 png가 섞이면 int()가 터져 화면이 500이 된다 — 그런 파일은 건너뛴다.
+    numbered = [path for path in directory.glob(f"*{CARD_IMAGE_SUFFIX}") if path.stem.isdigit()]
+    return sorted(numbered, key=lambda path: int(path.stem))
 
 
 def delete_set_images(output_root: Path, publish_date: str, set_id: int) -> None:
@@ -195,8 +197,11 @@ def _json_slides(value) -> list[CardSlide]:
     try:
         parsed = json.loads(value or "[]")
     except (TypeError, json.JSONDecodeError):
+        # 조용히 0장이 되면 공개 화면은 멀쩡해 보이고 관리 화면만 비어 복구가 막힌다.
+        logger.warning("card news cards column unreadable value=%r", str(value)[:120])
         return []
     if not isinstance(parsed, list):
+        logger.warning("card news cards column is not a list type=%s", type(parsed).__name__)
         return []
     slides: list[CardSlide] = []
     for item in parsed:

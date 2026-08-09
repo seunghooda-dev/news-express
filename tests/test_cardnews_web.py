@@ -241,10 +241,13 @@ def test_editing_copy_saves_and_redraws_without_calling_ai(monkeypatch, tmp_path
 
     response = client.post(
         f"/card-news/{set_id}/copy",
+        # 필드명에 인덱스를 붙여 소제목·본문이 위치가 아니라 번호로 짝지어진다.
         data={
             "cover": "사람이 고친 표지",
-            "heading": ["사람이 고친 소제목", "둘째 카드 소제목"],
-            "body": ["사람이 손질한 첫째 카드 본문입니다.", "사람이 손질한 둘째 카드 본문입니다."],
+            "heading-0": "사람이 고친 소제목",
+            "body-0": "사람이 손질한 첫째 카드 본문입니다. 규격에 맞게 충분히 씁니다.",
+            "heading-1": "둘째 카드 소제목",
+            "body-1": "사람이 손질한 둘째 카드 본문입니다. 규격에 맞게 충분히 씁니다.",
         },
         follow_redirects=True,
     )
@@ -254,8 +257,8 @@ def test_editing_copy_saves_and_redraws_without_calling_ai(monkeypatch, tmp_path
     assert row["cover"] == "사람이 고친 표지"
     # 소제목과 본문이 짝을 유지한 채 저장돼야 다시 그린 카드가 어긋나지 않는다.
     assert json.loads(row["cards"]) == [
-        {"heading": "사람이 고친 소제목", "body": "사람이 손질한 첫째 카드 본문입니다."},
-        {"heading": "둘째 카드 소제목", "body": "사람이 손질한 둘째 카드 본문입니다."},
+        {"heading": "사람이 고친 소제목", "body": "사람이 손질한 첫째 카드 본문입니다. 규격에 맞게 충분히 씁니다."},
+        {"heading": "둘째 카드 소제목", "body": "사람이 손질한 둘째 카드 본문입니다. 규격에 맞게 충분히 씁니다."},
     ]
     assert calls["ai"] == 0, "문안 손질에 AI를 다시 부르면 고친 글자가 덮인다"
 
@@ -273,11 +276,75 @@ def test_editing_copy_rejects_empty_input(monkeypatch, tmp_path):
 
     client.post(
         f"/card-news/{set_id}/copy",
-        data={"cover": "   ", "heading": [""], "body": [""]},
+        data={"cover": "   ", "heading-0": "", "body-0": ""},
         follow_redirects=True,
     )
 
     assert store.card_news_set(set_id)["cover"] == "담양 무더위쉼터 전면 점검", "빈 입력으로 덮이면 안 된다"
+
+
+def test_editing_copy_enforces_the_same_limits_as_ai(monkeypatch, tmp_path):
+    """AI 출력에만 규격을 걸고 사람 입력은 무검증이면 글자가 카드 밖으로 샌다.
+
+    2026-08-09 검토에서 적발 — 폼 maxlength 안쪽 입력도 카드 높이를 넘길 수 있었다.
+    """
+    from news_summary.cardcopy import MAX_CARD_CHARS, MAX_HEADING_CHARS
+
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    build_one(client, draft_id)
+    set_id = store.card_news_set_by_draft(draft_id)["id"]
+    original = store.card_news_set(set_id)["cards"]
+
+    response = client.post(
+        f"/card-news/{set_id}/copy",
+        data={
+            "cover": "규격 확인 표지",
+            "heading-0": "가" * (MAX_HEADING_CHARS + 1),
+            "body-0": "나" * 40,
+            "heading-1": "정상 소제목",
+            "body-1": "다" * 40,
+        },
+        follow_redirects=True,
+    )
+
+    assert "소제목은" in response.data.decode("utf-8"), "왜 거절됐는지 알려 줘야 한다"
+    assert store.card_news_set(set_id)["cards"] == original, "규격 위반이 저장되면 안 된다"
+
+    too_long_body = client.post(
+        f"/card-news/{set_id}/copy",
+        data={"cover": "규격 확인 표지", "heading-0": "정상 소제목", "body-0": "라" * (MAX_CARD_CHARS + 1)},
+        follow_redirects=True,
+    )
+    assert "본문은" in too_long_body.data.decode("utf-8")
+    assert store.card_news_set(set_id)["cards"] == original
+
+
+def test_editing_copy_pairs_by_index_not_position(monkeypatch, tmp_path):
+    """위치로 zip하면 중간 필드가 빠졌을 때 소제목이 다른 카드 본문에 붙는다."""
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    build_one(client, draft_id)
+    set_id = store.card_news_set_by_draft(draft_id)["id"]
+
+    # 0번 소제목이 통째로 빠진 상황 — 1번 소제목이 0번 본문에 붙으면 안 된다.
+    client.post(
+        f"/card-news/{set_id}/copy",
+        data={
+            "cover": "짝짓기 확인 표지",
+            "body-0": "첫째 카드 본문입니다. 규격에 맞게 충분히 씁니다.",
+            "heading-1": "둘째 소제목",
+            "body-1": "둘째 카드 본문입니다. 규격에 맞게 충분히 씁니다.",
+        },
+        follow_redirects=True,
+    )
+
+    saved = json.loads(store.card_news_set(set_id)["cards"])
+    for slide in saved:
+        if slide["heading"] == "둘째 소제목":
+            assert slide["body"].startswith("둘째"), "소제목이 다른 카드 본문에 붙었다"
 
 
 def test_public_page_offers_share_link_and_download(monkeypatch, tmp_path):

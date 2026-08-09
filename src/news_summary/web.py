@@ -57,6 +57,14 @@ from .scheduler import (
     _source_recovery_candidates,
 )
 from .card_picks import DEFAULT_SHORTLIST, rank_candidates
+from .cardcopy import (
+    MAX_CARD_CHARS,
+    MAX_COVER_CHARS,
+    MAX_HEADING_CHARS,
+    MIN_CARD_CHARS,
+    MIN_COVER_CHARS,
+    MIN_HEADING_CHARS,
+)
 from .cardnews_service import (
     build_set_for_draft,
     decode_cards,
@@ -1535,16 +1543,10 @@ def create_app() -> Flask:
         if not row:
             abort(404)
         target = str(row["publish_date"])
-        cover = (request.form.get("cover") or "").strip()
-        headings = request.form.getlist("heading")
-        bodies = request.form.getlist("body")
-        cards = [
-            {"heading": heading.strip(), "body": body.strip()}
-            for heading, body in zip(headings, bodies)
-            if heading.strip() or body.strip()
-        ]
-        if not cover or not cards:
-            flash("표지 문구와 본문 카드가 모두 있어야 합니다.")
+        expected = len(decode_cards(row).cards)
+        cover, cards, problem = _card_news_form_copy(request.form, expected)
+        if problem:
+            flash(problem)
             return redirect(url_for("card_news_manage", date=target))
         store.update_card_news_copy(set_id, cover, cards)
         try:
@@ -2960,6 +2962,39 @@ def _download_card_photo(asset) -> bytes:
     """카드뉴스용 원본 사진을 내려받는다. 축소본(480px)은 1080 카드에 못 쓴다."""
     _, content = _download_asset_content_from_url(str(asset["url"]), asset)
     return content
+
+
+def _card_news_form_copy(form, expected: int) -> tuple[str, list[dict], str]:
+    """편집 폼에서 문안을 읽는다. 소제목·본문을 **인덱스로 짝짓는다.**
+
+    위치로만 zip하면 중간 필드 하나가 빠졌을 때 이후 소제목이 한 칸씩 밀려 다른
+    카드 본문에 붙는다 — 이 프로젝트가 이미 한 번 겪은 종류의 사고다(화재 사진 건).
+    AI 출력에만 걸려 있던 길이 규격을 사람 입력에도 똑같이 건다.
+    """
+    cover = _clean_card_text(form.get("cover"))
+    if not MIN_COVER_CHARS <= len(cover) <= MAX_COVER_CHARS:
+        return "", [], f"표지 문구는 {MIN_COVER_CHARS}~{MAX_COVER_CHARS}자여야 합니다(지금 {len(cover)}자)."
+
+    cards: list[dict] = []
+    for index in range(expected):
+        heading = _clean_card_text(form.get(f"heading-{index}"))
+        body = _clean_card_text(form.get(f"body-{index}"))
+        if not heading and not body:
+            continue
+        if not MIN_HEADING_CHARS <= len(heading) <= MAX_HEADING_CHARS:
+            return "", [], f"{index + 1}번 카드 소제목은 {MIN_HEADING_CHARS}~{MAX_HEADING_CHARS}자여야 합니다(지금 {len(heading)}자)."
+        if not MIN_CARD_CHARS <= len(body) <= MAX_CARD_CHARS:
+            return "", [], f"{index + 1}번 카드 본문은 {MIN_CARD_CHARS}~{MAX_CARD_CHARS}자여야 합니다(지금 {len(body)}자)."
+        cards.append({"heading": heading, "body": body})
+
+    if not cards:
+        return "", [], "본문 카드가 하나도 없습니다."
+    return cover, cards, ""
+
+
+def _clean_card_text(value: object) -> str:
+    """textarea의 CRLF가 그대로 카드에 그려지면 두부 상자가 찍힌다 — 공백을 눌러 준다."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
 def _card_news_candidates(store: Store, publish_date: str, limit: int = DEFAULT_SHORTLIST) -> list[dict]:

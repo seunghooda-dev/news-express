@@ -13,7 +13,7 @@ logger = get_logger("cardcopy")
 
 # 카드 한 장이 넘어가면 카드뉴스가 아니라 그냥 기사다. 시안에서 4줄이 넘어가는 것을 보고 정했다.
 MIN_COVER_CHARS = 6
-MAX_COVER_CHARS = 30
+MAX_COVER_CHARS = 36
 MIN_HEADING_CHARS = 4
 MAX_HEADING_CHARS = 22
 MIN_CARD_CHARS = 25
@@ -25,27 +25,69 @@ MAX_TAGS = 5
 SYSTEM_PROMPT = """너는 지역 뉴스 카드뉴스 편집자다. 기사 초안을 주민이 휴대폰에서
 훑어보는 카드뉴스 문안으로 바꾼다.
 
-지켜야 할 것:
-- 표지 문구는 %(cover_min)d~%(cover_max)d자. 핵심 하나만. 제목을 그대로 베끼지 말고 주민에게
-  무엇이 달라지는지 말한다.
+## 길이 — 목표치를 맞추고, 상한은 절대 넘지 않는다
+글자 수는 공백과 문장부호를 포함해 센다.
+
+- 표지: **18~26자를 목표**로. 어떤 경우에도 %(cover_max)d자를 넘지 않는다.
+- 소제목: **10~18자를 목표**로. 어떤 경우에도 %(head_max)d자를 넘지 않는다.
+- 본문: **55~80자로 쓴다. 85자를 넘으면 실패다.** %(card_max)d자는 검사기가
+  거절하는 선일 뿐 목표가 아니다.
+
+상한은 "채워야 할 칸"이 아니라 "넘으면 안 되는 선"이다. 목표치 안에서 끝내라.
+
+## 구성
 - 본문 카드는 %(min_cards)d~%(max_cards)d장. **각 장은 소제목과 본문을 함께 담는다.**
-  - 소제목: %(head_min)d~%(head_max)d자. 그 장에서 말하려는 것 한 줄.
-  - 본문: %(card_min)d~%(card_max)d자. 소제목을 풀어 설명하되 한 장에 한 가지만.
+- 장수는 **세어서** 정한다. 원문에 있는 것만 `slots`에 적고 그 개수로 정한다.
+  **3개 이상이면 4장, 1~2개면 3장, 하나도 없고 문단이 2개 이하면 2장.**
+  샐 항목은 넷이다 — `자격`, `일정`, `비용`, `접수처`.
+- 표지는 제목을 베끼지 말고 주민에게 무엇이 달라지는지 말한다.
+- **표지에는 직함·기관 정식명칭을 넣지 않는다** — 이름만 쓰거나 통째로 뺀다.
+  글자 수를 맞추려고 '전남광주통합특별시장'을 '시장'으로 줄이는 일이 없게 한다.
+
+## 소제목은 보도자료 제목투를 피한다
+'~점검', '~추진', '~논의'처럼 명사로 끝나는 관공서 제목투로만 채우지 마라.
+한 세트 안에서 형태를 섞는다.
+
+- 숫자·금액·기한을 앞세운 것 — "신청은 8월 21일까지"
+- 주민에게 말 거는 것 — "수강료도 재료비도 없습니다"
+- 상황을 그리는 짧은 문장 — "쉼터 600곳이 문을 열었습니다"
+
+**형태를 섞어라.** 문장으로 끝나는 소제목은 **한 장 또는 두 장까지만** 쓰고,
+나머지는 숫자나 명사로 끝낸다. 전부 같은 형태면 실패다.
+
+위 예시는 **형태만 참고**한다 — 예시에 쓰인 낱말을 원문 대신 가져다 쓰지 마라
+("교육비"를 "수강료"로 바꾸는 식).
+
+## 사실을 바꾸지 않는다
+- 원문에 없는 사실을 지어내지 않는다.
+- **'여', '약', '내외' 같은 어림 표현을 지우지 않는다** — "600여 곳"을 "600곳"으로 줄이지 마라.
+- **기관·부서·직위 명칭은 원문 표기 그대로** 쓴다. **줄이지도 늘이지도 않는다** —
+  원문이 '군수'면 '신안군수'로 늘리지 말고, '광양시청 시민홀'을 '시청 시민홀'로
+  줄이지 마라. 자리가 모자라면 그 항목을 통째로 뺀다.
+- **'선착순', '추첨', '조기 마감', '누구나'는 원문에 그 낱말이 있을 때만 쓴다.**
+  원문에 접수 방식이 없으면 **"방문 또는 전화로 신청하면 됩니다"처럼 원문에 적힌
+  경로만** 쓰고 끝낸다. 정원만 적혀 있으면 정원만 쓴다.
+- **원문이 '논의했다·검토한다·공감했다'면 그 단계를 넘기지 않는다.** 표지에서도
+  '시작됩니다', '확정됐습니다', '달라집니다'로 승격하지 마라.
+- **원문의 '방침·예정·계획·검토' 어미를 문안에도 남긴다** — "넓혀갈 방침입니다"를
+  "넓힙니다"로 단정하지 마라. 날짜 조사도 그대로다("11일까지"를 "11일에"로 바꾸지 마라).
+- **날짜에 없는 월·연도를 채워 넣지 않는다.** 원문이 "오는 28일"이면 문안도 "오는 28일"이다.
+- 누가 한 일인지 원문에 있으면 **최소 한 장에는 주체를 남긴다**(이름과 직함, 없으면 기관명).
+  주어 없이 '점검했습니다', '확인했습니다'로 끝내지 마라.
+
+## 그 밖에
 - 신청 기한, 장소, 대상, 금액처럼 주민이 행동할 때 필요한 정보를 우선한다.
-- 원문에 없는 사실을 지어내지 않는다. 숫자와 날짜는 원문 그대로 쓴다.
 - 문장은 '~합니다', '~됩니다'처럼 평서형으로 끝낸다.
 - 해시태그는 최대 %(max_tags)d개, 지역명과 주제 중심으로.
 
 JSON만 출력한다. 다른 설명을 붙이지 않는다.
-{"cover": "...", "cards": [{"heading": "...", "body": "..."}, ...], "tags": ["...", "..."]}
+{"slots": ["자격", "일정"], "cover": "...",
+ "cards": [{"heading": "...", "body": "..."}, ...], "tags": ["...", "..."]}
 """ % {
-    "cover_min": MIN_COVER_CHARS,
     "cover_max": MAX_COVER_CHARS,
-    "head_min": MIN_HEADING_CHARS,
     "head_max": MAX_HEADING_CHARS,
     "min_cards": MIN_CARDS,
     "max_cards": MAX_CARDS,
-    "card_min": MIN_CARD_CHARS,
     "card_max": MAX_CARD_CHARS,
     "max_tags": MAX_TAGS,
 }
@@ -75,24 +117,30 @@ def build_card_copy(
         raise CardCopyError("제목과 본문이 모두 있어야 문안을 만들 수 있습니다.")
 
     generate = generator or _generate_with_gemini
+    candidates = _dedupe_models(list(models))
     attempted: list[str] = []
     last_error: Exception | None = None
-    for model_name in _dedupe_models(list(models)):
-        attempted.append(model_name)
-        try:
-            raw = generate(request, api_key, model_name)
-            return _validate(raw, request)
-        except CardCopyError as exc:
-            # 규격 미달은 모델을 바꾸면 통과하는 일이 잦다 — 다음 모델로 넘어간다.
-            logger.warning("card copy rejected model=%s reason=%s", model_name, exc)
-            last_error = exc
-            continue
-        except Exception as exc:  # noqa: BLE001 - 쿼터·네트워크 오류는 다음 모델로 넘긴다.
-            logger.warning("card copy failed model=%s error=%s", model_name, exc)
-            last_error = exc
-            if _is_gemini_quota_error(exc) and model_name == attempted[-1]:
-                break
-            continue
+    for index, model_name in enumerate(candidates):
+        # 좋은 모델을 일시 장애 한 번으로 버리면 규격을 잘 못 맞추는 예비 모델만 남는다.
+        # 다만 **쿼터 소진에는 재시도가 해롭다** — 한도만 더 빨리 깎는다(2026-08-09 실측:
+        # flash 일일 한도 소진 상태에서 재시도가 429를 7번 더 불렀다).
+        for attempt in range(2):
+            attempted.append(model_name)
+            try:
+                raw = generate(request, api_key, model_name)
+                return _validate(raw, request)
+            except CardCopyError as exc:
+                logger.warning("card copy rejected model=%s reason=%s", model_name, exc)
+                last_error = exc
+                continue
+            except Exception as exc:  # noqa: BLE001 - 다음 시도나 다음 모델로 넘긴다.
+                logger.warning("card copy failed model=%s error=%s", model_name, exc)
+                last_error = exc
+                if _is_gemini_quota_error(exc):
+                    break
+                continue
+        if _is_gemini_quota_error(last_error) and index == len(candidates) - 1:
+            break
 
     detail = str(last_error) if isinstance(last_error, CardCopyError) else _summarize_gemini_error(last_error)
     raise CardCopyError(f"카드 문안 생성 실패 ({', '.join(attempted)}): {detail}")
@@ -161,7 +209,12 @@ def _validate(raw: object, request: CardCopyRequest) -> CardCopy:
 
 
 def _slide(item: object) -> CardSlide | None:
-    """모델이 {소제목, 본문} 대신 문자열 하나를 줄 때도 받아 준다."""
+    """모델 응답을 슬라이드로 읽는다.
+
+    문자열 하나만 온 경우도 본문으로 받아 두지만, 소제목이 비어 있으므로
+    바로 뒤 규격 검사에서 거절된다 — 그 편이 "구 스키마로 답했다"는 원인이
+    메시지에 드러난다.
+    """
     if isinstance(item, dict):
         heading = _clean(item.get("heading") or item.get("title"))
         body = _clean(item.get("body") or item.get("text"))

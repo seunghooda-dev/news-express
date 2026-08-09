@@ -46,10 +46,10 @@
         <fieldset class="cardnews-slide-fields">
           <legend>{{ loop.index }}번 카드</legend>
           <label>소제목
-            <input type="text" name="heading" value="{{ slide.heading }}" maxlength="30">
+            <input type="text" name="heading-{{ loop.index0 }}" value="{{ slide.heading }}" maxlength="22">
           </label>
           <label>본문
-            <textarea name="body" rows="3" maxlength="160">{{ slide.body }}</textarea>
+            <textarea name="body-{{ loop.index0 }}" rows="3" maxlength="110">{{ slide.body }}</textarea>
           </label>
         </fieldset>
       {% endfor %}

@@ -211,6 +211,46 @@ def test_tall_photo_is_cropped_vertically_not_horizontally():
     assert left[0] > 150 and left[1] < 90, f"왼쪽 끝이 잘렸다: {left}"
 
 
+def test_long_human_edited_text_never_spills_past_the_card():
+    """사람이 고친 문안에는 AI 규격이 안 걸린다 — 길어도 카드 밖으로 새면 안 된다.
+
+    2026-08-09 검토에서 적발 — 줄 수는 통과하는데 높이가 넘쳐 장수 표시와 겹치는
+    대역이 있었다. 폼 maxlength(소제목 30·본문 160) 안쪽에서도 일어났다.
+    """
+    images = build_card_images(
+        sample_copy(cards=[CardSlide(heading="가" * 30, body="나" * 160)]),
+        [photo_bytes(2000, 1500)],
+    )
+    card = open_card(images[1]).convert("RGB")
+
+    # 맨 아랫줄이 배경색 그대로여야 글자가 안 샌 것이다.
+    bottom = [card.getpixel((x, CARD_HEIGHT - 3)) for x in range(60, CARD_WIDTH - 60, 40)]
+    assert all(abs(p[0] - 17) < 12 and abs(p[1] - 17) < 12 for p in bottom), f"글자가 카드 밖으로 샜다: {bottom[:4]}"
+
+
+def test_narrow_tall_photo_is_not_upscaled():
+    """판정 축이 긴 변이면 800x2000 같은 사진이 1.35배로 확대된다.
+
+    밴드 배율은 폭 기준이므로 폭으로 재야 주석("확대하지 않는다")과 코드가 맞는다.
+    """
+    narrow = build_card_images(sample_copy(), [photo_bytes(800, 2000)])
+    text_only = build_card_images(sample_copy(), [])
+
+    assert open_card(narrow[0]).tobytes() == open_card(text_only[0]).tobytes(), "폭이 좁은 사진이 쓰였다"
+
+
+def test_huge_photo_is_downscaled_before_holding():
+    """원본을 그대로 4장 쥐면 512MB에서 터진다 — 열자마자 줄여서 들고 있어야 한다."""
+    from news_summary.cardnews import MAX_WORKING_EDGE, _usable_photos
+
+    photos = _usable_photos([photo_bytes(6000, 4000)])
+
+    assert photos, "쓸 수 있는 사진이어야 한다"
+    assert max(photos[0].size) <= MAX_WORKING_EDGE, f"원본 크기 그대로 들고 있다: {photos[0].size}"
+    for photo in photos:
+        photo.close()
+
+
 def test_releases_free_heap_after_building(monkeypatch):
     """1080 합성은 썸네일보다 무겁다 — 끝나면 반드시 힙을 돌려준다."""
     calls = {"count": 0}
