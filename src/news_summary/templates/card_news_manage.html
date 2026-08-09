@@ -63,7 +63,7 @@
   </article>
 {% endfor %}
 
-<h2 class="cardnews-subhead">초안에서 만들기</h2>
+<h2 class="cardnews-subhead">추천 후보 — 점수순, 기관당 최대 2건</h2>
 {% if not candidates %}
   <p class="empty-note">{{ date_label }}에 해당하는 초안이 없습니다.</p>
 {% endif %}
@@ -74,6 +74,7 @@
         <strong>{{ candidate.title }}</strong>
         <span class="row-meta row-meta-main">
           <span>{{ candidate.source_name }}</span>
+          {% for reason in candidate.reasons[:3] %}<span class="cardnews-reason">{{ reason }}</span>{% endfor %}
           {% if candidate.has_set %}<span class="badge badge-neutral">이미 만듦</span>{% endif %}
         </span>
       </span>

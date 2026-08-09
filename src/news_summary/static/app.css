@@ -3023,3 +3023,4 @@ h3 {
 .cardnews-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.8rem; }
 .cardnews-candidate { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .empty-note { color: var(--muted); font-size: 0.9rem; }
+.cardnews-reason { color: var(--muted); font-size: 0.78rem; }

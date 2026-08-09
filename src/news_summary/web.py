@@ -56,6 +56,7 @@ from .scheduler import (
     _auto_queue_drain_ready_recheck_seconds,
     _source_recovery_candidates,
 )
+from .card_picks import DEFAULT_SHORTLIST, rank_candidates
 from .cardnews_service import (
     build_set_for_draft,
     decode_cards,
@@ -2933,21 +2934,30 @@ def _download_card_photo(asset) -> bytes:
     return content
 
 
-def _card_news_candidates(store: Store, publish_date: str, limit: int = 12) -> list[dict]:
-    """그날 카드로 만들 만한 초안 후보. 이미 세트가 있는 초안은 표시해 중복 생성을 막는다."""
-    rows = _draft_rows_for_listing(store, target_date=_parse_date(publish_date), limit=limit)
-    candidates = []
-    for row in rows:
-        existing = store.card_news_set_by_draft(int(row["id"]))
-        candidates.append(
-            {
-                "draft_id": int(row["id"]),
-                "title": str(row["title"] or ""),
-                "source_name": str(row["source_name"] or ""),
-                "has_set": existing is not None,
-            }
-        )
-    return candidates
+def _card_news_candidates(store: Store, publish_date: str, limit: int = DEFAULT_SHORTLIST) -> list[dict]:
+    """그날 카드로 만들 만한 초안을 추린다.
+
+    하루 244건을 사람이 다 볼 수 없어 점수로 8건까지 줄인다. **제안일 뿐이고
+    최종 선택은 사람이 한다** — 자동 발행하지 않는다.
+    """
+    target = _parse_date(publish_date)
+    rows = _draft_rows_for_listing(store, target_date=target, limit=FILTER_FETCH_LIMIT)
+    existing = {
+        int(row["draft_id"])
+        for row in store.card_news_sets_for_date(publish_date)
+    }
+    picks = rank_candidates(rows, existing_draft_ids=existing, limit=limit)
+    return [
+        {
+            "draft_id": pick.draft_id,
+            "title": pick.title,
+            "source_name": pick.source_name,
+            "has_set": pick.has_set,
+            "score": pick.score,
+            "reasons": pick.reasons,
+        }
+        for pick in picks
+    ]
 
 
 def _card_news_view_sets(store: Store, root: Path, publish_date: str, status: str | None = None) -> list[dict]:
