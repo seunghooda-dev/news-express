@@ -99,7 +99,8 @@ def test_legacy_string_cards_still_render():
 def test_low_resolution_photo_is_not_upscaled():
     """작은 사진을 억지로 키우면 화질 저하가 그대로 보인다 — 안 쓰는 게 낫다.
 
-    실측상 원본의 약 40%가 1080px에 못 미친다(980x735, 600x400 등).
+    문턱을 800px로 내린 뒤에도 이 선 아래는 여전히 버린다. 실측에서 10px짜리
+    추적용 이미지가 13건 섞여 있었다(2026-08-07 금요일 첨부 247건).
     """
     small = photo_bytes(600, 400)
     with_small = build_card_images(sample_copy(), [small])
@@ -229,14 +230,27 @@ def test_long_human_edited_text_never_spills_past_the_card():
 
 
 def test_narrow_tall_photo_is_not_upscaled():
-    """판정 축이 긴 변이면 800x2000 같은 사진이 1.35배로 확대된다.
+    """판정 축이 긴 변이면 700x2000 같은 사진이 1.54배로 확대된다.
 
-    밴드 배율은 폭 기준이므로 폭으로 재야 주석("확대하지 않는다")과 코드가 맞는다.
+    밴드 배율은 폭 기준이므로 폭으로 재야 주석("많이 확대하지 않는다")과 코드가 맞는다.
     """
-    narrow = build_card_images(sample_copy(), [photo_bytes(800, 2000)])
+    narrow = build_card_images(sample_copy(), [photo_bytes(700, 2000)])
     text_only = build_card_images(sample_copy(), [])
 
     assert open_card(narrow[0]).tobytes() == open_card(text_only[0]).tobytes(), "폭이 좁은 사진이 쓰였다"
+
+
+def test_common_cms_width_photo_is_used():
+    """지자체 CMS가 가장 많이 뱉는 폭(1000px)이 버려지면 카드에 사진이 안 실린다.
+
+    2026-08-07 금요일 전량 실측: 첨부 247건 중 1000px가 24건으로 최다였고,
+    문턱이 1080px이던 동안 사진 있는 초안 110건 중 47건이 글자만 나왔다.
+    점수 상위 3건이 전부 여기 걸려 실제로 사진 없는 카드가 나왔다.
+    """
+    common = build_card_images(sample_copy(), [photo_bytes(1000, 668)])
+    text_only = build_card_images(sample_copy(), [])
+
+    assert open_card(common[0]).tobytes() != open_card(text_only[0]).tobytes(), "1000px 사진이 버려졌다"
 
 
 def test_huge_photo_is_downscaled_before_holding():
