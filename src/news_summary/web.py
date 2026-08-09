@@ -62,7 +62,7 @@ from .cardnews_service import (
     decode_cards,
     delete_set_images,
     load_set_images,
-    prune_old_dates,
+    rebuild_images_from_copy,
 )
 from .memory import release_free_heap
 from .models import Source
@@ -1519,13 +1519,35 @@ def create_app() -> Flask:
                 api_key,
                 cardnews_dir,
                 publish_date=target,
-                downloader=lambda url: _download_card_photo(url),
+                downloader=_download_card_photo,
             )
         except Exception as exc:  # noqa: BLE001 - 실패 사유를 화면에 보여 준다.
             logger.warning("card news build failed draft_id=%s error=%s", draft_id, exc)
             flash(f"카드뉴스 생성 실패: {exc}")
             return redirect(url_for("card_news_manage", date=target))
         flash(f"카드뉴스 {len(result.image_paths)}장을 만들었습니다. 확인 후 발행하세요.")
+        return redirect(url_for("card_news_manage", date=target))
+
+    @app.post("/card-news/<int:set_id>/copy")
+    def card_news_edit_copy(set_id: int):
+        """사람이 문안을 손질한다. AI를 다시 부르지 않으므로 고친 글자가 덮이지 않는다."""
+        row = store.card_news_set(set_id)
+        if not row:
+            abort(404)
+        target = str(row["publish_date"])
+        cover = (request.form.get("cover") or "").strip()
+        cards = [line.strip() for line in request.form.getlist("card") if line.strip()]
+        if not cover or not cards:
+            flash("표지 문구와 본문 카드가 모두 있어야 합니다.")
+            return redirect(url_for("card_news_manage", date=target))
+        store.update_card_news_copy(set_id, cover, cards)
+        try:
+            rebuild_images_from_copy(store, set_id, cardnews_dir, downloader=_download_card_photo)
+        except Exception as exc:  # noqa: BLE001 - 실패해도 문안은 저장돼 있다.
+            logger.warning("card news copy rebuild failed set_id=%s error=%s", set_id, exc)
+            flash(f"문안은 저장했지만 카드 이미지를 다시 그리지 못했습니다: {exc}")
+            return redirect(url_for("card_news_manage", date=target))
+        flash("문안을 고치고 카드를 다시 그렸습니다.")
         return redirect(url_for("card_news_manage", date=target))
 
     @app.post("/card-news/<int:set_id>/publish")

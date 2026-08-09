@@ -114,6 +114,52 @@ def test_cover_photo_is_not_reused_on_first_body_card():
     assert cover_top != body_top
 
 
+def wide_photo_with_edge_markers() -> bytes:
+    """좌우 끝에 표식을 둔 아주 넓은 사진 — 잘리면 표식이 사라진다."""
+    image = Image.new("RGB", (2400, 1250), (40, 40, 40))
+    for x in range(0, 60):
+        for y in range(0, 1250):
+            image.putpixel((x, y), (255, 0, 0))
+            image.putpixel((2400 - 1 - x, y), (0, 0, 255))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_wide_photo_keeps_both_edges():
+    """가로 사진의 좌우를 자르면 현장과 인물이 날아간다.
+
+    2026-08-09 갭 분석에서 적발 — max 배율로 밴드를 채우느라 1.379보다 넓은
+    사진의 좌우가 잘리고 있었다. 지자체 사진은 표본이 1.33~1.92다.
+    """
+    images = build_card_images(sample_copy(), [wide_photo_with_edge_markers()])
+    cover = open_card(images[0]).convert("RGB")
+
+    # 사진 밴드 한가운데 높이에서 좌우 끝 색을 본다.
+    y = int(CARD_HEIGHT * 0.58) // 2
+    left = cover.getpixel((2, y))
+    right = cover.getpixel((CARD_WIDTH - 3, y))
+
+    assert left[0] > 150 and left[1] < 90, f"왼쪽 끝이 잘렸다: {left}"
+    assert right[2] > 150 and right[1] < 90, f"오른쪽 끝이 잘렸다: {right}"
+
+
+def test_tall_photo_is_cropped_vertically_not_horizontally():
+    """세로로 긴 사진은 위아래를 잘라도 좌우는 온전해야 한다."""
+    tall = Image.new("RGB", (1200, 2400), (10, 200, 10))
+    for x in range(0, 40):
+        for y in range(0, 2400):
+            tall.putpixel((x, y), (255, 0, 0))
+    buffer = io.BytesIO()
+    tall.save(buffer, format="PNG")
+
+    images = build_card_images(sample_copy(), [buffer.getvalue()])
+    cover = open_card(images[0]).convert("RGB")
+
+    left = cover.getpixel((2, 100))
+    assert left[0] > 150 and left[1] < 90, f"왼쪽 끝이 잘렸다: {left}"
+
+
 def test_releases_free_heap_after_building(monkeypatch):
     """1080 합성은 썸네일보다 무겁다 — 끝나면 반드시 힙을 돌려준다."""
     calls = {"count": 0}

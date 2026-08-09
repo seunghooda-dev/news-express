@@ -29,7 +29,8 @@
     <h2>{{ item.card_copy.cover }}</h2>
     <div class="cardnews-strip" tabindex="0" aria-label="{{ item.card_copy.cover }} 카드 {{ item.image_indexes|length }}장">
       {% for index in item.image_indexes %}
-        <a class="cardnews-slide" href="{{ url_for('card_news_image', set_id=item.id, index=index) }}" target="_blank" rel="noopener">
+        <a class="cardnews-slide" href="{{ url_for('card_news_image', set_id=item.id, index=index) }}"
+           download="cardnews-{{ item.id }}-{{ index }}.png">
           <img src="{{ url_for('card_news_image', set_id=item.id, index=index) }}"
                alt="{{ item.card_copy.cover }} {{ index }}번째 카드" loading="lazy" width="1080" height="1350">
         </a>
@@ -41,6 +42,10 @@
     </p>
     <p class="cardnews-actions">
       <a href="{{ url_for('draft_detail', draft_id=item.draft_id) }}">기사 전문 보기</a>
+      {# 카톡·밴드로 옮기는 것이 실제 확산 경로다. #}
+      <button type="button" class="cardnews-copy-link"
+              data-share-url="{{ url_for('card_news', date=publish_date, _external=True) }}">링크 복사</button>
+      <span class="cardnews-save-hint">카드를 누르면 이미지가 저장됩니다</span>
     </p>
   </article>
 {% endfor %}

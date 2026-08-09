@@ -29,6 +29,7 @@ from .service import (
     repair_missing_published_dates,
     retention_holidays,
 )
+from .cardnews_service import prune_old_dates
 from .settings import PROJECT_ROOT, collection_excluded_source_ids, env_path, load_sources
 from .storage import Store
 
@@ -55,6 +56,7 @@ AUTO_DEDUPLICATE_LIMIT_ENV = "NEWS_SUMMARY_AUTO_DEDUPLICATE_LIMIT"
 AUTO_URL_DISCOVERY_LIMIT_ENV = "NEWS_SUMMARY_AUTO_URL_DISCOVERY_LIMIT"
 AUTO_BACKUP_CREATE_ENV = "NEWS_SUMMARY_AUTO_BACKUP_CREATE"
 AUTO_BACKUP_MAX_AGE_HOURS_ENV = "NEWS_SUMMARY_AUTO_BACKUP_MAX_AGE_HOURS"
+CARD_NEWS_KEEP_DAYS_ENV = "NEWS_SUMMARY_CARDNEWS_KEEP_DAYS"
 AUTO_BACKUP_KEEP_COUNT_ENV = "NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
 OPERATION_EVENT_RETENTION_DAYS_ENV = "NEWS_SUMMARY_OPERATION_EVENT_RETENTION_DAYS"
@@ -544,6 +546,7 @@ class AutoCollector:
             ("URL 후보 탐색", lambda: _as_messages(self._discover_fallback_url_candidates_once())),
             ("백업 생성", lambda: _as_messages(self._create_backup_if_needed_once(now))),
             ("오래된 백업 정리", lambda: _as_messages(self._prune_old_backups_once())),
+            ("오래된 카드뉴스 정리", lambda: _as_messages(self._prune_old_card_news_once())),
             ("백업 검증", lambda: _as_messages(self._verify_latest_backup_once())),
         ]
         for label, step in steps:
@@ -793,6 +796,19 @@ class AutoCollector:
         reason = "백업 없음" if not latest_backup else f"최근 백업 {max_age_hours}시간 초과"
         logger.info("auto backup created path=%s reason=%s", backup_path, reason)
         return f"자동 백업 생성: {backup_path.name} ({reason})"
+
+    def _prune_old_card_news_once(self) -> str | None:
+        """오래된 카드뉴스 날짜 폴더를 지운다. 하루 약 7.5MB라 두면 계속 쌓인다."""
+        keep_days = env_int(CARD_NEWS_KEEP_DAYS_ENV, 30, minimum=0)
+        if keep_days <= 0:
+            return None
+        backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
+        root = env_path("NEWS_SUMMARY_CARDNEWS_DIR", str(backup_dir.parent / "cardnews"))
+        removed = prune_old_dates(root, keep_days)
+        if not removed:
+            return None
+        logger.info("card news pruned days=%s keep=%s", removed, keep_days)
+        return f"오래된 카드뉴스 {removed}일분 정리"
 
     def _prune_old_backups_once(self) -> str | None:
         keep_count = env_int(AUTO_BACKUP_KEEP_COUNT_ENV, 7, minimum=0)

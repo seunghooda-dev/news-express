@@ -156,13 +156,27 @@ def _fit_lines(
     return font, lines
 
 
-def _cover_photo_band(photo: Image.Image, height: int) -> Image.Image:
-    """가로 사진을 자르지 않고 폭에 맞춘 뒤 위에서부터 필요한 만큼만 쓴다."""
-    scale = max(CARD_WIDTH / photo.width, height / photo.height)
-    resized = photo.resize((max(1, int(photo.width * scale)), max(1, int(photo.height * scale))), Image.LANCZOS)
-    left = max(0, (resized.width - CARD_WIDTH) // 2)
-    top = max(0, (resized.height - height) // 2)
-    band = resized.crop((left, top, left + CARD_WIDTH, top + height))
+def _photo_band(photo: Image.Image, height: int, background: str) -> Image.Image:
+    """사진을 **폭에 맞춰** 밴드에 넣는다. 좌우는 어떤 경우에도 자르지 않는다.
+
+    지자체 사진은 표본 8장이 전부 가로형(1.33~1.92)이라 좌우를 자르면 현장과
+    인물이 날아간다. 폭을 먼저 맞추고,
+
+    - 사진이 밴드보다 높으면 위아래만 가운데 기준으로 잘라낸다(1.33 사진 기준 29px).
+    - 사진이 밴드보다 낮으면(1.92처럼 아주 넓은 사진) 남는 위아래를 배경으로 채운다.
+
+    처음에는 max 배율로 밴드를 꽉 채웠는데, 그러면 넓은 사진의 좌우가 잘려
+    "자르지 않는다"는 설계가 거짓이 됐다(2026-08-09 갭 분석에서 적발).
+    """
+    scale = CARD_WIDTH / photo.width
+    new_height = max(1, int(photo.height * scale))
+    resized = photo.resize((CARD_WIDTH, new_height), Image.LANCZOS)
+    band = Image.new("RGB", (CARD_WIDTH, height), background)
+    if new_height >= height:
+        top = (new_height - height) // 2
+        band.paste(resized.crop((0, top, CARD_WIDTH, top + height)), (0, 0))
+    else:
+        band.paste(resized, (0, (height - new_height) // 2))
     resized.close()
     return band
 
@@ -188,7 +202,7 @@ def _render_cover(copy: CardCopy, photo: Image.Image | None) -> Image.Image:
 
     if photo is not None:
         band_height = int(CARD_HEIGHT * COVER_PHOTO_RATIO)
-        band = _cover_photo_band(photo, band_height)
+        band = _photo_band(photo, band_height, COVER_BG)
         _paste_with_fade(canvas, band, COVER_BG)
         band.close()
         text_top = band_height + 60
@@ -219,7 +233,7 @@ def _render_body(text: str, index: int, total: int, photo: Image.Image | None) -
 
     if photo is not None:
         band_height = int(CARD_HEIGHT * BODY_PHOTO_RATIO)
-        band = _cover_photo_band(photo, band_height)
+        band = _photo_band(photo, band_height, BODY_BG)
         canvas.paste(band, (0, 0))
         band.close()
         text_area_top = band_height

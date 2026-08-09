@@ -36,9 +36,19 @@
         </a>
       {% endfor %}
     </div>
-    <ol class="cardnews-copy-list">
-      {% for line in item.card_copy.cards %}<li>{{ line }}</li>{% endfor %}
-    </ol>
+    {# AI 재생성 말고 한 글자만 고치고 싶을 때가 대부분이다. #}
+    <form class="cardnews-copy-edit" method="post" action="{{ url_for('card_news_edit_copy', set_id=item.id) }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <label>표지 문구
+        <input type="text" name="cover" value="{{ item.card_copy.cover }}" maxlength="40">
+      </label>
+      {% for line in item.card_copy.cards %}
+        <label>{{ loop.index }}번 카드
+          <textarea name="card" rows="2" maxlength="120">{{ line }}</textarea>
+        </label>
+      {% endfor %}
+      <button type="submit">문안 고치고 다시 그리기</button>
+    </form>
     {# 사진과 본문이 어긋나면 신뢰 사고다 — 원문을 나란히 두어 사람이 대조하게 한다. #}
     <p class="cardnews-actions">
       <a href="{{ url_for('draft_detail', draft_id=item.draft_id) }}">원문·초안 대조</a>

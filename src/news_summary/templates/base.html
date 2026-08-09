@@ -83,6 +83,19 @@
           if (select.form) select.form.submit();
         });
       });
+      document.querySelectorAll(".cardnews-copy-link").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const url = button.dataset.shareUrl;
+          if (!url) return;
+          try {
+            await navigator.clipboard.writeText(url);
+            button.textContent = "복사됨";
+          } catch (error) {
+            button.textContent = url;
+          }
+          window.setTimeout(() => { button.textContent = "링크 복사"; }, 2000);
+        });
+      });
       document.querySelectorAll("img[data-image-fallback]").forEach((image) => {
         const showFallback = () => {
           const fallback = image.parentElement?.querySelector(".image-load-fallback");

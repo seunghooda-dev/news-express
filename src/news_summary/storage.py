@@ -2026,6 +2026,14 @@ class Store:
             ).fetchall()
         return [str(row["publish_date"]) for row in rows]
 
+    def update_card_news_copy(self, set_id: int, cover: str, cards: list[str]) -> None:
+        """사람이 손질한 문안을 저장한다. AI 재생성 말고 한 글자만 고치고 싶을 때 쓴다."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE card_news_sets SET cover = ?, cards = ?, updated_at = ? WHERE id = ?",
+                (cover, json.dumps(cards, ensure_ascii=False), _now(), set_id),
+            )
+
     def set_card_news_status(self, set_id: int, status: str) -> None:
         now = _now()
         published_at = now if status == "published" else ""

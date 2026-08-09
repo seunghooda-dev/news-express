@@ -3024,3 +3024,8 @@ h3 {
 .cardnews-candidate { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .empty-note { color: var(--muted); font-size: 0.9rem; }
 .cardnews-reason { color: var(--muted); font-size: 0.78rem; }
+.cardnews-copy-edit { display: grid; gap: 0.5rem; margin-top: 0.8rem; }
+.cardnews-copy-edit label { display: grid; gap: 0.25rem; font-size: 0.8rem; color: var(--muted); }
+.cardnews-copy-edit input, .cardnews-copy-edit textarea { font: inherit; padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.cardnews-copy-link { font: inherit; font-size: 0.85rem; padding: 0.2rem 0.6rem; cursor: pointer; }
+.cardnews-save-hint { color: var(--muted); font-size: 0.78rem; }

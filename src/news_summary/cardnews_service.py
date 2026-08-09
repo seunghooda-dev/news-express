@@ -1,7 +1,6 @@
 # 초안 하나로 카드뉴스 세트를 만드는 통합 계층 — 사진 출처를 보장하는 책임이 여기 있다
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -96,6 +95,25 @@ def build_set_for_draft(
     return CardNewsSet(set_id=set_id, draft_id=draft_id, publish_date=publish_date, copy=copy, image_paths=paths)
 
 
+def rebuild_images_from_copy(
+    store: Store,
+    set_id: int,
+    output_root: Path,
+    downloader=None,
+) -> list[Path]:
+    """저장된 문안으로 이미지만 다시 그린다 — 사람이 글자를 고쳤을 때 쓴다.
+
+    AI를 다시 부르지 않으므로 손질한 문안이 덮이지 않고, 비용도 들지 않는다.
+    """
+    row = store.card_news_set(set_id)
+    if not row:
+        raise CardNewsServiceError(f"카드뉴스 #{set_id}을 찾을 수 없습니다.")
+    copy = decode_cards(row)
+    photos = _own_photos(store, int(row["press_release_id"]), downloader)
+    images = build_card_images(copy, photos)
+    return _write_images(output_root, str(row["publish_date"]), set_id, images)
+
+
 def _own_photos(store: Store, release_id: int, downloader) -> list[bytes]:
     """**그 원문에 붙은 첨부만** 내려받는다. 다른 기사 사진이 섞일 여지를 두지 않는다.
 
@@ -185,11 +203,3 @@ def _date_label(publish_date: str) -> str:
         return datetime.fromisoformat(publish_date).strftime("%Y.%m.%d")
     except ValueError:
         return publish_date
-
-
-def set_etag(paths: list[Path]) -> str:
-    digest = hashlib.sha1()
-    for path in paths:
-        digest.update(path.name.encode("utf-8"))
-        digest.update(str(path.stat().st_size).encode("utf-8"))
-    return digest.hexdigest()[:16]
