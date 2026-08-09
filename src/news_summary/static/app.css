@@ -3029,3 +3029,5 @@ h3 {
 .cardnews-copy-edit input, .cardnews-copy-edit textarea { font: inherit; padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius); }
 .cardnews-copy-link { font: inherit; font-size: 0.85rem; padding: 0.2rem 0.6rem; cursor: pointer; }
 .cardnews-save-hint { color: var(--muted); font-size: 0.78rem; }
+.cardnews-slide-fields { border: 1px solid var(--line); border-radius: var(--radius); padding: 0.6rem 0.7rem; display: grid; gap: 0.4rem; }
+.cardnews-slide-fields legend { font-size: 0.75rem; color: var(--muted); padding: 0 0.3rem; }

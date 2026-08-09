@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from PIL import Image
 
-from news_summary.cardnews import CardCopy
+from news_summary.cardnews import CardCopy, CardSlide
 from news_summary.cardnews_service import (
     CardNewsServiceError,
     build_set_for_draft,
@@ -14,6 +14,7 @@ from news_summary.cardnews_service import (
     delete_set_images,
     load_set_images,
     prune_old_dates,
+    rebuild_images_from_copy,
     set_directory,
 )
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset
@@ -70,7 +71,10 @@ def seed(store: Store, *, asset_urls=("https://example.com/a.jpg",), title="담�
 def fake_copy_builder(request, api_key):
     return CardCopy(
         cover="담양 무더위쉼터 전면 점검",
-        cards=["야외 근로자 안전 점검에 나섰습니다.", "냉방기 가동 상태를 확인했습니다."],
+        cards=[
+            CardSlide(heading="야외 근로자 점검", body="야외 근로자 안전 점검에 나섰습니다."),
+            CardSlide(heading="냉방기 상태 확인", body="냉방기 가동 상태를 확인했습니다."),
+        ],
         source_label=request.source_label,
         date_label=request.date_label,
         tags=["담양"],
@@ -140,13 +144,45 @@ def test_persists_copy_for_later_editing(tmp_path):
 
     row = store.card_news_set(result.set_id)
     assert row["cover"] == "담양 무더위쉼터 전면 점검"
-    assert json.loads(row["cards"]) == result.copy.cards
+    # 소제목·본문이 각각 남아야 사람이 고칠 때 둘을 따로 손볼 수 있다.
+    assert json.loads(row["cards"]) == [
+        {"heading": slide.heading, "body": slide.body} for slide in result.copy.cards
+    ]
     assert row["status"] == "draft", "사람이 확인하기 전에는 발행 상태가 아니어야 한다"
 
     restored = decode_cards(row)
     assert restored.cover == result.copy.cover
     assert restored.cards == result.copy.cards
     assert restored.date_label == "2026.08.09"
+
+
+def test_legacy_string_cards_are_read_and_redrawn(tmp_path):
+    """옛 형태(문자열 리스트)로 저장된 세트도 읽고 다시 그릴 수 있어야 한다.
+
+    구판이 저장해 둔 세트가 새 구조 때문에 열리지 않으면 이미 만든 카드가 통째로 죽는다.
+    """
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+    out = tmp_path / "cardnews"
+    result = build_set_for_draft(
+        store, draft_id, "key", out, publish_date="2026-08-09",
+        downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
+    )
+    # 구판이 쓰던 형태 그대로 덮어쓴다.
+    store.update_card_news_copy(
+        result.set_id,
+        "담양 무더위쉼터 전면 점검",
+        ["야외 근로자 안전 점검에 나섰습니다.", "냉방기 가동 상태를 확인했습니다."],
+    )
+
+    restored = decode_cards(store.card_news_set(result.set_id))
+
+    assert restored.cards == [
+        CardSlide(heading="", body="야외 근로자 안전 점검에 나섰습니다."),
+        CardSlide(heading="", body="냉방기 가동 상태를 확인했습니다."),
+    ]
+    paths = rebuild_images_from_copy(store, result.set_id, out, downloader=lambda asset: photo_bytes())
+    assert len(paths) == 3, "표지 1장 + 본문 2장"
 
 
 def test_rebuilding_same_draft_replaces_instead_of_duplicating(tmp_path):

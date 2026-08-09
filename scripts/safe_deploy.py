@@ -5,6 +5,7 @@ import argparse
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 import httpx
 
@@ -17,6 +18,11 @@ def collector_state() -> tuple[object, str]:
     return payload.get("auto_collector_run_minutes"), str(payload.get("service_status_label") or "")
 
 
+def minutes_to_next_hour() -> int:
+    now = datetime.now(timezone.utc)
+    return 60 - now.minute - (1 if now.second else 0)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="수집 회차가 끝난 뒤에만 푸시한다.")
     parser.add_argument("--remote", default="origin")
@@ -26,6 +32,15 @@ def main() -> int:
         type=int,
         default=25,
         help="회차 중이면 이만큼 기다린다. 0이면 기다리지 않고 거절한다.",
+    )
+    parser.add_argument(
+        "--build-minutes",
+        type=int,
+        default=12,
+        help=(
+            "빌드가 끝나 새 프로세스가 뜨기까지 걸리는 시간. 정각까지 이보다 적게 남았으면 "
+            "곧 시작할 회차를 배포가 덮치므로 기다린다."
+        ),
     )
     args = parser.parse_args()
 
@@ -37,8 +52,22 @@ def main() -> int:
             print(f"상태 확인 실패({type(exc).__name__}) — 배포하지 않습니다.", file=sys.stderr)
             return 2
 
+        # 회차 중이 아니어도, 빌드가 끝날 무렵 정각 회차가 시작되면 그 회차가 죽는다.
+        # 2026-08-09에 8~12분 간격으로 여섯 번 배포해 두 시간치 수집을 통째로 날렸다.
+        if run_minutes is None and minutes_to_next_hour() <= args.build_minutes:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(
+                    f"정각까지 {minutes_to_next_hour()}분 — 빌드가 회차를 덮칩니다. 배포를 거절합니다.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"정각까지 {minutes_to_next_hour()}분 — 회차를 덮치지 않도록 기다립니다.")
+            time.sleep(POLL_SECONDS)
+            continue
+
         if run_minutes is None:
-            print(f"수집 회차 없음 (서비스 {status}) — 푸시합니다.")
+            print(f"수집 회차 없음 · 정각까지 {minutes_to_next_hour()}분 (서비스 {status}) — 푸시합니다.")
             break
 
         remaining = deadline - time.monotonic()

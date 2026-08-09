@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from .cardnews import CardCopy
+from .cardnews import CardCopy, CardSlide
 from .ops_logging import get_logger
 from .writer import DEFAULT_GEMINI_MODELS, _dedupe_models, _is_gemini_quota_error, _summarize_gemini_error
 
@@ -14,8 +14,10 @@ logger = get_logger("cardcopy")
 # 카드 한 장이 넘어가면 카드뉴스가 아니라 그냥 기사다. 시안에서 4줄이 넘어가는 것을 보고 정했다.
 MIN_COVER_CHARS = 6
 MAX_COVER_CHARS = 30
-MIN_CARD_CHARS = 15
-MAX_CARD_CHARS = 70
+MIN_HEADING_CHARS = 4
+MAX_HEADING_CHARS = 22
+MIN_CARD_CHARS = 25
+MAX_CARD_CHARS = 110
 MIN_CARDS = 2
 MAX_CARDS = 4
 MAX_TAGS = 5
@@ -26,17 +28,21 @@ SYSTEM_PROMPT = """너는 지역 뉴스 카드뉴스 편집자다. 기사 초안
 지켜야 할 것:
 - 표지 문구는 %(cover_min)d~%(cover_max)d자. 핵심 하나만. 제목을 그대로 베끼지 말고 주민에게
   무엇이 달라지는지 말한다.
-- 본문 카드는 %(min_cards)d~%(max_cards)d장. 장당 %(card_min)d~%(card_max)d자. 한 장에 한 가지만 담는다.
+- 본문 카드는 %(min_cards)d~%(max_cards)d장. **각 장은 소제목과 본문을 함께 담는다.**
+  - 소제목: %(head_min)d~%(head_max)d자. 그 장에서 말하려는 것 한 줄.
+  - 본문: %(card_min)d~%(card_max)d자. 소제목을 풀어 설명하되 한 장에 한 가지만.
 - 신청 기한, 장소, 대상, 금액처럼 주민이 행동할 때 필요한 정보를 우선한다.
 - 원문에 없는 사실을 지어내지 않는다. 숫자와 날짜는 원문 그대로 쓴다.
 - 문장은 '~합니다', '~됩니다'처럼 평서형으로 끝낸다.
 - 해시태그는 최대 %(max_tags)d개, 지역명과 주제 중심으로.
 
 JSON만 출력한다. 다른 설명을 붙이지 않는다.
-{"cover": "...", "cards": ["...", "..."], "tags": ["...", "..."]}
+{"cover": "...", "cards": [{"heading": "...", "body": "..."}, ...], "tags": ["...", "..."]}
 """ % {
     "cover_min": MIN_COVER_CHARS,
     "cover_max": MAX_COVER_CHARS,
+    "head_min": MIN_HEADING_CHARS,
+    "head_max": MAX_HEADING_CHARS,
     "min_cards": MIN_CARDS,
     "max_cards": MAX_CARDS,
     "card_min": MIN_CARD_CHARS,
@@ -132,13 +138,14 @@ def _validate(raw: object, request: CardCopyRequest) -> CardCopy:
     cards_raw = payload.get("cards")
     if not isinstance(cards_raw, list):
         raise CardCopyError("본문 카드가 목록이 아닙니다.")
-    cards = [_clean(item) for item in cards_raw]
-    cards = [card for card in cards if card]
+    cards = [slide for slide in (_slide(item) for item in cards_raw) if slide is not None]
     if not MIN_CARDS <= len(cards) <= MAX_CARDS:
         raise CardCopyError(f"본문 카드 장수가 규격을 벗어났습니다({len(cards)}장).")
-    for card in cards:
-        if not MIN_CARD_CHARS <= len(card) <= MAX_CARD_CHARS:
-            raise CardCopyError(f"본문 카드 길이가 규격을 벗어났습니다({len(card)}자).")
+    for slide in cards:
+        if not MIN_HEADING_CHARS <= len(slide.heading) <= MAX_HEADING_CHARS:
+            raise CardCopyError(f"카드 소제목 길이가 규격을 벗어났습니다({len(slide.heading)}자).")
+        if not MIN_CARD_CHARS <= len(slide.body) <= MAX_CARD_CHARS:
+            raise CardCopyError(f"본문 카드 길이가 규격을 벗어났습니다({len(slide.body)}자).")
 
     tags_raw = payload.get("tags")
     tags = [_clean(tag).lstrip("#") for tag in tags_raw] if isinstance(tags_raw, list) else []
@@ -151,6 +158,18 @@ def _validate(raw: object, request: CardCopyRequest) -> CardCopy:
         date_label=request.date_label,
         tags=tags,
     )
+
+
+def _slide(item: object) -> CardSlide | None:
+    """모델이 {소제목, 본문} 대신 문자열 하나를 줄 때도 받아 준다."""
+    if isinstance(item, dict):
+        heading = _clean(item.get("heading") or item.get("title"))
+        body = _clean(item.get("body") or item.get("text"))
+    else:
+        heading, body = "", _clean(item)
+    if not heading and not body:
+        return None
+    return CardSlide(heading=heading, body=body)
 
 
 def _parse_payload(raw: object) -> dict:

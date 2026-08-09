@@ -29,14 +29,31 @@ MARGIN = 65
 COVER_BG = "#111111"
 COVER_TEXT = "#FFFFFF"
 COVER_META = "#9A9A9A"
-BODY_BG = "#F5F5F3"
-BODY_TEXT = "#141414"
-BODY_META = "#8A8A8A"
+# 표지와 본문의 바탕색을 맞춘다 — 넘길 때 흰 배경이 끼면 산만하다(2026-08-09 사용자 지시).
+BODY_BG = COVER_BG
+BODY_HEADING = "#FFFFFF"
+BODY_TEXT = "#C7C7C7"
+BODY_META = "#7A7A7A"
 
 MAX_COVER_LINES = 4
-MAX_BODY_LINES = 8
+MAX_HEADING_LINES = 3
+MAX_BODY_LINES = 7
+HEADING_GAP = 26
 
 FONT_PATH = Path(__file__).resolve().parent / "static" / "fonts" / "PretendardVariable.woff2"
+
+
+@dataclass
+class CardSlide:
+    """본문 카드 한 장 — 소제목과 본문을 함께 담는다.
+
+    처음에는 문장 하나만 넣었는데 카드가 휑하고 무슨 얘긴지 한눈에 안 들어왔다
+    (2026-08-09 사용자 지적: "내용이 조금 빈약해"). 소제목이 있으면 넘기면서도
+    무슨 내용인지 잡힌다.
+    """
+
+    heading: str
+    body: str
 
 
 @dataclass
@@ -44,10 +61,17 @@ class CardCopy:
     """카드 한 세트의 문안. 문안 생성 단계(AI)의 산출물이자 합성의 입력이다."""
 
     cover: str
-    cards: list[str]
+    cards: list[CardSlide]
     source_label: str = ""
     date_label: str = ""
     tags: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # 예전 형태(문자열 리스트)로 만들어진 세트도 그대로 읽히게 한다.
+        self.cards = [
+            slide if isinstance(slide, CardSlide) else CardSlide(heading="", body=str(slide))
+            for slide in self.cards
+        ]
 
 
 class CardNewsError(RuntimeError):
@@ -62,8 +86,8 @@ def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[byte
     """
     if not copy.cover.strip():
         raise CardNewsError("표지 문구가 비어 있습니다.")
-    body_texts = [text for text in copy.cards if text and text.strip()]
-    if not body_texts:
+    slides = [slide for slide in copy.cards if slide.heading.strip() or slide.body.strip()]
+    if not slides:
         raise CardNewsError("본문 카드 문구가 하나도 없습니다.")
 
     usable = _usable_photos(photos)
@@ -71,11 +95,11 @@ def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[byte
     try:
         cover_photo = usable[0] if usable else None
         images.append(_encode(_render_cover(copy, cover_photo)))
-        total = len(body_texts) + 1
-        for index, text in enumerate(body_texts, start=2):
+        total = len(slides) + 1
+        for index, slide in enumerate(slides, start=2):
             # 표지에 쓴 사진은 본문에서 다시 쓰지 않는다 — 같은 사진이 연달아 나오면 지루하다.
             photo = usable[index - 1] if index - 1 < len(usable) else None
-            images.append(_encode(_render_body(text, index, total, photo)))
+            images.append(_encode(_render_body(slide, index, total, photo)))
     finally:
         for photo in usable:
             photo.close()
@@ -226,7 +250,8 @@ def _render_cover(copy: CardCopy, photo: Image.Image | None) -> Image.Image:
     return canvas
 
 
-def _render_body(text: str, index: int, total: int, photo: Image.Image | None) -> Image.Image:
+def _render_body(slide: CardSlide, index: int, total: int, photo: Image.Image | None) -> Image.Image:
+    """본문 카드. 표지와 같은 검은 바탕을 쓴다 — 넘길 때 배경이 바뀌면 산만하다."""
     canvas = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), BODY_BG)
     draw = ImageDraw.Draw(canvas)
     max_width = CARD_WIDTH - MARGIN * 2
@@ -234,23 +259,34 @@ def _render_body(text: str, index: int, total: int, photo: Image.Image | None) -
     if photo is not None:
         band_height = int(CARD_HEIGHT * BODY_PHOTO_RATIO)
         band = _photo_band(photo, band_height, BODY_BG)
-        canvas.paste(band, (0, 0))
+        _paste_with_fade(canvas, band, BODY_BG)
         band.close()
-        text_area_top = band_height
-        sizes = (52, 46, 40)
+        text_area_top = band_height + 20
+        heading_sizes = (58, 52, 46)
+        body_sizes = (44, 40, 36)
     else:
         text_area_top = 0
-        sizes = (60, 54, 48)
+        heading_sizes = (68, 60, 54)
+        body_sizes = (50, 46, 42)
 
-    font, lines = _fit_lines(draw, text, max_width, MAX_BODY_LINES, sizes, 600)
-    line_height = int(font.size * 1.5)
-    # 남은 공간 가운데에 둔다 — 아래가 휑하게 비지 않는다.
-    block_height = line_height * len(lines)
-    available = CARD_HEIGHT - text_area_top - 120
+    blocks: list[tuple[ImageFont.FreeTypeFont, list[str], str, int]] = []
+    if slide.heading.strip():
+        font, lines = _fit_lines(draw, slide.heading, max_width, MAX_HEADING_LINES, heading_sizes, 800)
+        blocks.append((font, lines, BODY_HEADING, int(font.size * 1.3)))
+    if slide.body.strip():
+        font, lines = _fit_lines(draw, slide.body, max_width, MAX_BODY_LINES, body_sizes, 500)
+        blocks.append((font, lines, BODY_TEXT, int(font.size * 1.6)))
+
+    block_height = sum(len(lines) * step for _, lines, _, step in blocks)
+    block_height += HEADING_GAP * (len(blocks) - 1) if len(blocks) > 1 else 0
+    available = CARD_HEIGHT - text_area_top - 130
     y = text_area_top + max(60, (available - block_height) // 2)
-    for line in lines:
-        draw.text((MARGIN, y), line, font=font, fill=BODY_TEXT)
-        y += line_height
+    for order, (font, lines, colour, step) in enumerate(blocks):
+        if order:
+            y += HEADING_GAP
+        for line in lines:
+            draw.text((MARGIN, y), line, font=font, fill=colour)
+            y += step
 
     label = f"{index} / {total}"
     label_font = _font(28, 600)

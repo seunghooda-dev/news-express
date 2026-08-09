@@ -1935,7 +1935,7 @@ class Store:
         press_release_id: int,
         publish_date: str,
         cover: str,
-        cards: list[str],
+        cards: list,
         tags: list[str],
         source_label: str,
         image_count: int,
@@ -2026,7 +2026,7 @@ class Store:
             ).fetchall()
         return [str(row["publish_date"]) for row in rows]
 
-    def update_card_news_copy(self, set_id: int, cover: str, cards: list[str]) -> None:
+    def update_card_news_copy(self, set_id: int, cover: str, cards: list) -> None:
         """사람이 손질한 문안을 저장한다. AI 재생성 말고 한 글자만 고치고 싶을 때 쓴다."""
         with self.connect() as conn:
             conn.execute(

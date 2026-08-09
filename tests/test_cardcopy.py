@@ -5,10 +5,13 @@ import pytest
 from news_summary.cardcopy import (
     MAX_CARD_CHARS,
     MAX_COVER_CHARS,
+    MAX_HEADING_CHARS,
+    MIN_HEADING_CHARS,
     CardCopyError,
     CardCopyRequest,
     build_card_copy,
 )
+from news_summary.cardnews import CardSlide
 
 
 def sample_request() -> CardCopyRequest:
@@ -26,9 +29,18 @@ def good_payload() -> dict:
     return {
         "cover": "담양 무더위쉼터 전면 점검",
         "cards": [
-            "담양군이 야외 근로자와 취약계층 안전 점검에 나섰습니다.",
-            "무더위쉼터 냉방기 가동 상태를 전수 확인했습니다.",
-            "폭염특보가 해제될 때까지 점검이 이어집니다.",
+            {
+                "heading": "야외 근로자 안전 점검",
+                "body": "담양군이 야외 근로자와 취약계층 안전을 위해 폭염 취약 현장을 직접 점검했습니다.",
+            },
+            {
+                "heading": "무더위쉼터 냉방기 확인",
+                "body": "무더위쉼터 냉방기 가동 상태와 운영 시간을 전수 확인해 이용 불편이 없도록 했습니다.",
+            },
+            {
+                "heading": "폭염특보 해제까지 지속",
+                "body": "군은 폭염특보가 해제될 때까지 취약 현장 점검을 계속 이어 갈 계획이라고 밝혔습니다.",
+            },
         ],
         "tags": ["담양", "폭염"],
     }
@@ -47,6 +59,10 @@ def test_builds_copy_from_valid_json():
 
     assert copy.cover == "담양 무더위쉼터 전면 점검"
     assert len(copy.cards) == 3
+    assert copy.cards[0] == CardSlide(
+        heading="야외 근로자 안전 점검",
+        body="담양군이 야외 근로자와 취약계층 안전을 위해 폭염 취약 현장을 직접 점검했습니다.",
+    )
     assert copy.source_label == "담양군청 보도자료"
     assert copy.tags == ["담양", "폭염"]
 
@@ -77,9 +93,40 @@ def test_strips_hash_from_tags():
 def test_rejects_overlong_card_instead_of_truncating():
     """잘린 문장이 카드에 박히면 사람이 고치기 더 번거롭다 — 자르지 말고 거절한다."""
     payload = good_payload()
-    payload["cards"][0] = "가" * (MAX_CARD_CHARS + 1)
+    payload["cards"][0]["body"] = "가" * (MAX_CARD_CHARS + 1)
 
     with pytest.raises(CardCopyError, match="본문 카드 길이"):
+        build_card_copy(sample_request(), "key", models=("m1",), generator=responder(json.dumps(payload)))
+
+
+def test_rejects_too_short_heading():
+    """한두 글자짜리 소제목은 그 장에서 무슨 얘기를 하는지 알려 주지 못한다."""
+    payload = good_payload()
+    payload["cards"][0]["heading"] = "가" * (MIN_HEADING_CHARS - 1)
+
+    with pytest.raises(CardCopyError, match="소제목 길이"):
+        build_card_copy(sample_request(), "key", models=("m1",), generator=responder(json.dumps(payload)))
+
+
+def test_rejects_overlong_heading():
+    """소제목이 길면 카드 위쪽을 다 잡아먹는다 — 본문과 마찬가지로 자르지 말고 거절한다."""
+    payload = good_payload()
+    payload["cards"][0]["heading"] = "가" * (MAX_HEADING_CHARS + 1)
+
+    with pytest.raises(CardCopyError, match="소제목 길이"):
+        build_card_copy(sample_request(), "key", models=("m1",), generator=responder(json.dumps(payload)))
+
+
+def test_plain_string_card_is_read_as_body_without_heading():
+    """모델이 {소제목, 본문} 대신 문자열 하나를 줘도 버리지 않는다.
+
+    버렸다면 장수 미달('장수')로 걸릴 텐데, 소제목 규격에서 걸리는 것이
+    문자열이 본문으로 읽혔다는 뜻이다.
+    """
+    payload = good_payload()
+    payload["cards"] = [slide["body"] for slide in payload["cards"]]
+
+    with pytest.raises(CardCopyError, match="소제목 길이"):
         build_card_copy(sample_request(), "key", models=("m1",), generator=responder(json.dumps(payload)))
 
 

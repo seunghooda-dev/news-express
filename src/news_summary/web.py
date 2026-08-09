@@ -1536,7 +1536,13 @@ def create_app() -> Flask:
             abort(404)
         target = str(row["publish_date"])
         cover = (request.form.get("cover") or "").strip()
-        cards = [line.strip() for line in request.form.getlist("card") if line.strip()]
+        headings = request.form.getlist("heading")
+        bodies = request.form.getlist("body")
+        cards = [
+            {"heading": heading.strip(), "body": body.strip()}
+            for heading, body in zip(headings, bodies)
+            if heading.strip() or body.strip()
+        ]
         if not cover or not cards:
             flash("표지 문구와 본문 카드가 모두 있어야 합니다.")
             return redirect(url_for("card_news_manage", date=target))

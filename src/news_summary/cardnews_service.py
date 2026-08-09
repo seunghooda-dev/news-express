@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .cardcopy import CardCopyRequest, build_card_copy
-from .cardnews import CardCopy, build_card_images
+from .cardnews import CardCopy, CardSlide, build_card_images
 from .ops_logging import get_logger
 from .storage import Store
 
@@ -79,7 +79,7 @@ def build_set_for_draft(
         press_release_id=release_id,
         publish_date=publish_date,
         cover=copy.cover,
-        cards=copy.cards,
+        cards=[{"heading": s.heading, "body": s.body} for s in copy.cards],
         tags=copy.tags,
         source_label=source_label,
         image_count=len(images),
@@ -183,11 +183,28 @@ def decode_cards(row) -> CardCopy:
     """DB 행을 다시 CardCopy로 만든다 — 재생성·수정 화면에서 쓴다."""
     return CardCopy(
         cover=str(row["cover"] or ""),
-        cards=_json_list(row["cards"]),
+        cards=_json_slides(row["cards"]),
         source_label=str(row["source_label"] or ""),
         date_label=_date_label(str(row["publish_date"] or "")),
         tags=_json_list(row["tags"]),
     )
+
+
+def _json_slides(value) -> list[CardSlide]:
+    """옛 형태(문자열 리스트)로 저장된 세트도 그대로 읽는다."""
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    slides: list[CardSlide] = []
+    for item in parsed:
+        if isinstance(item, dict):
+            slides.append(CardSlide(heading=str(item.get("heading") or ""), body=str(item.get("body") or "")))
+        else:
+            slides.append(CardSlide(heading="", body=str(item)))
+    return slides
 
 
 def _json_list(value) -> list[str]:

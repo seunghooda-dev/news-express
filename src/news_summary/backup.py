@@ -31,6 +31,7 @@ POSTGRES_BACKUP_TABLES = (
     "source_collection_runs",
     "visitor_access_logs",
     "operation_events",
+    "card_news_sets",
 )
 ALLOWED_RESTORE_ROOTS = (
     ".env",

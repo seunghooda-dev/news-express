@@ -1,10 +1,11 @@
 import io
+import json
 from pathlib import Path
 from uuid import uuid4
 
 from PIL import Image
 
-from news_summary.cardnews import CardCopy
+from news_summary.cardnews import CardCopy, CardSlide
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset
 from news_summary.storage import Store
 
@@ -61,7 +62,10 @@ def stub_generation(monkeypatch):
         "news_summary.cardnews_service.build_card_copy",
         lambda request, api_key: CardCopy(
             cover="담양 무더위쉼터 전면 점검",
-            cards=["야외 근로자 안전 점검에 나섰습니다.", "냉방기 가동 상태를 확인했습니다."],
+            cards=[
+                CardSlide(heading="야외 근로자 점검", body="야외 근로자 안전 점검에 나섰습니다."),
+                CardSlide(heading="냉방기 상태 확인", body="냉방기 가동 상태를 확인했습니다."),
+            ],
             source_label=request.source_label,
             date_label=request.date_label,
             tags=["담양"],
@@ -237,13 +241,22 @@ def test_editing_copy_saves_and_redraws_without_calling_ai(monkeypatch, tmp_path
 
     response = client.post(
         f"/card-news/{set_id}/copy",
-        data={"cover": "사람이 고친 표지", "card": ["첫 카드 문구입니다.", "둘째 카드 문구입니다."]},
+        data={
+            "cover": "사람이 고친 표지",
+            "heading": ["사람이 고친 소제목", "둘째 카드 소제목"],
+            "body": ["사람이 손질한 첫째 카드 본문입니다.", "사람이 손질한 둘째 카드 본문입니다."],
+        },
         follow_redirects=True,
     )
 
     assert response.status_code == 200
     row = store.card_news_set(set_id)
     assert row["cover"] == "사람이 고친 표지"
+    # 소제목과 본문이 짝을 유지한 채 저장돼야 다시 그린 카드가 어긋나지 않는다.
+    assert json.loads(row["cards"]) == [
+        {"heading": "사람이 고친 소제목", "body": "사람이 손질한 첫째 카드 본문입니다."},
+        {"heading": "둘째 카드 소제목", "body": "사람이 손질한 둘째 카드 본문입니다."},
+    ]
     assert calls["ai"] == 0, "문안 손질에 AI를 다시 부르면 고친 글자가 덮인다"
 
     from news_summary.cardnews_service import load_set_images
@@ -258,7 +271,11 @@ def test_editing_copy_rejects_empty_input(monkeypatch, tmp_path):
     build_one(client, draft_id)
     set_id = store.card_news_set_by_draft(draft_id)["id"]
 
-    client.post(f"/card-news/{set_id}/copy", data={"cover": "   ", "card": [""]}, follow_redirects=True)
+    client.post(
+        f"/card-news/{set_id}/copy",
+        data={"cover": "   ", "heading": [""], "body": [""]},
+        follow_redirects=True,
+    )
 
     assert store.card_news_set(set_id)["cover"] == "담양 무더위쉼터 전면 점검", "빈 입력으로 덮이면 안 된다"
 

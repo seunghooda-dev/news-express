@@ -42,10 +42,16 @@
       <label>표지 문구
         <input type="text" name="cover" value="{{ item.card_copy.cover }}" maxlength="40">
       </label>
-      {% for line in item.card_copy.cards %}
-        <label>{{ loop.index }}번 카드
-          <textarea name="card" rows="2" maxlength="120">{{ line }}</textarea>
-        </label>
+      {% for slide in item.card_copy.cards %}
+        <fieldset class="cardnews-slide-fields">
+          <legend>{{ loop.index }}번 카드</legend>
+          <label>소제목
+            <input type="text" name="heading" value="{{ slide.heading }}" maxlength="30">
+          </label>
+          <label>본문
+            <textarea name="body" rows="3" maxlength="160">{{ slide.body }}</textarea>
+          </label>
+        </fieldset>
       {% endfor %}
       <button type="submit">문안 고치고 다시 그리기</button>
     </form>

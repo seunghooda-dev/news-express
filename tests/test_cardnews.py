@@ -9,6 +9,7 @@ from news_summary.cardnews import (
     MIN_PHOTO_EDGE,
     CardCopy,
     CardNewsError,
+    CardSlide,
     build_card_images,
 )
 
@@ -23,9 +24,18 @@ def sample_copy(**overrides) -> CardCopy:
     data = {
         "cover": "담양군, 폭염 취약 현장 긴급 점검",
         "cards": [
-            "담양군이 야외 근로자와 취약계층 안전을 위해 현장을 점검했습니다.",
-            "무더위쉼터 운영 상태와 냉방기 가동 여부를 함께 확인했습니다.",
-            "군은 폭염특보가 해제될 때까지 점검을 이어갈 계획입니다.",
+            CardSlide(
+                heading="야외 근로자 안전 점검",
+                body="담양군이 야외 근로자와 취약계층 안전을 위해 현장을 점검했습니다.",
+            ),
+            CardSlide(
+                heading="무더위쉼터 냉방기 확인",
+                body="무더위쉼터 운영 상태와 냉방기 가동 여부를 함께 확인했습니다.",
+            ),
+            CardSlide(
+                heading="폭염특보 해제까지 지속",
+                body="군은 폭염특보가 해제될 때까지 점검을 이어갈 계획입니다.",
+            ),
         ],
         "source_label": "담양군청 보도자료",
         "date_label": "2026.08.09",
@@ -42,6 +52,45 @@ def test_builds_cover_and_body_cards_at_fixed_size():
     images = build_card_images(sample_copy(), [photo_bytes(3500, 2625)])
 
     assert len(images) == 4, "표지 1장 + 본문 3장"
+    for raw in images:
+        card = open_card(raw)
+        assert (card.width, card.height) == (CARD_WIDTH, CARD_HEIGHT)
+
+
+def test_heading_is_drawn_together_with_body():
+    """소제목이 있어야 넘기면서도 무슨 얘긴지 잡힌다(2026-08-09 사용자 지적: "내용이 조금 빈약해")."""
+    with_heading = build_card_images(sample_copy(), [])
+    without_heading = build_card_images(
+        sample_copy(cards=[CardSlide(heading="", body=slide.body) for slide in sample_copy().cards]),
+        [],
+    )
+
+    # 첫 본문 카드가 달라야 소제목이 실제로 그려진 것이다.
+    assert open_card(with_heading[1]).tobytes() != open_card(without_heading[1]).tobytes()
+
+
+def test_heading_only_slide_is_kept():
+    """본문이 비어도 소제목이 있으면 그 카드는 살린다 — 빈 카드로 취급해 버리면 장수가 어긋난다."""
+    images = build_card_images(sample_copy(cards=[CardSlide(heading="소제목만 있는 카드", body="")]), [])
+
+    assert len(images) == 2
+    assert (open_card(images[1]).width, open_card(images[1]).height) == (CARD_WIDTH, CARD_HEIGHT)
+
+
+def test_legacy_string_cards_still_render():
+    """옛 형태(문자열 리스트)로 만든 세트도 그대로 그려져야 한다 — 이미 저장된 세트가 깨지면 안 된다."""
+    legacy = sample_copy(
+        cards=["야외 근로자 안전 점검에 나섰습니다.", "냉방기 가동 상태를 확인했습니다."]
+    )
+
+    assert legacy.cards == [
+        CardSlide(heading="", body="야외 근로자 안전 점검에 나섰습니다."),
+        CardSlide(heading="", body="냉방기 가동 상태를 확인했습니다."),
+    ]
+
+    images = build_card_images(legacy, [])
+
+    assert len(images) == 3, "표지 1장 + 본문 2장"
     for raw in images:
         card = open_card(raw)
         assert (card.width, card.height) == (CARD_WIDTH, CARD_HEIGHT)
@@ -88,7 +137,7 @@ def test_very_long_headline_is_truncated_not_overflowed():
 
 
 def test_very_long_body_text_stays_inside_card():
-    images = build_card_images(sample_copy(cards=["나" * 600]), [])
+    images = build_card_images(sample_copy(cards=[CardSlide(heading="긴 본문 카드", body="나" * 600)]), [])
 
     assert len(images) == 2
     assert (open_card(images[1]).width, open_card(images[1]).height) == (CARD_WIDTH, CARD_HEIGHT)
@@ -100,8 +149,10 @@ def test_empty_cover_is_rejected_rather_than_guessed():
 
 
 def test_blank_body_cards_are_rejected():
+    blank = [CardSlide(heading="", body=""), CardSlide(heading="   ", body="   ")]
+
     with pytest.raises(CardNewsError):
-        build_card_images(sample_copy(cards=["", "   "]), [photo_bytes(2000, 1500)])
+        build_card_images(sample_copy(cards=blank), [photo_bytes(2000, 1500)])
 
 
 def test_cover_photo_is_not_reused_on_first_body_card():
