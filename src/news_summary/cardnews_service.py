@@ -250,14 +250,29 @@ def prune_old_dates(output_root: Path, keep_days: int, store: Store | None = Non
 
 
 def decode_cards(row) -> CardCopy:
-    """DB 행을 다시 CardCopy로 만든다 — 재생성·수정 화면에서 쓴다."""
+    """DB 행을 다시 CardCopy로 만든다 — 재생성·수정 화면에서 쓴다.
+
+    `model`도 함께 채운다. 안 채우면 왕복에서 값이 사라져,
+    `save_card_news_set(..., copy_model=decode_cards(row).model)`이라고 쓰는 순간
+    **전 세트의 모델 기록이 조용히 지워진다** — 2026-08-10에 컬럼을 넣으면서 만든
+    잠복 함정이라 감사에서 지적받고 닫았다.
+    """
     return CardCopy(
         cover=str(row["cover"] or ""),
         cards=_json_slides(row["cards"]),
         source_label=str(row["source_label"] or ""),
         date_label=_date_label(str(row["publish_date"] or "")),
         tags=_json_list(row["tags"]),
+        model=_row_text(row, "copy_model"),
     )
+
+
+def _row_text(row, column: str) -> str:
+    """옛 스키마 행에는 없을 수 있는 칸을 관대하게 읽는다."""
+    try:
+        return str(row[column] or "")
+    except (KeyError, IndexError):
+        return ""
 
 
 def _json_slides(value) -> list[CardSlide]:
@@ -281,11 +296,28 @@ def _json_slides(value) -> list[CardSlide]:
 
 
 def _json_list(value) -> list[str]:
+    """해시태그를 읽는다. 형제 함수와 달리 **경고조차 없었다**(2026-08-11 감사).
+
+    그리고 `str(item)`이 무엇이든 문자열로 만들어, 옛 형태(dict 리스트)가 섞이면
+    카드에 `#{'name': '담양'}`이 그대로 인쇄된다 — 문자열이 아닌 항목은 버린다.
+    """
     try:
         parsed = json.loads(value or "[]")
     except (TypeError, json.JSONDecodeError):
+        logger.warning("card news tags column unreadable value=%r", str(value)[:120])
         return []
-    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+    if not isinstance(parsed, list):
+        logger.warning("card news tags column is not a list type=%s", type(parsed).__name__)
+        return []
+    tags: list[str] = []
+    for item in parsed:
+        if isinstance(item, str):
+            tags.append(item)
+        elif isinstance(item, (int, float)):
+            tags.append(str(item))
+        else:
+            logger.warning("card news tag skipped type=%s", type(item).__name__)
+    return tags
 
 
 def _date_label(publish_date: str) -> str:

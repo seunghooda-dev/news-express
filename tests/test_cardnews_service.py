@@ -423,3 +423,48 @@ def test_reading_a_set_with_a_broken_date_does_not_crash(tmp_path):
 
     assert load_set_images(root, "2026/08/09", 7) == []
     delete_set_images(root, "../backups", 7)  # 예외 없이 아무것도 안 한다
+
+
+def test_decode_keeps_the_model_so_a_round_trip_does_not_erase_it(tmp_path):
+    """왕복에서 model이 사라지면 그 값을 그대로 다시 저장하는 순간 기록이 지워진다.
+
+    2026-08-10에 `copy_model` 컬럼을 넣으면서 `decode_cards`만 안 채워 둔 잠복
+    함정이었다 — 지금은 아무도 그렇게 안 쓰지만, 쓰는 순간 전 세트가 조용히 빈다.
+    """
+    store = make_store(tmp_path)
+    release_id, draft_id = seed(store)
+    set_id = store.save_card_news_set(
+        draft_id=draft_id,
+        press_release_id=release_id,
+        publish_date="2026-08-09",
+        cover="표지",
+        cards=[{"heading": "소제목", "body": "본문입니다."}],
+        tags=["담양"],
+        source_label="담양군청 보도자료",
+        image_count=1,
+        copy_model="gemini-3.5-flash",
+    )
+
+    decoded = decode_cards(store.card_news_set(set_id))
+
+    assert decoded.model == "gemini-3.5-flash"
+
+
+def test_tags_survive_junk_without_printing_python_objects(tmp_path):
+    """옛 형태(dict 리스트)가 섞이면 카드에 `#{'name': ...}`이 그대로 인쇄된다."""
+    store = make_store(tmp_path)
+    release_id, draft_id = seed(store)
+    set_id = store.save_card_news_set(
+        draft_id=draft_id,
+        press_release_id=release_id,
+        publish_date="2026-08-09",
+        cover="표지",
+        cards=[{"heading": "소제목", "body": "본문입니다."}],
+        tags=["담양", {"name": "폭염"}, 2026, None],
+        source_label="담양군청 보도자료",
+        image_count=1,
+    )
+
+    decoded = decode_cards(store.card_news_set(set_id))
+
+    assert decoded.tags == ["담양", "2026"], f"태그에 파이썬 객체가 샜다: {decoded.tags}"
