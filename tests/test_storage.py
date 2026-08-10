@@ -230,3 +230,56 @@ def test_recent_source_run_statuses_keeps_enough_history_to_rank_outages():
     assert counts["damyang"] == 30, f"오래 죽은 소스가 {counts['damyang']}회로 잘렸다"
     assert counts["gangjin"] == 12
     assert counts["damyang"] > counts["gangjin"], "더 오래 죽은 소스를 구분하지 못한다"
+
+
+def test_opening_a_database_made_before_copy_model_adds_the_column():
+    """`_ensure_column` 마이그레이션은 호출이 11곳인데 테스트가 **0건**이었다.
+
+    모든 테스트가 DB를 새로 만들고 즉시 `init_db()`를 부르므로 `ALTER TABLE` 분기가
+    한 번도 실행된 적이 없다. 이주가 안 돌면 `row["copy_model"]`을 읽는 공개
+    `/card-news`와 관리 화면이 **동시에 500**이 된다(2026-08-10 추가한 컬럼).
+    """
+    import sqlite3
+
+    db_path = Path(f"data/.test_oldschema_{uuid4().hex}.sqlite").resolve()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # copy_model이 없던 시절의 스키마를 손으로 만든다.
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE card_news_sets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draft_id INTEGER NOT NULL,
+            press_release_id INTEGER NOT NULL,
+            publish_date TEXT NOT NULL,
+            cover TEXT NOT NULL,
+            cards TEXT NOT NULL,
+            tags TEXT NOT NULL DEFAULT '',
+            source_label TEXT NOT NULL DEFAULT '',
+            image_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            published_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO card_news_sets (draft_id, press_release_id, publish_date, cover, cards,"
+        " created_at, updated_at) VALUES (1, 1, '2026-08-09', '옛 표지', '[]', '', '')"
+    )
+    conn.commit()
+    columns_before = {row[1] for row in conn.execute("PRAGMA table_info(card_news_sets)")}
+    conn.close()
+    assert "copy_model" not in columns_before, "표본이 구스키마가 아니다"
+
+    store = Store(db_path)
+    store.init_db()
+
+    row = store.card_news_set(1)
+    assert row is not None, "옛 행이 사라졌다"
+    assert row["copy_model"] == "", "이주는 됐는데 옛 행의 값이 NULL이다"
+    # 그 값을 읽는 쪽이 실제로 살아 있는지까지 본다.
+    from news_summary.cardnews_service import decode_cards
+
+    assert decode_cards(row).model == ""
