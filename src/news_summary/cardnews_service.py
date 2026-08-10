@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .asset_filters import is_display_noise_image_asset
 from .cardcopy import CardCopyRequest, build_card_copy
 from .cardnews import CardCopy, CardSlide, build_card_images
 from .ops_logging import get_logger
@@ -14,7 +16,9 @@ from .storage import Store
 
 logger = get_logger("cardnews_service")
 
-MAX_PHOTOS_PER_SET = 4
+# 쓸 만한 사진 하나를 찾을 때까지 **시도**할 첨부 수. 카드는 한 장이라 사진도
+# 한 장만 쓰므로, 첫 성공에서 멈춘다 — 이 값은 전부 실패할 때의 상한이다.
+MAX_PHOTO_ATTEMPTS = 4
 CARD_IMAGE_SUFFIX = ".png"
 
 
@@ -85,13 +89,7 @@ def build_set_for_draft(
         image_count=len(images),
     )
     paths = _write_images(output_root, publish_date, set_id, images)
-    logger.info(
-        "card news set built set_id=%s draft_id=%s photos=%s cards=%s",
-        set_id,
-        draft_id,
-        len(photos),
-        len(images),
-    )
+    logger.info("card news set built set_id=%s draft_id=%s cards=%s", set_id, draft_id, len(images))
     return CardNewsSet(set_id=set_id, draft_id=draft_id, publish_date=publish_date, copy=copy, image_paths=paths)
 
 
@@ -111,31 +109,38 @@ def rebuild_images_from_copy(
     copy = decode_cards(row)
     photos = _own_photos(store, int(row["press_release_id"]), downloader)
     images = build_card_images(copy, photos)
-    return _write_images(output_root, str(row["publish_date"]), set_id, images)
+    paths = _write_images(output_root, str(row["publish_date"]), set_id, images)
+    store.set_card_news_image_count(set_id, len(images))
+    return paths
 
 
-def _own_photos(store: Store, release_id: int, downloader) -> list[bytes]:
+def _own_photos(store: Store, release_id: int, downloader) -> Iterator[bytes]:
     """**그 원문에 붙은 첨부만** 내려받는다. 다른 기사 사진이 섞일 여지를 두지 않는다.
 
     downloader는 자산 행을 통째로 받는다 — 요청 헤더(리퍼러 등)를 만들려면 URL만으로
     부족한 기관이 있다.
+
+    **지연 생성이다.** 쓸 사진을 찾으면 소비하는 쪽이 멈추고, 그러면 뒤 첨부는
+    내려받지도 않는다. 전에는 4장을 다 받아 놓고 1장만 썼다.
     """
     if downloader is None:
-        return []
-    photos: list[bytes] = []
+        return
+    attempts = 0
     for asset in store.press_release_assets(release_id):
-        if len(photos) >= MAX_PHOTOS_PER_SET:
+        if attempts >= MAX_PHOTO_ATTEMPTS:
             break
-        if not asset["is_image"]:
+        # 로고·배너 같은 장식 이미지는 목록 화면에서도 걸러 낸다. 카드에 넣으면
+        # 사진 자리를 통째로 버린다.
+        if not asset["is_image"] or is_display_noise_image_asset(asset):
             continue
+        attempts += 1
         try:
             content = downloader(asset)
         except Exception as exc:  # noqa: BLE001 - 첨부 하나가 실패해도 세트는 나와야 한다.
             logger.info("card news photo download failed asset=%s error=%s", asset["id"], exc)
             continue
         if content:
-            photos.append(content)
-    return photos
+            yield content
 
 
 def set_directory(output_root: Path, publish_date: str, set_id: int) -> Path:

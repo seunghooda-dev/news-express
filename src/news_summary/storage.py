@@ -2027,16 +2027,29 @@ class Store:
         return [str(row["publish_date"]) for row in rows]
 
     def update_card_news_copy(self, set_id: int, cover: str, cards: list) -> None:
-        """사람이 손질한 문안을 저장한다. AI 재생성 말고 한 글자만 고치고 싶을 때 쓴다."""
+        """사람이 손질한 문안을 저장한다. AI 재생성 말고 한 글자만 고치고 싶을 때 쓴다.
+
+        image_count는 건드리지 않는다 — 여기서는 몇 장이 그려질지 알 수 없다.
+        실제로 그리는 쪽(set_card_news_image_count)이 적는다. 전에는 폐기된
+        공식(len(cards)+1)으로 틀린 값을 덮어썼다(2026-08-10 검토에서 적발).
+        """
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE card_news_sets
-                SET cover = ?, cards = ?, image_count = ?, updated_at = ?,
+                SET cover = ?, cards = ?, updated_at = ?,
                     status = 'draft', published_at = ''
                 WHERE id = ?
                 """,
-                (cover, json.dumps(cards, ensure_ascii=False), len(cards) + 1, _now(), set_id),
+                (cover, json.dumps(cards, ensure_ascii=False), _now(), set_id),
+            )
+
+    def set_card_news_image_count(self, set_id: int, image_count: int) -> None:
+        """실제로 그린 장수를 적는다. 그림을 쓴 쪽만 이 값을 안다."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE card_news_sets SET image_count = ?, updated_at = ? WHERE id = ?",
+                (image_count, _now(), set_id),
             )
 
     def set_card_news_status(self, set_id: int, status: str) -> None:

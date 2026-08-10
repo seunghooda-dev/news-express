@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,6 +33,10 @@ MIN_PHOTO_EDGE = 800
 # 카드 폭이 1080이라 원본을 그대로 들고 있을 이유가 없다. 25MB JPEG가 1억 화소면
 # RGB로 펼쳐 240MB인데 세트당 4장을 동시에 쥔다 — 이 서비스는 512MB에서 돈다.
 MAX_WORKING_EDGE = CARD_WIDTH * 2
+
+# 이보다 납작하면 사진이 아니라 배너다. 밴드(폭:높이 최대 2.35:1)에 넣어 봐야
+# 위아래가 검정으로 남는다.
+MAX_PHOTO_ASPECT = 3.0
 
 # 사진이 위, 요점이 아래. 글이 짧은 기사는 사진을 키워 빈자리를 없앤다.
 MIN_PHOTO_BAND = int(CARD_HEIGHT * 0.34)
@@ -105,7 +109,7 @@ class CardNewsError(RuntimeError):
     """합성을 시작할 수 없는 입력일 때. 잘라내지 않고 거절한다."""
 
 
-def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[bytes]:
+def build_card_images(copy: CardCopy, photos: Iterable[bytes] = ()) -> list[bytes]:
     """기사 한 건을 **카드 한 장**으로 만든다.
 
     전에는 표지 1장 + 본문 N장으로 넘겨 봤는데, 넘기지 않으면 첫 장의 제목만 남고
@@ -121,7 +125,9 @@ def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[byte
     if not slides:
         raise CardNewsError("본문 카드 문구가 하나도 없습니다.")
 
-    usable = _usable_photos(photos)
+    # 카드가 한 장이니 사진도 한 장이면 된다. photos가 지연 생성이면 여기서
+    # 멈추는 만큼 내려받기도 멈춘다.
+    usable = _usable_photos(photos, limit=1)
     try:
         return [_encode(_render_single(copy, slides, usable[0] if usable else None))]
     finally:
@@ -131,8 +137,13 @@ def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[byte
         release_free_heap()
 
 
-def _usable_photos(photos: Sequence[bytes]) -> list[Image.Image]:
-    """열리고 해상도가 충분한 사진만 남긴다. 깨진 첨부는 조용히 건너뛴다."""
+def _usable_photos(photos: Iterable[bytes], limit: int | None = None) -> list[Image.Image]:
+    """열리고 쓸 만한 사진만 남긴다. 깨진 첨부는 조용히 건너뛴다.
+
+    limit을 주면 그만큼 찾는 즉시 멈춘다. photos가 지연 생성이면 **뒤 첨부는
+    내려받지도 않는다** — 카드가 한 장이라 사진도 한 장이면 충분한데, 4장을 받아
+    4장 다 펼치고 있었다(2026-08-10 검토에서 적발, 요청당 최대 165MB).
+    """
     usable: list[Image.Image] = []
     for raw in photos:
         if not raw:
@@ -142,17 +153,28 @@ def _usable_photos(photos: Sequence[bytes]) -> list[Image.Image]:
             # JPEG는 디코딩 단계에서 미리 줄여 펼치는 메모리 자체를 아낀다.
             image.draft("RGB", (MAX_WORKING_EDGE, MAX_WORKING_EDGE))
             image.load()
+            image = image.convert("RGB")
+            if max(image.size) > MAX_WORKING_EDGE:
+                # 축소를 **폭 검사보다 먼저** 한다. 뒤에 두면 긴 변 기준 축소가
+                # 폭을 문턱 아래로 되돌려, 막아 둔 확대가 되살아난다
+                # (900x2600 → 747x2160 → 1.45배, 2026-08-10 검토에서 적발).
+                image.thumbnail((MAX_WORKING_EDGE, MAX_WORKING_EDGE), Image.LANCZOS)
             if image.width < MIN_PHOTO_EDGE:
                 logger.info("card news photo too narrow size=%sx%s", image.width, image.height)
                 image.close()
                 continue
-            image = image.convert("RGB")
-            if max(image.size) > MAX_WORKING_EDGE:
-                image.thumbnail((MAX_WORKING_EDGE, MAX_WORKING_EDGE), Image.LANCZOS)
+            if image.width > image.height * MAX_PHOTO_ASPECT:
+                # 기관 배너(1000x120 같은)가 첨부 1번에 붙는 일이 잦다. 밴드에 넣으면
+                # 위아래가 검정으로 남아 사진 자리를 통째로 버린다.
+                logger.info("card news photo too wide size=%sx%s", image.width, image.height)
+                image.close()
+                continue
         except Exception as exc:  # noqa: BLE001 - 첨부 하나가 깨져도 카드는 나와야 한다.
             logger.info("card news photo skipped error=%s", exc)
             continue
         usable.append(image)
+        if limit is not None and len(usable) >= limit:
+            break
     return usable
 
 
@@ -178,8 +200,9 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
         candidate = current + char
         if draw.textlength(candidate, font=font) > max_width and current:
             # 마침표 하나만 다음 줄로 떨어지면 오식처럼 보인다 — 문장부호는 그 줄에 붙인다.
-            # 여백이 65px라 글리프 하나가 삐져나가도 카드 밖으로 나가지 않는다.
-            if char in TRAILING_PUNCTUATION:
+            # 다만 여백(65px) 안에서만 봐준다. 한도 없이 붙이면 "신청하세요!!!!!"처럼
+            # 부호가 연달아 올 때 글자가 카드 밖으로 잘려 나간다(2026-08-10 검토에서 적발).
+            if char in TRAILING_PUNCTUATION and draw.textlength(candidate, font=font) <= max_width + MARGIN:
                 current = candidate
                 continue
             lines.append(current)
@@ -282,36 +305,47 @@ def _single_blocks(
     큰 글자부터 넣어 보고 넘치면 다음 단계로 줄인다. 가장 작은 단계로도 안 되면
     뒤 요점부터 덜어낸다 — **어떤 경우에도 카드 밖으로 글자를 흘리지 않는다.**
     """
-    blocks: list[Block] = []
+    groups: list[list[Block]] = []
     for title_size, head_size, body_size in SINGLE_SIZE_STEPS:
-        blocks = []
         title_font = _font(title_size, 800)
-        title_step = int(title_size * 1.26)
         title_lines = _wrap(draw, title, title_font, max_width)
         if len(title_lines) > MAX_COVER_LINES:
             # 딱 잘라 두면 낱말이 끊긴 채 끝나 오식처럼 보인다.
             title_lines = title_lines[:MAX_COVER_LINES]
             title_lines[-1] = title_lines[-1][:-1] + "…"
-        blocks.append((title_font, title_lines, COVER_TEXT, title_step, 0))
+        groups = [[(title_font, title_lines, COVER_TEXT, int(title_size * 1.26), 0)]]
 
         for index, slide in enumerate(slides):
+            # 소제목과 본문을 **한 덩어리로 묶는다.** 따로 두면 아래 덜어내기가
+            # 본문만 지워 소제목이 고아로 남는다(2026-08-10 검토에서 적발).
+            group: list[Block] = []
+            gap = TITLE_GAP if not index else ITEM_GAP
             if slide.heading.strip():
                 font = _font(head_size, 800)
-                lines = _wrap(draw, slide.heading, font, max_width)
-                blocks.append((font, lines, BODY_HEADING, int(head_size * 1.3), TITLE_GAP if not index else ITEM_GAP))
+                group.append((font, _wrap(draw, slide.heading, font, max_width), BODY_HEADING, int(head_size * 1.3), gap))
+                gap = HEADING_GAP
             if slide.body.strip():
                 font = _font(body_size, 500)
-                lines = _wrap(draw, slide.body, font, max_width)
-                gap = HEADING_GAP if slide.heading.strip() else (TITLE_GAP if not index else ITEM_GAP)
-                blocks.append((font, lines, BODY_TEXT, int(body_size * 1.5), gap))
+                group.append((font, _wrap(draw, slide.body, font, max_width), BODY_TEXT, int(body_size * 1.5), gap))
+            if group:
+                groups.append(group)
 
-        if _blocks_height(blocks) <= available:
-            return blocks
+        if _groups_height(groups) <= available:
+            return [block for group in groups for block in group]
 
-    # 가장 작은 글자로도 안 들어간다 — 사람이 고친 문안은 AI 규격을 안 거치므로 실제로 생긴다.
-    while len(blocks) > 1 and _blocks_height(blocks) > available:
-        blocks.pop()
-    return blocks
+    # 가장 작은 글자로도 안 들어간다 — redraw가 옛 규격(본문 110자) 문안을 그대로
+    # 넣는 경로에서 실제로 생긴다. **요점 단위로** 덜어내야 반쪽짜리가 안 남는다.
+    while len(groups) > 1 and _groups_height(groups) > available:
+        dropped = groups.pop()
+        logger.warning(
+            "card news slide dropped to fit lines=%s",
+            [line for _, lines, _, _, _ in dropped for line in lines][:2],
+        )
+    return [block for group in groups for block in group]
+
+
+def _groups_height(groups: list[list[Block]]) -> int:
+    return sum(_blocks_height(group) for group in groups)
 
 
 def _blocks_height(blocks: list[Block]) -> int:

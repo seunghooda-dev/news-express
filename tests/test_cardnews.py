@@ -195,6 +195,86 @@ def test_trailing_period_never_orphans_onto_its_own_line():
             assert lines[-1].strip() != ".", f"글자 {size} · 폭 {width}에서 마침표가 혼자 남았다"
 
 
+def test_dropping_a_slide_never_leaves_a_heading_without_its_body():
+    """자리가 모자라 요점을 덜어낼 때 소제목만 남으면 안 된다.
+
+    남으면 "접수는 이렇게 하시면 됩니다"만 찍히고 접수처·전화번호가 사라진
+    카드가 **발행 상태 그대로** 주민에게 나간다. 2026-08-10 검토에서 적발 —
+    redraw가 옛 규격(본문 110자) 문안을 무검증으로 넣는 경로에서 재현됐다.
+    """
+    from PIL import ImageDraw
+
+    from news_summary.cardnews import (
+        BODY_HEADING,
+        MARGIN,
+        MIN_PHOTO_BAND,
+        PHOTO_TEXT_GAP,
+        SINGLE_FOOTER_HEIGHT,
+        _single_blocks,
+    )
+
+    draw = ImageDraw.Draw(Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT)))
+    room = CARD_HEIGHT - (MIN_PHOTO_BAND + PHOTO_TEXT_GAP) - SINGLE_FOOTER_HEIGHT
+    legacy = [CardSlide(heading="가" * 20, body="나" * 105) for _ in range(4)]
+
+    blocks = _single_blocks(draw, "다" * 34, legacy, CARD_WIDTH - MARGIN * 2, room)
+
+    assert blocks, "블록이 통째로 비었다"
+    assert blocks[-1][2] != BODY_HEADING, "소제목만 남고 본문이 사라졌다"
+
+
+def test_only_one_photo_is_fetched_even_when_more_are_attached():
+    """카드가 한 장이라 사진도 한 장이면 된다.
+
+    2026-08-10 검토에서 적발 — 4장을 내려받아 4장 다 펼치고 1장만 썼다.
+    장당 원본 25MB·펼친 것 14MB라 요청 하나가 512MB에서 위험했다.
+    """
+    consumed: list[int] = []
+
+    def lazy_photos():
+        for index in range(4):
+            consumed.append(index)
+            yield photo_bytes(2000, 1500)
+
+    build_card_images(sample_copy(), lazy_photos())
+
+    assert consumed == [0], f"쓰지도 않을 사진을 {len(consumed)}장 가져왔다"
+
+
+def test_tall_photo_narrowed_by_downscaling_is_rejected():
+    """긴 변 기준 축소가 폭을 문턱 아래로 되돌린다 — 900x2600은 747x2160이 된다.
+
+    폭 검사를 축소보다 먼저 하면 747을 1080으로, 즉 1.45배 확대하게 된다.
+    """
+    narrowed = build_card_images(sample_copy(), [photo_bytes(900, 2600)])
+    text_only = build_card_images(sample_copy(), [])
+
+    assert open_card(narrowed[0]).tobytes() == open_card(text_only[0]).tobytes(), "축소 뒤 좁아진 사진이 쓰였다"
+
+
+def test_wide_banner_is_not_used_as_a_photo():
+    """기관 배너(1000x120 같은)가 첨부 1번에 붙는 일이 잦다.
+
+    밴드에 넣으면 위아래가 검정으로 남아 사진 자리를 통째로 버린다.
+    """
+    banner = build_card_images(sample_copy(), [photo_bytes(1000, 120)])
+    text_only = build_card_images(sample_copy(), [])
+
+    assert open_card(banner[0]).tobytes() == open_card(text_only[0]).tobytes(), "배너가 사진으로 쓰였다"
+
+
+def test_repeated_punctuation_does_not_run_past_the_card():
+    """문장부호를 줄 끝에 붙이는 규칙에 한도가 없으면 연속 부호가 카드 밖으로 나간다."""
+    images = build_card_images(
+        sample_copy(cards=[CardSlide(heading="느낌표 시험", body="지금 바로 신청하세요" + "!" * 12)]),
+        [],
+    )
+    card = open_card(images[0]).convert("RGB")
+
+    edge = [card.getpixel((CARD_WIDTH - 4, y)) for y in range(150, CARD_HEIGHT - 150, 10)]
+    assert all(abs(p[0] - 17) < 14 and abs(p[1] - 17) < 14 for p in edge), "글자가 오른쪽 끝까지 밀렸다"
+
+
 def wide_photo_with_edge_markers() -> bytes:
     """좌우 끝에 표식을 둔 아주 넓은 사진 — 잘리면 표식이 사라진다."""
     image = Image.new("RGB", (2400, 1250), (40, 40, 40))

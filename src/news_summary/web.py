@@ -1579,7 +1579,22 @@ def create_app() -> Flask:
             logger.warning("card news redraw failed set_id=%s error=%s", set_id, exc)
             flash(f"카드를 다시 그리지 못했습니다: {exc}")
             return redirect(url_for("card_news_manage", date=target))
-        flash(f"지금 배치로 다시 그렸습니다. 카드 {len(paths)}장입니다.")
+        # 옛 세트는 구 규격(소제목 22·본문 110)이라 한 장에 다 안 들어갈 수 있다.
+        # 그때는 뒤 요점부터 통째로 빠지는데, 조용히 빠지면 접수처가 사라진 카드가
+        # 발행 상태 그대로 나간다. 사람이 줄이도록 알려 준다.
+        oversize = [
+            slide
+            for slide in decode_cards(row).cards
+            if len(slide.body) > MAX_CARD_CHARS or len(slide.heading) > MAX_HEADING_CHARS
+        ]
+        message = f"지금 배치로 다시 그렸습니다. 카드 {len(paths)}장입니다."
+        if oversize:
+            message += (
+                f" 다만 옛 규격 문안이라 요점 {len(oversize)}개가 지금 한도"
+                f"(소제목 {MAX_HEADING_CHARS}자·본문 {MAX_CARD_CHARS}자)를 넘습니다."
+                " 한 장에 다 안 들어가면 뒤 요점부터 빠지니 문안을 줄여 주세요."
+            )
+        flash(message)
         return redirect(url_for("card_news_manage", date=target))
 
     @app.post("/card-news/<int:set_id>/publish")

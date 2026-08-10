@@ -176,6 +176,8 @@ def test_redraw_applies_current_layout_without_calling_ai(monkeypatch, tmp_path)
     assert len(load_set_images(tmp_path / "cardnews", "2026-08-09", set_id)) == 1, "옛 이미지가 남아 있다"
     assert json.loads(store.card_news_set(set_id)["cards"]) == original_cards, "문안이 바뀌었다"
     assert calls["ai"] == 0, "다시 그리기가 AI를 불렀다"
+    # DB 장수와 실제 파일이 어긋나면, 그 값을 믿는 화면이 생기는 순간 틀린 배지가 붙는다.
+    assert store.card_news_set(set_id)["image_count"] == 1, "DB 장수가 실제와 어긋난다"
 
 
 def test_build_publish_and_public_listing(monkeypatch, tmp_path):
@@ -463,7 +465,13 @@ def test_manage_routes_require_login_when_auth_enabled(monkeypatch, tmp_path):
     assert client.get("/card-news").status_code == 200, "열람은 로그인 없이 열려야 한다"
     for path in ("/card-news/manage",):
         assert client.get(path).status_code == 302, f"{path}는 로그인이 필요하다"
-    for path in ("/card-news/build", "/card-news/1/publish", "/card-news/1/copy", "/card-news/1/delete"):
+    for path in (
+        "/card-news/build",
+        "/card-news/1/publish",
+        "/card-news/1/copy",
+        "/card-news/1/redraw",
+        "/card-news/1/delete",
+    ):
         assert client.post(path).status_code in {302, 400}, f"{path}는 로그인이 필요하다"
 
 
