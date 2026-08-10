@@ -10459,3 +10459,121 @@ def test_public_read_endpoints_stay_open_when_auth_is_on(monkeypatch):
 
     assert "card_news_image" in PUBLIC_READ_ENDPOINTS, "카드 이미지가 공개에서 빠졌다"
     assert checked >= 12, f"검사한 공개 읽기 라우트가 {checked}개뿐이다"
+
+
+def test_asset_download_is_bounded_and_releases_its_slot(monkeypatch, tmp_path):
+    """익명으로 열린 경로가 25MB를 통째로 메모리에 담는다 — 동시 실행을 묶는다.
+
+    threads 8 x (내려받는 동안 순간 2벌) = 400MB로 512MB를 넘긴다. 자리가 없으면
+    기다리지 않고(스레드가 물리면 다른 화면까지 느려진다) 잠시 뒤 다시 받게 한다.
+    """
+    from news_summary import web as web_module
+
+    db_path = Path(f"data/.test_asset_slot_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="첨부 있는 기사",
+            url=f"https://example.com/{uuid4().hex}",
+            content="본문",
+            published_at="2026-08-09",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/photo.jpg",
+                    title="첨부",
+                    filename="photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+
+    downloads = {"count": 0}
+    monkeypatch.setattr(
+        web_module,
+        "_download_asset_content_from_url",
+        lambda url, asset, **kwargs: (downloads.__setitem__("count", downloads["count"] + 1), ("image/jpeg", b"x" * 64))[1],
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    # 자리가 전부 차 있으면 내려받지 않고 안내로 돌려보낸다.
+    held = [web_module._asset_fetch_slot.acquire(blocking=False) for _ in range(3)]
+    try:
+        assert all(held)
+        blocked = client.get(f"/press-releases/assets/{asset_id}/download", follow_redirects=False)
+        assert blocked.status_code == 302
+        assert downloads["count"] == 0, "자리가 없는데 내려받았다"
+    finally:
+        for _ in held:
+            web_module._asset_fetch_slot.release()
+
+    # 자리를 놓아 준 뒤에는 정상으로 받아진다.
+    ok = client.get(f"/press-releases/assets/{asset_id}/download")
+    assert ok.status_code == 200
+    assert downloads["count"] == 1
+    assert web_module._asset_fetch_slot.acquire(blocking=False), "성공 뒤 자리가 잠긴 채 남았다"
+    web_module._asset_fetch_slot.release()
+
+
+def test_asset_download_slot_is_released_when_the_source_fails(monkeypatch):
+    """실패해도 자리를 놓아야 한다 — 새면 그 뒤로 아무도 첨부를 못 받는다."""
+    import httpx as httpx_module
+
+    from news_summary import web as web_module
+
+    db_path = Path(f"data/.test_asset_slot_fail_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="첨부 있는 기사",
+            url=f"https://example.com/{uuid4().hex}",
+            content="본문",
+            published_at="2026-08-09",
+            assets=[
+                PressReleaseAsset(
+                    url="https://example.com/photo.jpg",
+                    title="첨부",
+                    filename="photo.jpg",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    is_image=True,
+                )
+            ],
+        )
+    )
+    asset_id = store.press_release_assets(release_id)[0]["id"]
+    monkeypatch.setattr(
+        web_module,
+        "_download_asset_content_from_url",
+        lambda url, asset, **kwargs: (_ for _ in ()).throw(httpx_module.ConnectError("원문 서버 접속 실패")),
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get(f"/press-releases/assets/{asset_id}/download", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert web_module._asset_fetch_slot.acquire(blocking=False), "실패 뒤 자리가 잠긴 채 남았다"
+    web_module._asset_fetch_slot.release()

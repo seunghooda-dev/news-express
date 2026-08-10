@@ -230,6 +230,9 @@ MAX_PREVIEW_DECODE_PIXELS = 16_000_000
 # 캐시가 빈 썸네일 요청은 원본 내려받기와 축소로 메모리를 크게 쓴다. 512MB 인스턴스에서
 # 목록 한 화면 분량을 한꺼번에 처리하면 프로세스가 버티지 못하므로 동시 실행 수를 묶는다.
 _asset_preview_fetch_limit = BoundedSemaphore(3)
+# 원본 첨부 다운로드도 같은 수로 묶는다 — 미리보기(12MB 상한)보다 큰 25MB를 통째로
+# 메모리에 담는데, 이 경로는 로그인 없이 열려 있다.
+_asset_fetch_slot = BoundedSemaphore(3)
 # 카드 합성은 원본 사진을 펼쳐 1080x1350 PNG로 인코딩한다 — 한 건이 100MB 안팎을
 # 쥔다(2026-08-11 실측: 24MP JPEG 97MB · 25MP PNG는 거절 전 291MB). 이 서비스는
 # 512MB · threads 8이라 몇 건만 겹쳐도 넘긴다. 게다가 한 건에 15~40초가 걸려서
@@ -1442,12 +1445,21 @@ def create_app() -> Flask:
         if not asset_url.startswith(("http://", "https://")):
             flash("다운로드할 수 없는 첨부파일 주소입니다.")
             return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
+        # 이 경로는 **로그인 없이 열려 있고**(주민이 원문 첨부를 받아 갈 수 있어야 한다)
+        # 파일을 통째로 메모리에 담는다(상한 25MB, 받는 동안 순간 2벌). 상한이 없으면
+        # threads 8 x 50MB = 400MB로 512MB를 넘긴다 — 미리보기 경로와 같은 수의
+        # 자리로 묶는다. 자리가 없으면 기다리지 않고 잠시 뒤 다시 받게 안내한다.
+        if not _asset_fetch_slot.acquire(blocking=False):
+            flash("첨부파일을 내려받는 중입니다. 잠시 뒤 다시 눌러 주세요.")
+            return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
         try:
             response_content_type, response_content = _download_asset_content_from_url(asset_url, asset)
         except (httpx.HTTPError, AssetDownloadError) as exc:
             logger.warning("asset download failed asset_id=%s url=%s error=%s", asset_id, asset_url, exc)
             flash("첨부파일 다운로드에 실패했습니다. 원문 사이트 상태를 확인해 주세요.")
             return redirect(url_for("press_release_detail", release_id=asset["press_release_id"]))
+        finally:
+            _asset_fetch_slot.release()
 
         filename = _asset_download_filename(asset, response_content_type)
         content_type = str(response_content_type or asset["content_type"] or "application/octet-stream")
