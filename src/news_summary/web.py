@@ -107,7 +107,19 @@ DATE_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 DATETIME_RE = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?")
 CLOUDFLARE_URL_RE = re.compile(r"https://[-a-zA-Z0-9]+\.trycloudflare\.com")
 GEMINI_USAGE_RESET_AT_KEY = "gemini_usage_reset_at"
-AUTH_EXEMPT_ENDPOINTS = {"favicon", "healthz", "login", "logout", "admin_setup", "operations_login", "static"}
+# robots.txt는 **인증 뒤에 있으면 안 된다.** 로그인으로 302를 주면 크롤러는 규칙을
+# 못 읽고 "제한 없음"으로 간주해 오히려 전부 긁어 간다(2026-08-10 실측: /robots.txt가
+# /login?next=/robots.txt 로 넘어가고 있었다).
+AUTH_EXEMPT_ENDPOINTS = {
+    "favicon",
+    "healthz",
+    "login",
+    "logout",
+    "admin_setup",
+    "operations_login",
+    "robots_txt",
+    "static",
+}
 # 뉴스 열람은 로그인 없이 공개다(2026-08-03 사용자 지시 "사이트는 누구든지 볼 수 있게").
 # 로그인은 상태를 바꾸는 조작(수집 실행·초안 수정·설정 변경)과 내부 화면에만 요구한다 —
 # 인증 없는 /recrawl·/writing-settings가 외부에서 호출 가능하던 것이 원래 문제였지,
@@ -558,6 +570,32 @@ def create_app() -> Flask:
     @app.get("/favicon.ico")
     def favicon():
         return Response(status=204)
+
+    @app.get("/robots.txt")
+    def robots_txt():
+        """크롤러에게 **주민용 화면만** 열어 준다.
+
+        이 서비스는 0.5 CPU · 512MB에서 돌고 DB 전송량이 이미 무료 한도를 넘겼다.
+        그런데 열람은 로그인 없이 공개라(2026-08-03 사용자 지시) 크롤러가 닿는 면이
+        넓다 — 목록 65KB, 초안 상세 15KB × 1700여 건, 그리고 **원본 첨부 이미지**가
+        전부 익명으로 열린다. `?q=`·`?page=` 는 아무 값이나 받아 200을 돌려주므로
+        서로 다른 URL이 무한히 만들어지고, 하나하나가 Postgres 조회를 부른다.
+
+        카드뉴스와 첫 화면은 **일부러 남긴다** — 카톡·밴드로 퍼갈 때 미리보기가 떠야
+        하고, 그게 이 기능의 확산 경로다.
+        """
+        lines = [
+            "User-agent: *",
+            "Allow: /$",
+            "Allow: /card-news",
+            "Disallow: /drafts",
+            "Disallow: /press-releases",
+            "Disallow: /search",
+            "Disallow: /login",
+            "Disallow: /operations",
+            "Disallow: /*?",
+        ]
+        return Response("\n".join(lines) + "\n", mimetype="text/plain")
 
     def _healthz_response(*, include_details: bool):
         generated_at = datetime.now(LOCAL_TZ).isoformat()
@@ -1594,6 +1632,13 @@ def create_app() -> Flask:
                 f"(소제목 {MAX_HEADING_CHARS}자·본문 {MAX_CARD_CHARS}자)를 넘습니다."
                 " 한 장에 다 안 들어가면 뒤 요점부터 빠지니 문안을 줄여 주세요."
             )
+        # 주민이 보고 있던 그림이 **바뀌었다.** 문안을 고쳤을 때(/copy)와 똑같이
+        # 검수 대기로 내려 사람이 한 번 보게 한다. 경고 문구만으로는 못 막는다 —
+        # 옛 규격 문안은 한 장에 안 들어가 뒤 요점(보통 접수처)이 통째로 빠지는데,
+        # 종전에는 그 카드가 **발행 상태 그대로** 남았다(2026-08-10 감사에서 적발).
+        if str(row["status"]) == "published":
+            store.set_card_news_status(set_id, "draft")
+            message += " 그림이 바뀌었으므로 검수 대기로 내렸습니다 — 확인 후 다시 발행하세요."
         flash(message)
         return redirect(url_for("card_news_manage", date=target))
 

@@ -460,11 +460,18 @@ def test_manage_routes_require_login_when_auth_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "")
     monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
     monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "pw-for-test")
+    # CSRF를 끄지 않으면 토큰 없는 POST가 **인증 검사 앞에서** 400으로 끊긴다
+    # (protect_state_changing_requests가 require_admin_login보다 먼저 등록된다).
+    # 그러면 `in {302, 400}`은 400만 보고 통과해, 인증을 통째로 지워도 초록이었다
+    # — 2026-08-10 감사에서 적발하고 재현했다.
+    monkeypatch.setenv("NEWS_SUMMARY_CSRF_DISABLED", "1")
     client = make_client(app_testing=False)
 
     assert client.get("/card-news").status_code == 200, "열람은 로그인 없이 열려야 한다"
     for path in ("/card-news/manage",):
-        assert client.get(path).status_code == 302, f"{path}는 로그인이 필요하다"
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 302, f"{path}는 로그인이 필요하다"
+        assert "/login" in response.headers["Location"], f"{path}가 로그인으로 안 보낸다"
     for path in (
         "/card-news/build",
         "/card-news/1/publish",
@@ -472,7 +479,9 @@ def test_manage_routes_require_login_when_auth_enabled(monkeypatch, tmp_path):
         "/card-news/1/redraw",
         "/card-news/1/delete",
     ):
-        assert client.post(path).status_code in {302, 400}, f"{path}는 로그인이 필요하다"
+        response = client.post(path, follow_redirects=False)
+        assert response.status_code == 302, f"{path}는 로그인이 필요하다"
+        assert "/login" in response.headers["Location"], f"{path}가 로그인으로 안 보낸다"
 
 
 def test_nav_links_to_card_news(monkeypatch, tmp_path):
@@ -538,3 +547,39 @@ def test_manage_page_does_not_warn_for_primary_model_copy(monkeypatch, tmp_path)
 
     assert "Gemini Flash" in html
     assert "예비 모델이 쓴 문안입니다" not in html
+
+
+def test_redraw_of_a_published_set_sends_it_back_to_review(monkeypatch, tmp_path):
+    """다시 그리면 주민이 보던 그림이 바뀐다 — 사람이 한 번 보고 다시 발행해야 한다.
+
+    옛 규격 문안은 한 장에 다 안 들어가 뒤 요점(보통 접수처·전화번호)이 통째로
+    빠진다. 종전에는 그 카드가 **발행 상태 그대로** 주민에게 나갔고, 막는 것은
+    flash 문구뿐이었다. 문안을 고치는 /copy 는 이미 검수 대기로 내리고 있었다.
+    """
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    _build_one_set(client, draft_id)
+
+    set_id = int(store.card_news_set_by_draft(draft_id)["id"])
+    store.set_card_news_status(set_id, "published")
+    assert store.card_news_set(set_id)["status"] == "published"
+
+    client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
+
+    assert store.card_news_set(set_id)["status"] == "draft", "발행 상태로 남았다"
+    assert store.card_news_set(set_id)["published_at"] == ""
+
+
+def test_redraw_of_a_draft_set_stays_a_draft(monkeypatch, tmp_path):
+    """검수 대기 세트를 다시 그린다고 상태가 이상하게 바뀌면 안 된다."""
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    _build_one_set(client, draft_id)
+
+    set_id = int(store.card_news_set_by_draft(draft_id)["id"])
+
+    client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
+
+    assert store.card_news_set(set_id)["status"] == "draft"

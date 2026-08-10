@@ -10133,3 +10133,95 @@ def test_restore_initial_draft_route_returns_first_gemini_version(monkeypatch):
     assert restored["body"].startswith("처음 첫 문단")
     assert restored["review_note"] == "처음 메모"
     assert restored["model"] == "gemini-test:gemini"
+
+
+def test_robots_txt_is_served_without_login(monkeypatch):
+    """robots.txt가 인증 뒤에 있으면 크롤러는 규칙을 못 읽고 전부 긁어 간다.
+
+    2026-08-10 프로덕션 실측에서 /robots.txt가 /login?next=/robots.txt 로 302를
+    주고 있었다. 이 서비스는 0.5 CPU · 512MB이고 DB 전송량이 이미 무료 한도를
+    넘긴 상태라, 크롤 제한이 없는 것이 실제 비용이 된다.
+    """
+    db_path = Path(f"data/.test_robots_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    # conftest가 인증을 꺼 두므로 이 테스트에서만 되살린다 — 안 그러면
+    # "인증이 없어서 열렸다"가 되어 검증이 헛돈다.
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "pw-for-test")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+    client = app.test_client()
+
+    # 인증이 실제로 켜졌는지 먼저 확인한다(이게 아니면 아래 단언이 무의미하다).
+    # /operations는 **운영 게이트만으로도** 302라 인증이 꺼져 있어도 통과한다 —
+    # 로그인만 요구하는(OPERATIONS_ACCESS_ENDPOINTS에 없는) 화면으로 확인해야 한다.
+    guard = client.get("/writing-settings", follow_redirects=False)
+    assert guard.status_code == 302 and "/login" in guard.headers["Location"]
+
+    response = client.get("/robots.txt", follow_redirects=False)
+
+    assert response.status_code == 200, "robots.txt가 로그인으로 넘어가면 안 된다"
+    assert response.mimetype == "text/plain"
+    body = response.get_data(as_text=True)
+    assert "User-agent: *" in body
+
+
+def test_robots_txt_closes_heavy_pages_but_keeps_card_news_open(monkeypatch):
+    """카드뉴스는 카톡·밴드 확산이 목적이라 열어 두고, 무거운 운영 화면만 닫는다."""
+    db_path = Path(f"data/.test_robots_rules_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    body = app.test_client().get("/robots.txt").get_data(as_text=True)
+
+    assert "Allow: /card-news" in body, "카드뉴스를 막으면 링크 미리보기가 죽는다"
+    for path in ("/drafts", "/press-releases", "/search", "/operations"):
+        assert f"Disallow: {path}" in body, f"{path}가 크롤에 열려 있다"
+    # ?q= 는 아무 값이나 받아 200을 돌려준다 — 서로 다른 URL이 무한히 생긴다.
+    assert "Disallow: /*?" in body
+
+
+def test_admin_setup_cannot_be_rerun_anonymously_once_a_password_exists(monkeypatch):
+    """비번이 이미 있으면 익명 재-POST로 갈아치울 수 없어야 한다.
+
+    `/admin/setup`은 AUTH_EXEMPT_ENDPOINTS라 앞단 방어가 없고, 라우트 안의
+    가드 한 줄이 전부다. 그 줄을 지우면 **누구나 익명 POST 한 번으로 운영
+    중인 사이트의 관리자 비밀번호를 갈아치울 수 있는데**, 지금까지 그것을
+    잡는 테스트가 없었다(2026-08-10 감사에서 적발 — 기존 테스트 3개는 전부
+    비번이 없는 부트스트랩 방향만 본다).
+    """
+    from news_summary.auth import set_admin_password, verify_admin_password
+
+    db_path = Path(f"data/.test_setup_rerun_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
+    monkeypatch.delenv("NEWS_SUMMARY_ADMIN_PASSWORD", raising=False)
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    store = Store(db_path)
+    store.init_db()
+    set_admin_password(store, "원래비번1234")
+
+    # 세션을 물려받지 않은 완전한 익명 클라이언트로 다시 설정을 시도한다.
+    response = app.test_client().post(
+        "/admin/setup",
+        data={"password": "공격자비번9999", "confirm_password": "공격자비번9999"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+    # 리다이렉트만 보면 부족하다 — 비번이 실제로 안 바뀌었는지가 핵심이다.
+    assert verify_admin_password(store, "원래비번1234"), "원래 비밀번호가 무효가 됐다"
+    assert not verify_admin_password(store, "공격자비번9999"), "익명 재설정이 통과했다"

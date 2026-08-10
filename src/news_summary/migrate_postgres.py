@@ -7,6 +7,11 @@ from typing import Any
 from .storage import Store
 
 
+# 백업이 담는 테이블과 **같아야 한다.** 어긋나면 이관에서 그 테이블이 조용히
+# 사라진다 — `card_news_sets`가 실제로 빠져 있었다(2026-08-10 감사에서 적발).
+# `--replace`는 더 나쁘다: 나머지가 RESTART IDENTITY로 번호를 다시 받는데 빠진
+# 테이블만 옛 draft_id를 들고 남아 **다른 기사를 가리키게 된다**(FK가 없다).
+# 아래 순서는 참조하는 쪽이 뒤에 오게 둔다(카드뉴스가 초안·원문을 가리킨다).
 TABLES = (
     "press_releases",
     "press_release_assets",
@@ -17,6 +22,7 @@ TABLES = (
     "source_collection_runs",
     "visitor_access_logs",
     "operation_events",
+    "card_news_sets",
 )
 
 SEQUENCE_TABLES = tuple(table for table in TABLES if table != "app_metadata")
