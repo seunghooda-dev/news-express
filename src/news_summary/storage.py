@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS card_news_sets (
     cards TEXT NOT NULL,
     tags TEXT NOT NULL DEFAULT '',
     source_label TEXT NOT NULL DEFAULT '',
+    copy_model TEXT NOT NULL DEFAULT '',
     image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL,
@@ -281,6 +282,7 @@ CREATE TABLE IF NOT EXISTS card_news_sets (
     cards TEXT NOT NULL,
     tags TEXT NOT NULL DEFAULT '',
     source_label TEXT NOT NULL DEFAULT '',
+    copy_model TEXT NOT NULL DEFAULT '',
     image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL,
@@ -570,6 +572,7 @@ class Store:
             self._ensure_column(conn, "article_drafts", "exported_at", "TEXT")
             self._ensure_column(conn, "press_releases", "validation_status", "TEXT DEFAULT '검증 완료'")
             self._ensure_column(conn, "press_releases", "validation_note", "TEXT DEFAULT '기존 수집 원문입니다.'")
+            self._ensure_column(conn, "card_news_sets", "copy_model", "TEXT DEFAULT ''")
             self._ensure_column(conn, "source_collection_runs", "failure_stage", "TEXT DEFAULT ''")
             self._ensure_column(conn, "source_collection_runs", "failure_reason", "TEXT DEFAULT ''")
             self._backfill_initial_draft_columns(conn)
@@ -1939,6 +1942,7 @@ class Store:
         tags: list[str],
         source_label: str,
         image_count: int,
+        copy_model: str = "",
     ) -> int:
         """카드뉴스 세트를 저장한다. 같은 초안을 다시 만들면 덮어쓴다(재생성 지원)."""
         now = _now()
@@ -1953,7 +1957,8 @@ class Store:
                     """
                     UPDATE card_news_sets
                     SET publish_date = ?, cover = ?, cards = ?, tags = ?, source_label = ?,
-                        image_count = ?, updated_at = ?, status = 'draft', published_at = ''
+                        copy_model = ?, image_count = ?, updated_at = ?, status = 'draft',
+                        published_at = ''
                     WHERE id = ?
                     """,
                     (
@@ -1962,6 +1967,7 @@ class Store:
                         cards_json,
                         tags_json,
                         source_label,
+                        copy_model,
                         image_count,
                         now,
                         existing["id"],
@@ -1971,8 +1977,8 @@ class Store:
             insert_sql = """
                 INSERT INTO card_news_sets
                 (draft_id, press_release_id, publish_date, cover, cards, tags, source_label,
-                 image_count, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+                 copy_model, image_count, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
             """
             params = (
                 draft_id,
@@ -1982,6 +1988,7 @@ class Store:
                 cards_json,
                 tags_json,
                 source_label,
+                copy_model,
                 image_count,
                 now,
                 now,

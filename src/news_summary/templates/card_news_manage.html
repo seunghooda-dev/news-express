@@ -31,9 +31,16 @@
       {% if item.image_indexes|length > 1 %}
         <span class="badge badge-warning">옛 형식 {{ item.image_indexes|length }}장</span>
       {% endif %}
+      {# 예비 모델로 넘어간 문안인지 보이게 한다 — 문체·분량 준수가 눈에 띄게 나쁘다. #}
+      {% if item.copy_model %}
+        <span class="badge {{ model_badge_class(item.copy_model) }}">{{ model_label(item.copy_model) }}</span>
+      {% endif %}
     </h3>
     {% if item.image_indexes|length > 1 %}
       <p class="empty-note">한 장 카드로 바뀌기 전에 만든 세트입니다. 아래 <strong>다시 그리기</strong>를 누르면 문안 그대로 한 장으로 다시 그립니다.</p>
+    {% endif %}
+    {% if item.copy_model and 'lite' in item.copy_model %}
+      <p class="empty-note">예비 모델이 쓴 문안입니다. 주 모델 한도가 찼을 때 넘어갑니다 — 소제목이 명사로 끝나고 본문이 길어지는 경향이 있으니, 아래에서 손보거나 한도가 도는 내일 <strong>AI로 다시 만들기</strong>를 하세요.</p>
     {% endif %}
     <div class="cardnews-strip">
       {% for index in item.image_indexes %}

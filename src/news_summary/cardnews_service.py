@@ -87,6 +87,7 @@ def build_set_for_draft(
         tags=copy.tags,
         source_label=source_label,
         image_count=len(images),
+        copy_model=copy.model,
     )
     paths = _write_images(output_root, publish_date, set_id, images)
     logger.info("card news set built set_id=%s draft_id=%s cards=%s", set_id, draft_id, len(images))

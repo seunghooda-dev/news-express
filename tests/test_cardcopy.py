@@ -247,3 +247,31 @@ def test_result_feeds_card_builder_directly():
     images = build_card_images(copy, [])
 
     assert len(images) == 1
+
+
+def test_reports_which_model_wrote_the_copy():
+    """어느 모델이 썼는지 남지 않으면 예비 모델 문안을 운영자가 알아볼 수 없다.
+
+    2026-08-10 실측에서 lite는 본문의 52%가 50자를 넘고 소제목 71%가 명사로 끝났다.
+    같은 프롬프트인데 결과가 이만큼 다르므로 출처가 남아야 한다.
+    """
+    copy = build_card_copy(
+        sample_request(), "key", models=("gemini-3.5-flash",), generator=responder(json.dumps(good_payload()))
+    )
+
+    assert copy.model == "gemini-3.5-flash"
+
+
+def test_model_reported_is_the_fallback_when_the_primary_fails():
+    """앞 모델이 규격을 못 맞춰 넘어갔으면 **실제로 쓴** 예비 모델이 남아야 한다."""
+
+    def by_model(model_name):
+        if model_name == "primary":
+            return json.dumps({**good_payload(), "cover": "짧"})
+        return json.dumps(good_payload())
+
+    copy = build_card_copy(
+        sample_request(), "key", models=("primary", "fallback"), generator=responder(by_model)
+    )
+
+    assert copy.model == "fallback"

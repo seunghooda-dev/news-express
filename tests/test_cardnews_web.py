@@ -482,3 +482,59 @@ def test_nav_links_to_card_news(monkeypatch, tmp_path):
     html = client.get("/").data.decode("utf-8")
 
     assert 'href="/card-news"' in html
+
+
+def _build_one_set(client, draft_id):
+    return client.post(
+        "/card-news/build",
+        data={"draft_id": str(draft_id), "publish_date": "2026-08-09"},
+        follow_redirects=True,
+    )
+
+
+def test_manage_page_warns_when_copy_came_from_the_fallback_model(monkeypatch, tmp_path):
+    """예비 모델 문안은 문체·분량이 눈에 띄게 나쁘다 — 운영자가 알아야 손볼 수 있다."""
+    _, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    monkeypatch.setattr(
+        "news_summary.cardnews_service.build_card_copy",
+        lambda request, api_key: CardCopy(
+            cover="담양 무더위쉼터 전면 점검",
+            cards=[CardSlide(heading="야외 근로자 점검", body="야외 근로자 안전 점검에 나섰습니다.")],
+            source_label=request.source_label,
+            date_label=request.date_label,
+            tags=["담양"],
+            model="gemini-3.1-flash-lite",
+        ),
+    )
+    client = make_client()
+    _build_one_set(client, draft_id)
+
+    html = client.get("/card-news/manage?date=2026-08-09").data.decode("utf-8")
+
+    assert "Gemini Lite" in html, "어느 모델이 쓴 문안인지 표시되지 않았다"
+    assert "예비 모델이 쓴 문안입니다" in html
+
+
+def test_manage_page_does_not_warn_for_primary_model_copy(monkeypatch, tmp_path):
+    """주 모델로 만든 문안에까지 경고가 뜨면 경고가 의미를 잃는다."""
+    _, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    monkeypatch.setattr(
+        "news_summary.cardnews_service.build_card_copy",
+        lambda request, api_key: CardCopy(
+            cover="담양 무더위쉼터 전면 점검",
+            cards=[CardSlide(heading="야외 근로자 점검", body="야외 근로자 안전 점검에 나섰습니다.")],
+            source_label=request.source_label,
+            date_label=request.date_label,
+            tags=["담양"],
+            model="gemini-3.5-flash",
+        ),
+    )
+    client = make_client()
+    _build_one_set(client, draft_id)
+
+    html = client.get("/card-news/manage?date=2026-08-09").data.decode("utf-8")
+
+    assert "Gemini Flash" in html
+    assert "예비 모델이 쓴 문안입니다" not in html

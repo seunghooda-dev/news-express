@@ -90,6 +90,10 @@ class CardCopy:
     source_label: str = ""
     date_label: str = ""
     tags: list[str] = field(default_factory=list)
+    # 어느 모델이 쓴 문안인지. 합성에는 안 쓰이지만 **이 단계의 산출물**이라 여기 붙인다 —
+    # 예비 모델로 넘어간 것을 운영자가 알아야 한다(2026-08-10 실측: lite는 본문의 52%가
+    # 50자를 넘고 소제목 71%가 명사로 끝난다).
+    model: str = ""
 
     def __post_init__(self) -> None:
         # 옛 형태(문자열)와 저장 형태(dict) 모두 받아 준다. 무엇이든 str()로 감싸면

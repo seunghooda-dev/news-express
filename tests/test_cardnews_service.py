@@ -277,3 +277,53 @@ def test_prune_keeps_only_recent_dates(tmp_path):
 
 def test_prune_is_noop_without_directory(tmp_path):
     assert prune_old_dates(tmp_path / "missing", keep_days=3) == 0
+
+
+def test_stores_which_model_wrote_the_copy(tmp_path):
+    """예비 모델로 넘어간 세트를 관리 화면이 표시하려면 DB에 남아 있어야 한다."""
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+
+    def lite_builder(request, api_key):
+        copy = fake_copy_builder(request, api_key)
+        copy.model = "gemini-3.1-flash-lite"
+        return copy
+
+    result = build_set_for_draft(
+        store,
+        draft_id,
+        "key",
+        tmp_path / "cardnews",
+        publish_date="2026-08-09",
+        downloader=lambda asset: photo_bytes(),
+        copy_builder=lite_builder,
+    )
+
+    row = store.card_news_set(result.set_id)
+    assert row["copy_model"] == "gemini-3.1-flash-lite"
+
+
+def test_editing_copy_keeps_the_recorded_model(tmp_path):
+    """사람이 글자를 고쳐도 그 문안을 **처음 쓴** 모델은 그대로여야 한다."""
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+
+    def lite_builder(request, api_key):
+        copy = fake_copy_builder(request, api_key)
+        copy.model = "gemini-3.1-flash-lite"
+        return copy
+
+    result = build_set_for_draft(
+        store,
+        draft_id,
+        "key",
+        tmp_path / "cardnews",
+        publish_date="2026-08-09",
+        downloader=lambda asset: photo_bytes(),
+        copy_builder=lite_builder,
+    )
+    store.update_card_news_copy(
+        result.set_id, cover="사람이 고친 표지", cards=[{"heading": "손질", "body": "사람이 고친 본문입니다."}]
+    )
+
+    assert store.card_news_set(result.set_id)["copy_model"] == "gemini-3.1-flash-lite"

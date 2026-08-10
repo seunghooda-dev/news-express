@@ -3074,6 +3074,7 @@ def _card_news_view_sets(store: Store, root: Path, publish_date: str, status: st
                 "status": str(row["status"]),
                 # "copy"로 두면 Jinja가 dict.copy 메서드를 먼저 집어 값이 통째로 빈다.
                 "card_copy": decode_cards(row),
+                "copy_model": str(row["copy_model"] or ""),
                 "image_indexes": list(range(1, len(images) + 1)),
             }
         )

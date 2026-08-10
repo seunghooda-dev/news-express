@@ -155,7 +155,9 @@ def build_card_copy(
             attempted.append(model_name)
             try:
                 raw = generate(request, api_key, model_name)
-                return _validate(raw, request)
+                copy = _validate(raw, request)
+                copy.model = model_name
+                return copy
             except CardCopyError as exc:
                 logger.warning("card copy rejected model=%s reason=%s", model_name, exc)
                 last_error = exc
