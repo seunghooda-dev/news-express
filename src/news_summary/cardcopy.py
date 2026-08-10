@@ -1,4 +1,4 @@
-# 기사 초안을 카드뉴스 문안(표지 문구 + 본문 카드)으로 다시 쓰는 모듈
+# 기사 초안을 카드 한 장의 문안(제목 + 요점 2~4개)으로 다시 쓰는 모듈
 from __future__ import annotations
 
 import json

@@ -6,7 +6,7 @@
   <title>{% if page_title %}{{ page_title }} · {% endif %}KBC NEWS EXPRESS</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_version) }}">
-  {# 카톡·밴드로 퍼갈 때 표지 카드가 미리보기로 떠야 확산된다. #}
+  {# 카톡·밴드로 퍼갈 때 카드가 미리보기로 떠야 확산된다. #}
   <meta property="og:site_name" content="KBC NEWS EXPRESS">
   <meta property="og:type" content="website">
   <meta property="og:title" content="{% block og_title %}{% if page_title %}{{ page_title }} · {% endif %}KBC NEWS EXPRESS{% endblock %}">
