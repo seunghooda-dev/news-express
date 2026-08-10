@@ -67,6 +67,9 @@ AUTO_QUEUE_DRAIN_STATUS_KEY = "auto_queue_drain_status_snapshot"
 AUTO_DAILY_REPORT_KEY = "auto_daily_report_snapshot"
 AUTO_URL_DISCOVERY_STATUS_KEY = "auto_url_discovery_snapshot"
 AUTO_BACKUP_VERIFY_STATUS_KEY = "auto_backup_verify_snapshot"
+# 같은 백업 파일을 다시 검증하기까지 기다리는 시간. 백업은 24시간마다 만들어지는데
+# 검증 단계는 15분마다 돌아 **하루 96번** 같은 파일을 통째로 풀고 있었다.
+BACKUP_REVERIFY_HOURS = 12
 AUTO_SERVER_HEALTH_STATUS_KEY = "auto_server_health_snapshot"
 AUTO_COLLECTION_ANOMALY_STATUS_KEY = "auto_collection_anomaly_snapshot"
 AUTO_DEDUPLICATE_STATUS_KEY = "auto_deduplicate_snapshot"
@@ -764,6 +767,13 @@ class AutoCollector:
             return None
         backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
         latest_backup = _latest_backup_file(backup_dir)
+        # 검증은 압축을 통째로 풀어 CRC를 보고(testzip), Postgres면 덤프 전체를
+        # json.load 한다. 그런데 백업은 24시간마다 만들어지는데 이 단계는 유지보수
+        # 주기(15분)마다 돈다 — **같은 파일을 하루 96번** 그렇게 했다. 파일이 그대로면
+        # 결과도 그대로다. 다만 디스크 손상까지 영영 못 보면 안 되므로 하루에 한 번은
+        # 다시 본다(2026-08-11 감사).
+        if latest_backup and (skipped := self._recent_backup_verification(latest_backup)):
+            return None if skipped.get("ok") else f"백업 자동 검증 확인 필요: {skipped.get('message')}"
         result = verify_backup(latest_backup) if latest_backup else {
             "ok": False,
             "status_label": "백업 없음",
@@ -773,12 +783,33 @@ class AutoCollector:
         payload = {
             "updated_at": _now(),
             "backup_name": latest_backup.name if latest_backup else "",
+            "backup_fingerprint": _backup_fingerprint(latest_backup) if latest_backup else "",
             **result,
         }
         self.store.set_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY, json.dumps(payload, ensure_ascii=False))
         if result.get("ok"):
             return None
         return f"백업 자동 검증 확인 필요: {result.get('message')}"
+
+    def _recent_backup_verification(self, backup_path: Path) -> dict | None:
+        """같은 파일을 최근에 검증했으면 그 결과를 돌려준다(없으면 None)."""
+        raw = self.store.get_app_metadata(AUTO_BACKUP_VERIFY_STATUS_KEY)
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("backup_fingerprint") != _backup_fingerprint(backup_path):
+            return None
+        checked_at = _parse_datetime(str(payload.get("updated_at") or ""))
+        if checked_at is None:
+            return None
+        if datetime.now(timezone.utc) - checked_at > timedelta(hours=BACKUP_REVERIFY_HOURS):
+            return None
+        return payload
 
     def _create_backup_if_needed_once(self, now: datetime) -> str | None:
         if not env_bool(AUTO_BACKUP_CREATE_ENV, True):
@@ -1207,6 +1238,15 @@ def _same_host(url: str, base_url: str) -> bool:
     parsed = urlparse(url)
     base = urlparse(base_url)
     return bool(parsed.scheme and parsed.netloc and parsed.netloc == base.netloc)
+
+
+def _backup_fingerprint(backup_path: Path) -> str:
+    """같은 파일인지 가리는 지문. 이름만 보면 덮어쓴 백업을 못 알아본다."""
+    try:
+        stat = backup_path.stat()
+    except OSError:
+        return ""
+    return f"{backup_path.name}:{stat.st_size}:{int(stat.st_mtime)}"
 
 
 def _latest_backup_file(backup_dir: Path) -> Path | None:

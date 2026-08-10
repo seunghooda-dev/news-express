@@ -2207,3 +2207,67 @@ def test_auto_collector_ensure_running_restarts_missing_thread(monkeypatch):
         collector.stop()
         if collector._thread:
             collector._thread.join(timeout=1)
+
+
+def test_backup_verification_skips_a_file_it_already_checked(monkeypatch, tmp_path):
+    """검증은 압축을 통째로 풀고(testzip) Postgres면 덤프 전체를 json.load 한다.
+
+    백업은 24시간마다 만들어지는데 이 단계는 유지보수 주기(15분)마다 돈다 —
+    같은 파일을 **하루 96번** 그렇게 하고 있었다(2026-08-11 감사).
+    """
+    from news_summary import scheduler as scheduler_module
+
+    db_path = Path(f"data/.test_backup_reverify_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    backup_file = backup_dir / "backup-2026-08-11.zip"
+    backup_file.write_bytes(b"PK\x03\x04 pretend archive")
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+
+    calls = {"count": 0}
+
+    def counting_verify(path):
+        calls["count"] += 1
+        return {"ok": True, "status_label": "검증 정상", "message": "확인했습니다.", "checked_sqlite": True}
+
+    monkeypatch.setattr(scheduler_module, "verify_backup", counting_verify)
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    collector._verify_latest_backup_once()
+    collector._verify_latest_backup_once()
+    collector._verify_latest_backup_once()
+
+    assert calls["count"] == 1, f"같은 백업을 {calls['count']}번 검증했다"
+
+    # 백업이 새로 만들어지면 다시 검증해야 한다.
+    backup_file.write_bytes(b"PK\x03\x04 a different archive entirely")
+    collector._verify_latest_backup_once()
+
+    assert calls["count"] == 2, "새 백업인데 검증을 건너뛰었다"
+
+
+def test_backup_verification_still_reports_a_failure_it_remembered(monkeypatch, tmp_path):
+    """건너뛰더라도 실패는 계속 보고해야 한다 — 조용해지면 손상을 놓친다."""
+    from news_summary import scheduler as scheduler_module
+
+    db_path = Path(f"data/.test_backup_reverify_fail_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    (backup_dir / "backup-2026-08-11.zip").write_bytes(b"PK\x03\x04 broken")
+    monkeypatch.setenv("NEWS_SUMMARY_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setattr(
+        scheduler_module,
+        "verify_backup",
+        lambda path: {"ok": False, "status_label": "백업 손상", "message": "압축이 깨졌습니다.", "checked_sqlite": False},
+    )
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    first = collector._verify_latest_backup_once()
+    second = collector._verify_latest_backup_once()
+
+    assert first and "확인 필요" in first
+    assert second and "확인 필요" in second, "두 번째 주기에서 실패가 조용해졌다"
