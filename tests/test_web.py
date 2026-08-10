@@ -10225,3 +10225,55 @@ def test_admin_setup_cannot_be_rerun_anonymously_once_a_password_exists(monkeypa
     # 리다이렉트만 보면 부족하다 — 비번이 실제로 안 바뀌었는지가 핵심이다.
     assert verify_admin_password(store, "원래비번1234"), "원래 비밀번호가 무효가 됐다"
     assert not verify_admin_password(store, "공격자비번9999"), "익명 재설정이 통과했다"
+
+
+def test_attention_count_still_flags_a_body_that_repeats_the_title(monkeypatch):
+    """본문을 앞부분만 가져오도록 줄였다 — 그래도 '형식 확인'을 놓치면 안 된다.
+
+    이 질의는 숫자 하나를 세려고 도는데 종전에는 대기 초안 본문을 통째로 옮겼다
+    (행당 4KB 남짓 × 수백 건, 공개 첫 화면이 매 요청마다). review_flags가 본문을
+    쓰는 곳은 맨 앞이 제목으로 시작하는지 한 줄뿐이라 앞 400자면 충분하다.
+    """
+    from news_summary.web import _attention_count_for_dashboard
+
+    db_path = Path(f"data/.test_attention_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    title = "담양군, 폭염 취약 현장 점검"
+    long_tail = "뒤에 붙는 긴 본문입니다. " * 200  # 본문 상한을 넘길 만큼 길게
+    cases = [
+        # (본문, 주의 표시가 떠야 하나)
+        (f"{title} 관련 내용입니다.\n\n{long_tail}", True),  # 제목으로 시작 → 형식 확인
+        (f"\n\n  {title} 로 시작합니다.\n\n{long_tail}", True),  # 선행 공백이 있어도
+        (f"담양군이 현장을 점검했습니다.\n\n{long_tail}", False),  # 정상
+    ]
+    for index, (body, _) in enumerate(cases):
+        release_id = store.add_press_release(
+            PressRelease(
+                source_id="damyang-county",
+                source_name="담양군청 보도자료",
+                region="전남 담양",
+                title=f"{title} {index}",
+                url=f"https://example.com/{uuid4().hex}",
+                content="원문입니다.",
+                published_at="2026-08-09",
+                assets=[],
+            )
+        )
+        store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=title,
+                body=body,
+                review_note="",
+                model="gemini-3.5-flash",
+            )
+        )
+
+    count = _attention_count_for_dashboard(store, None, set())
+
+    assert count == sum(1 for _, flagged in cases if flagged), (
+        "본문을 잘라 가져오면서 형식 확인 판정이 달라졌다"
+    )

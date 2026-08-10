@@ -3841,12 +3841,17 @@ def _operations_report_cache_key(
     auto_status: object | None,
     pending_queue: dict[str, object],
 ) -> tuple[str, ...]:
+    # **로그 파일 서명(크기·mtime)을 키에 넣지 않는다.** 넣으면 앱이 로그를 쓰는
+    # 순간 키가 바뀌는데, /operations 요청 자체가 로그를 쓴다 — 실측(2026-08-11):
+    # 두 번 연속 요청 사이에 로그가 180 -> 369바이트로 늘어 캐시가 빗나갔다.
+    # 즉 이 캐시는 **한 번도 맞은 적이 없고**, 매 요청 25종 리포트(쿼리 50~100개)를
+    # 다시 돌렸다. 로그 기반 카드는 TTL(기본 20초)만큼 낡아 보일 수 있는데,
+    # 운영 화면에서 그 정도 지연은 전량 재실행보다 훨씬 싸다.
     return (
         store.display_location,
         str(config_path),
         str(backup_dir),
         str(log_path),
-        *_log_file_signature(log_path),
         str(_auto_status_value(auto_status, "enabled")),
         str(_auto_status_value(auto_status, "running")),
         str(_auto_status_value(auto_status, "last_auto_finished_at")),
@@ -7467,6 +7472,15 @@ def _dashboard_source_summaries(store: Store, config_path: Path) -> list[dict[st
     return [dict(summary) for summary in cached_summaries]
 
 
+# 이 질의는 **숫자 하나**를 세려고 도는데, 종전에는 대기 초안의 본문을 통째로
+# 옮겼다(초안 본문은 1400자까지, 한글이면 행당 4KB 남짓). 공개 첫 화면이 매 요청마다
+# 지나는 자리라 크롤러 한 대면 그대로 DB 전송량이 된다(2026-08-11 감사).
+#
+# review_flags가 본문을 쓰는 곳은 `body.lstrip().startswith(("[뉴스 단신]", title))`
+# 한 줄뿐이다. 제목이 길어야 100자 남짓이므로 앞 400자면 선행 공백까지 넉넉하다.
+_ATTENTION_BODY_PREFIX = 400
+
+
 def _attention_count_for_dashboard(
     store: Store,
     selected_regions: list[str] | None,
@@ -7482,7 +7496,8 @@ def _attention_count_for_dashboard(
     with store.connect() as conn:
         rows = conn.execute(
             f"""
-            SELECT ad.title, ad.body, ad.review_note, ad.model,
+            SELECT ad.title, SUBSTR(ad.body, 1, {_ATTENTION_BODY_PREFIX}) AS body,
+                   ad.review_note, ad.model,
                    '' AS original_content,
                    pr.title AS original_title, pr.published_at,
                    pr.validation_status, pr.validation_note
@@ -8293,18 +8308,6 @@ def _recent_log_lines(log_path: Path, limit: int = 250) -> list[str]:
         return log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
     except OSError:
         return ["운영 로그 파일을 읽을 수 없습니다."]
-
-
-def _log_file_signature(log_path: Path) -> tuple[str, ...]:
-    try:
-        stat = log_path.stat()
-    except OSError:
-        return ("missing",)
-    return (
-        "present",
-        str(stat.st_size),
-        str(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
-    )
 
 
 def _log_line_excerpt(line: str, max_length: int = 140) -> str:
