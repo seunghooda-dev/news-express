@@ -1121,13 +1121,8 @@ def _url_discovery_candidates(store: Store, config_path: Path, limit: int) -> li
             """,
             (max(limit * 3, limit),),
         ).fetchall()
-        status_rows = conn.execute(
-            """
-            SELECT source_id, status
-            FROM source_collection_runs
-            ORDER BY source_id, id DESC
-            """
-        ).fetchall()
+    # 유지보수는 하루 96회 돈다 — 여기서 전량을 끌면 그 자체가 전송량이다.
+    status_rows = store.recent_source_run_statuses()
     consecutive_failures = _consecutive_failure_counts(status_rows)
     candidates = []
     structural_stages = {"사이트 구조 변경", "수집 처리", "자료 파싱", "HTTP 상태 오류", "사이트 접속", "DNS 조회"}

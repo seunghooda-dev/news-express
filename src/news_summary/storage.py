@@ -2078,6 +2078,29 @@ class Store:
             cur = conn.execute("DELETE FROM card_news_sets WHERE publish_date = ?", (publish_date,))
             return int(cur.rowcount or 0)
 
+    def recent_source_run_statuses(self, per_source: int = 10) -> list:
+        """소스별 **최근 몇 건만** 돌려준다 — 연속 실패 판정에 필요한 전부다.
+
+        쓰는 쪽(`_consecutive_failure_counts`)은 소스별로 첫 성공에서 멈추고
+        문턱이 3회다. 그런데 종전에는 네 곳이 각자 `ORDER BY source_id, id DESC`로
+        **전량**을 가져왔다(WHERE도 LIMIT도 없이). 이 테이블은 활성 27개 × 매시라
+        하루 650건 넘게 늘고 **지우는 코드가 어디에도 없어** 계속 자란다 —
+        그중 하나는 공개 첫 화면이 매 요청마다 부른다. 무료 DB 전송량이 이미
+        한도를 넘긴 서비스에서 이 조합은 그대로 비용이다(2026-08-11 감사).
+        """
+        sql = """
+            SELECT source_id, status
+            FROM (
+                SELECT source_id, status, id,
+                       ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY id DESC) AS rn
+                FROM source_collection_runs
+            ) ranked
+            WHERE rn <= ?
+            ORDER BY source_id, id DESC
+        """
+        with self.connect() as conn:
+            return conn.execute(sql, (per_source,)).fetchall()
+
     def prune_visitor_access_logs(self, cutoff_iso: str) -> int:
         with self.connect() as conn:
             row = conn.execute(

@@ -160,3 +160,48 @@ def test_postgres_schema_init_uses_transaction_advisory_lock():
     store._acquire_schema_init_lock(FakeConnection())
 
     assert calls == [("SELECT pg_advisory_xact_lock(?)", (POSTGRES_SCHEMA_INIT_LOCK_ID,))]
+
+
+def test_recent_source_run_statuses_is_bounded_per_source():
+    """연속 실패 판정에 필요한 만큼만 가져온다 — 전량 스캔이 전송량을 먹고 있었다.
+
+    `source_collection_runs`는 활성 27개 × 매시라 하루 650건 넘게 늘고
+    **지우는 코드가 없다.** 그런데 네 곳이 각자 WHERE도 LIMIT도 없이 전량을
+    끌어왔고, 그중 하나는 공개 첫 화면이 매 요청마다 지난다(2026-08-11 감사).
+    """
+    db_path = Path(f"data/.test_recent_runs_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(40):
+        store.record_source_collection_status("damyang", "담양군청", "ok", f"{index}회차")
+    for index in range(40):
+        store.record_source_collection_status("gangjin", "강진군청", "ok", f"{index}회차")
+
+    rows = store.recent_source_run_statuses(per_source=10)
+
+    assert len(rows) == 20, f"소스별 10건씩이어야 하는데 {len(rows)}건을 가져왔다"
+    assert {str(row["source_id"]) for row in rows} == {"damyang", "gangjin"}
+
+
+def test_recent_source_run_statuses_keeps_consecutive_failure_detection():
+    """경계값 확인 — 문턱이 3회이므로 최근 실패가 그 안에서 다 보여야 한다."""
+    from news_summary.web import _consecutive_failure_counts
+
+    db_path = Path(f"data/.test_recent_runs_fail_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    # 옛 성공이 잔뜩 쌓인 뒤 최근에 연속 실패한 소스.
+    for index in range(30):
+        store.record_source_collection_status("damyang", "담양군청", "ok", f"성공 {index}")
+    for index in range(4):
+        store.record_source_collection_status("damyang", "담양군청", "failed", f"실패 {index}")
+    # 대조군 — 실패 뒤에 성공했으므로 연속 실패가 아니다.
+    store.record_source_collection_status("gangjin", "강진군청", "failed", "실패")
+    store.record_source_collection_status("gangjin", "강진군청", "ok", "성공")
+
+    counts = _consecutive_failure_counts(store.recent_source_run_statuses())
+
+    assert counts.get("damyang") == 4, "최근 연속 실패를 놓쳤다"
+    assert "gangjin" not in counts, "성공으로 끊긴 소스를 연속 실패로 셌다"

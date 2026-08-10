@@ -5210,13 +5210,8 @@ def _operations_health_report(
                 ) latest ON latest.max_id = scr.id
                 """
             ).fetchall()
-            status_sequence_rows = conn.execute(
-                """
-                SELECT source_id, status
-                FROM source_collection_runs
-                ORDER BY source_id, id DESC
-                """
-            ).fetchall()
+        # 연속 실패 판정은 소스별 최근 몇 건이면 된다 — 종전에는 전량을 끌어왔다.
+        status_sequence_rows = store.recent_source_run_statuses()
     except Exception as exc:  # noqa: BLE001 - operations page should stay usable during diagnostics.
         return {
             "status_level": "error",
@@ -5583,13 +5578,8 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
                 ) latest ON latest.max_id = scr.id
                 """
             ).fetchall()
-            status_sequence_rows = conn.execute(
-                """
-                SELECT source_id, status
-                FROM source_collection_runs
-                ORDER BY source_id, id DESC
-                """
-            ).fetchall()
+        # 연속 실패 판정은 소스별 최근 몇 건이면 된다 — 종전에는 전량을 끌어왔다.
+        status_sequence_rows = store.recent_source_run_statuses()
     except Exception as exc:  # noqa: BLE001 - health check should expose collection diagnostics failures.
         logger.warning("source collection health check failed error=%s", exc)
         return {
@@ -7595,13 +7585,8 @@ def _source_summaries(store: Store, config_path: Path) -> list[dict[str, object]
                 """
             ).fetchall()
         }
-        recent_status_rows = conn.execute(
-            """
-            SELECT source_id, status
-            FROM source_collection_runs
-            ORDER BY source_id, id DESC
-            """
-        ).fetchall()
+    # 공개 첫 화면이 매 요청마다 지나는 자리다 — 전량 스캔을 두면 그대로 전송량이 된다.
+    recent_status_rows = store.recent_source_run_statuses()
     consecutive_failure_counts = _consecutive_failure_counts(recent_status_rows)
 
     summaries = []
