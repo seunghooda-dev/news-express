@@ -246,4 +246,4 @@ def test_result_feeds_card_builder_directly():
     copy = build_card_copy(sample_request(), "key", generator=responder(json.dumps(good_payload())))
     images = build_card_images(copy, [])
 
-    assert len(images) == len(copy.cards) + 1
+    assert len(images) == 1

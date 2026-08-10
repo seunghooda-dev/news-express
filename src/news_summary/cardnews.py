@@ -33,24 +33,32 @@ MIN_PHOTO_EDGE = 800
 # RGB로 펼쳐 240MB인데 세트당 4장을 동시에 쥔다 — 이 서비스는 512MB에서 돈다.
 MAX_WORKING_EDGE = CARD_WIDTH * 2
 
-COVER_PHOTO_RATIO = 0.58
-BODY_PHOTO_RATIO = 0.42
+# 사진이 위, 요점이 아래. 글이 짧은 기사는 사진을 키워 빈자리를 없앤다.
+MIN_PHOTO_BAND = int(CARD_HEIGHT * 0.34)
+MAX_PHOTO_BAND = int(CARD_HEIGHT * 0.52)
+PHOTO_TEXT_GAP = 30
+# 출처·날짜가 앉을 자리. 구분선을 CARD_HEIGHT-150에 긋고 그 위로 40px을 비워 둔다 —
+# 130으로 뒀더니 마지막 줄이 구분선을 뚫고 지나갔다(2026-08-10 시안에서 확인).
+SINGLE_FOOTER_HEIGHT = 190
 FADE_HEIGHT = 200
 MARGIN = 65
 
 COVER_BG = "#111111"
 COVER_TEXT = "#FFFFFF"
 COVER_META = "#9A9A9A"
-# 표지와 본문의 바탕색을 맞춘다 — 넘길 때 흰 배경이 끼면 산만하다(2026-08-09 사용자 지시).
-BODY_BG = COVER_BG
 BODY_HEADING = "#FFFFFF"
 BODY_TEXT = "#C7C7C7"
-BODY_META = "#7A7A7A"
 
-MAX_COVER_LINES = 4
-MAX_HEADING_LINES = 3
-MAX_BODY_LINES = 7
-HEADING_GAP = 26
+MAX_COVER_LINES = 3
+# (제목, 소제목, 본문) 글자 크기 사다리. 큰 것부터 넣어 보고 안 들어가면 줄인다 —
+# 요점이 2개인 기사와 4개인 기사가 같은 카드 높이를 나눠 써야 하기 때문이다.
+SINGLE_SIZE_STEPS = ((58, 38, 32), (52, 35, 30), (46, 32, 28), (42, 30, 26), (38, 28, 24), (34, 26, 22))
+# 요점과 요점 사이, 그리고 소제목과 그 본문 사이의 간격.
+ITEM_GAP = 30
+HEADING_GAP = 8
+TITLE_GAP = 34
+# 줄 끝에서 혼자 넘어가면 안 되는 글자들.
+TRAILING_PUNCTUATION = ".,!?)]}』」”’%"
 
 FONT_PATH = Path(__file__).resolve().parent / "static" / "fonts" / "PretendardVariable.woff2"
 
@@ -97,10 +105,14 @@ class CardNewsError(RuntimeError):
 
 
 def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[bytes]:
-    """표지 1장 + 본문 N장의 PNG 바이트를 만든다.
+    """기사 한 건을 **카드 한 장**으로 만든다.
 
-    사진이 없거나 해상도가 모자라면 텍스트 중심 배치로 자동 전환한다 — 호출하는
-    쪽에서 분기할 필요가 없다.
+    전에는 표지 1장 + 본문 N장으로 넘겨 봤는데, 넘기지 않으면 첫 장의 제목만 남고
+    정작 신청 기한·대상이 안 읽혔다(2026-08-10 사용자 지시: "사진 한 장에 기사를
+    전부 축약해서 넣어"). 한 장이면 사진과 요점이 같은 화면에 남는다.
+
+    반환은 목록을 유지한다 — 저장·표시 경로가 이미 목록을 받아 쓴다.
+    사진이 없거나 해상도가 모자라면 글자 중심 배치로 자동 전환한다.
     """
     if not copy.cover.strip():
         raise CardNewsError("표지 문구가 비어 있습니다.")
@@ -109,21 +121,13 @@ def build_card_images(copy: CardCopy, photos: Sequence[bytes] = ()) -> list[byte
         raise CardNewsError("본문 카드 문구가 하나도 없습니다.")
 
     usable = _usable_photos(photos)
-    images: list[bytes] = []
     try:
-        cover_photo = usable[0] if usable else None
-        images.append(_encode(_render_cover(copy, cover_photo)))
-        total = len(slides) + 1
-        for index, slide in enumerate(slides, start=2):
-            # 표지에 쓴 사진은 본문에서 다시 쓰지 않는다 — 같은 사진이 연달아 나오면 지루하다.
-            photo = usable[index - 1] if index - 1 < len(usable) else None
-            images.append(_encode(_render_body(slide, index, total, photo)))
+        return [_encode(_render_single(copy, slides, usable[0] if usable else None))]
     finally:
         for photo in usable:
             photo.close()
         # 원본을 펼친 메모리는 여기서 free됐지만 glibc가 쥐고 있다 — 돌려준다.
         release_free_heap()
-    return images
 
 
 def _usable_photos(photos: Sequence[bytes]) -> list[Image.Image]:
@@ -171,6 +175,11 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
             continue
         candidate = current + char
         if draw.textlength(candidate, font=font) > max_width and current:
+            # 마침표 하나만 다음 줄로 떨어지면 오식처럼 보인다 — 문장부호는 그 줄에 붙인다.
+            # 여백이 65px라 글리프 하나가 삐져나가도 카드 밖으로 나가지 않는다.
+            if char in TRAILING_PUNCTUATION:
+                current = candidate
+                continue
             lines.append(current)
             current = char
         else:
@@ -178,28 +187,6 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
     if current:
         lines.append(current)
     return lines
-
-
-def _fit_lines(
-    draw: ImageDraw.ImageDraw,
-    text: str,
-    max_width: int,
-    max_lines: int,
-    sizes: Sequence[int],
-    weight: int,
-) -> tuple[ImageFont.FreeTypeFont, list[str]]:
-    """줄 수에 들어갈 때까지 글자를 줄인다. 그래도 넘치면 마지막 줄을 말줄임한다."""
-    font = _font(sizes[-1], weight)
-    lines: list[str] = []
-    for size in sizes:
-        font = _font(size, weight)
-        lines = _wrap(draw, text, font, max_width)
-        if len(lines) <= max_lines:
-            return font, lines
-    lines = lines[:max_lines]
-    if lines:
-        lines[-1] = lines[-1][:-1] + "…"
-    return font, lines
 
 
 def _photo_band(photo: Image.Image, height: int, background: str) -> Image.Image:
@@ -241,29 +228,38 @@ def _paste_with_fade(canvas: Image.Image, band: Image.Image, bg: str) -> None:
     overlay.close()
 
 
-def _render_cover(copy: CardCopy, photo: Image.Image | None) -> Image.Image:
+Block = tuple[ImageFont.FreeTypeFont, list[str], str, int, int]
+"""(글꼴, 줄들, 색, 줄 간격, 위쪽 여백) — 한 덩어리를 그리는 데 필요한 전부."""
+
+
+def _render_single(copy: CardCopy, slides: list[CardSlide], photo: Image.Image | None) -> Image.Image:
+    """사진 한 장 아래에 제목과 요점 전부를 얹는다."""
     canvas = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), COVER_BG)
     draw = ImageDraw.Draw(canvas)
     max_width = CARD_WIDTH - MARGIN * 2
 
     if photo is not None:
-        band_height = int(CARD_HEIGHT * COVER_PHOTO_RATIO)
+        # 먼저 사진을 가장 작게 잡고 글을 앉혀 실제 높이를 잰 뒤, 남는 자리를 사진에 준다.
+        # 요점이 둘뿐인 기사에서 아래쪽이 휑하게 비는 것을 막는다.
+        room = CARD_HEIGHT - (MIN_PHOTO_BAND + PHOTO_TEXT_GAP) - SINGLE_FOOTER_HEIGHT
+        blocks = _single_blocks(draw, copy.cover, slides, max_width, room)
+        slack = room - _blocks_height(blocks)
+        band_height = min(MAX_PHOTO_BAND, MIN_PHOTO_BAND + max(0, slack))
         band = _photo_band(photo, band_height, COVER_BG)
         _paste_with_fade(canvas, band, COVER_BG)
         band.close()
-        text_top = band_height + 60
-        sizes = (72, 64, 56)
+        text_top = band_height + PHOTO_TEXT_GAP
     else:
-        # 사진이 없거나 작으면 글자를 키워 화면을 채운다 — 확대한 사진보다 낫다.
-        text_top = 300
-        sizes = (92, 84, 76)
+        # 사진이 없으면 그 자리를 글이 쓴다 — 확대한 사진보다 낫다.
+        text_top = 110
+        blocks = _single_blocks(draw, copy.cover, slides, max_width, CARD_HEIGHT - text_top - SINGLE_FOOTER_HEIGHT)
 
-    font, lines = _fit_lines(draw, copy.cover, max_width, MAX_COVER_LINES, sizes, 800)
-    line_height = int(font.size * 1.28)
     y = text_top
-    for line in lines:
-        draw.text((MARGIN, y), line, font=font, fill=COVER_TEXT)
-        y += line_height
+    for font, lines, colour, step, gap in blocks:
+        y += gap
+        for line in lines:
+            draw.text((MARGIN, y), line, font=font, fill=colour)
+            y += step
 
     meta = " · ".join(part for part in (copy.source_label, copy.date_label) if part)
     if meta:
@@ -272,55 +268,52 @@ def _render_cover(copy: CardCopy, photo: Image.Image | None) -> Image.Image:
     return canvas
 
 
-def _render_body(slide: CardSlide, index: int, total: int, photo: Image.Image | None) -> Image.Image:
-    """본문 카드. 표지와 같은 검은 바탕을 쓴다 — 넘길 때 배경이 바뀌면 산만하다."""
-    canvas = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), BODY_BG)
-    draw = ImageDraw.Draw(canvas)
-    max_width = CARD_WIDTH - MARGIN * 2
+def _single_blocks(
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    slides: list[CardSlide],
+    max_width: int,
+    available: int,
+) -> list[Block]:
+    """제목과 요점 전부가 available 안에 들어가는 배치를 고른다.
 
-    if photo is not None:
-        band_height = int(CARD_HEIGHT * BODY_PHOTO_RATIO)
-        band = _photo_band(photo, band_height, BODY_BG)
-        _paste_with_fade(canvas, band, BODY_BG)
-        band.close()
-        text_area_top = band_height + 20
-        heading_sizes = (58, 52, 46)
-        body_sizes = (44, 40, 36)
-    else:
-        text_area_top = 0
-        heading_sizes = (68, 60, 54)
-        body_sizes = (50, 46, 42)
+    큰 글자부터 넣어 보고 넘치면 다음 단계로 줄인다. 가장 작은 단계로도 안 되면
+    뒤 요점부터 덜어낸다 — **어떤 경우에도 카드 밖으로 글자를 흘리지 않는다.**
+    """
+    blocks: list[Block] = []
+    for title_size, head_size, body_size in SINGLE_SIZE_STEPS:
+        blocks = []
+        title_font = _font(title_size, 800)
+        title_step = int(title_size * 1.26)
+        title_lines = _wrap(draw, title, title_font, max_width)
+        if len(title_lines) > MAX_COVER_LINES:
+            # 딱 잘라 두면 낱말이 끊긴 채 끝나 오식처럼 보인다.
+            title_lines = title_lines[:MAX_COVER_LINES]
+            title_lines[-1] = title_lines[-1][:-1] + "…"
+        blocks.append((title_font, title_lines, COVER_TEXT, title_step, 0))
 
-    blocks: list[tuple[ImageFont.FreeTypeFont, list[str], str, int]] = []
-    if slide.heading.strip():
-        font, lines = _fit_lines(draw, slide.heading, max_width, MAX_HEADING_LINES, heading_sizes, 800)
-        blocks.append((font, lines, BODY_HEADING, int(font.size * 1.3)))
-    if slide.body.strip():
-        font, lines = _fit_lines(draw, slide.body, max_width, MAX_BODY_LINES, body_sizes, 500)
-        blocks.append((font, lines, BODY_TEXT, int(font.size * 1.6)))
+        for index, slide in enumerate(slides):
+            if slide.heading.strip():
+                font = _font(head_size, 800)
+                lines = _wrap(draw, slide.heading, font, max_width)
+                blocks.append((font, lines, BODY_HEADING, int(head_size * 1.3), TITLE_GAP if not index else ITEM_GAP))
+            if slide.body.strip():
+                font = _font(body_size, 500)
+                lines = _wrap(draw, slide.body, font, max_width)
+                gap = HEADING_GAP if slide.heading.strip() else (TITLE_GAP if not index else ITEM_GAP)
+                blocks.append((font, lines, BODY_TEXT, int(body_size * 1.5), gap))
 
-    block_height = sum(len(lines) * step for _, lines, _, step in blocks)
-    block_height += HEADING_GAP * (len(blocks) - 1) if len(blocks) > 1 else 0
-    available = CARD_HEIGHT - text_area_top - 130
-    # 하한만 두면 블록이 available보다 클 때 글자가 카드 밖으로 흘러 장수 표시와 겹친다
-    # (2026-08-09 검토에서 적발 — 줄 수는 통과하는데 높이가 넘치는 대역이 있다).
-    y = text_area_top + min(max(60, (available - block_height) // 2), max(0, available - block_height))
-    for order, (font, lines, colour, step) in enumerate(blocks):
-        if order:
-            y += HEADING_GAP
-        for line in lines:
-            draw.text((MARGIN, y), line, font=font, fill=colour)
-            y += step
+        if _blocks_height(blocks) <= available:
+            return blocks
 
-    label = f"{index} / {total}"
-    label_font = _font(28, 600)
-    draw.text(
-        (CARD_WIDTH - MARGIN - draw.textlength(label, font=label_font), CARD_HEIGHT - 90),
-        label,
-        font=label_font,
-        fill=BODY_META,
-    )
-    return canvas
+    # 가장 작은 글자로도 안 들어간다 — 사람이 고친 문안은 AI 규격을 안 거치므로 실제로 생긴다.
+    while len(blocks) > 1 and _blocks_height(blocks) > available:
+        blocks.pop()
+    return blocks
+
+
+def _blocks_height(blocks: list[Block]) -> int:
+    return sum(gap + len(lines) * step for _, lines, _, step, gap in blocks)
 
 
 def _encode(image: Image.Image) -> bytes:

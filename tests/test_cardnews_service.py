@@ -97,7 +97,7 @@ def test_builds_set_and_writes_images(tmp_path):
     )
 
     assert result.set_id > 0
-    assert len(result.image_paths) == 3, "표지 1장 + 본문 2장"
+    assert len(result.image_paths) == 1, "기사 한 건 = 카드 한 장"
     assert all(path.exists() for path in result.image_paths)
     assert set_directory(out, "2026-08-09", result.set_id).is_dir()
 
@@ -182,7 +182,7 @@ def test_legacy_string_cards_are_read_and_redrawn(tmp_path):
         CardSlide(heading="", body="냉방기 가동 상태를 확인했습니다."),
     ]
     paths = rebuild_images_from_copy(store, result.set_id, out, downloader=lambda asset: photo_bytes())
-    assert len(paths) == 3, "표지 1장 + 본문 2장"
+    assert len(paths) == 1, "기사 한 건 = 카드 한 장"
 
 
 def test_rebuilding_same_draft_replaces_instead_of_duplicating(tmp_path):
@@ -202,7 +202,7 @@ def test_rebuilding_same_draft_replaces_instead_of_duplicating(tmp_path):
     assert first.set_id == second.set_id
     assert len(store.card_news_sets_for_date("2026-08-09")) == 1
     # 재생성 시 옛 이미지가 남아 섞이면 안 된다.
-    assert len(load_set_images(out, "2026-08-09", second.set_id)) == 3
+    assert len(load_set_images(out, "2026-08-09", second.set_id)) == 1
 
 
 def test_photo_download_failure_still_produces_cards(tmp_path):
@@ -217,7 +217,7 @@ def test_photo_download_failure_still_produces_cards(tmp_path):
         downloader=broken, copy_builder=fake_copy_builder,
     )
 
-    assert len(result.image_paths) == 3, "사진이 없어도 텍스트 카드는 나와야 한다"
+    assert len(result.image_paths) == 1, "사진이 없어도 텍스트 카드는 나와야 한다"
 
 
 def test_missing_draft_is_rejected(tmp_path):

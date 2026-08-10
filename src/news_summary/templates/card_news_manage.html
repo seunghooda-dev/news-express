@@ -39,17 +39,17 @@
     {# AI 재생성 말고 한 글자만 고치고 싶을 때가 대부분이다. #}
     <form class="cardnews-copy-edit" method="post" action="{{ url_for('card_news_edit_copy', set_id=item.id) }}">
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-      <label>표지 문구
-        <input type="text" name="cover" value="{{ item.card_copy.cover }}" maxlength="40">
+      <label>제목
+        <input type="text" name="cover" value="{{ item.card_copy.cover }}" maxlength="{{ limits.cover }}">
       </label>
       {% for slide in item.card_copy.cards %}
         <fieldset class="cardnews-slide-fields">
-          <legend>{{ loop.index }}번 카드</legend>
+          <legend>{{ loop.index }}번 요점</legend>
           <label>소제목
-            <input type="text" name="heading-{{ loop.index0 }}" value="{{ slide.heading }}" maxlength="22">
+            <input type="text" name="heading-{{ loop.index0 }}" value="{{ slide.heading }}" maxlength="{{ limits.heading }}">
           </label>
           <label>본문
-            <textarea name="body-{{ loop.index0 }}" rows="3" maxlength="110">{{ slide.body }}</textarea>
+            <textarea name="body-{{ loop.index0 }}" rows="2" maxlength="{{ limits.body }}">{{ slide.body }}</textarea>
           </label>
         </fieldset>
       {% endfor %}

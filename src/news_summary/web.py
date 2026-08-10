@@ -1507,6 +1507,9 @@ def create_app() -> Flask:
             sets=_card_news_view_sets(store, cardnews_dir, target),
             candidates=candidates,
             gemini_ready=bool(gemini_api_key()),
+            # 폼 maxlength를 손으로 적어 두면 규격이 바뀔 때 조용히 어긋난다 —
+            # 실제로 한 장 카드로 줄이면서 22/110이 그대로 남아 있었다.
+            limits={"cover": MAX_COVER_CHARS, "heading": MAX_HEADING_CHARS, "body": MAX_CARD_CHARS},
         )
 
     @app.post("/card-news/build")

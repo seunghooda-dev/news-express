@@ -48,13 +48,24 @@ def open_card(raw: bytes) -> Image.Image:
     return Image.open(io.BytesIO(raw))
 
 
-def test_builds_cover_and_body_cards_at_fixed_size():
+def test_builds_exactly_one_card_at_fixed_size():
+    """기사 한 건은 카드 한 장이다(2026-08-10 사용자 지시).
+
+    여러 장으로 넘기면 첫 장 제목만 보고 지나가 신청 기한·대상이 안 읽혔다.
+    """
     images = build_card_images(sample_copy(), [photo_bytes(3500, 2625)])
 
-    assert len(images) == 4, "표지 1장 + 본문 3장"
-    for raw in images:
-        card = open_card(raw)
-        assert (card.width, card.height) == (CARD_WIDTH, CARD_HEIGHT)
+    assert len(images) == 1, "기사 한 건 = 카드 한 장"
+    card = open_card(images[0])
+    assert (card.width, card.height) == (CARD_WIDTH, CARD_HEIGHT)
+
+
+def test_every_slide_is_drawn_on_the_one_card():
+    """한 장뿐이므로 빠진 요점은 주민에게 전달될 방법이 없다."""
+    three = build_card_images(sample_copy(), [])
+    two = build_card_images(sample_copy(cards=sample_copy().cards[:2]), [])
+
+    assert open_card(three[0]).tobytes() != open_card(two[0]).tobytes(), "세 번째 요점이 안 그려졌다"
 
 
 def test_heading_is_drawn_together_with_body():
@@ -65,16 +76,15 @@ def test_heading_is_drawn_together_with_body():
         [],
     )
 
-    # 첫 본문 카드가 달라야 소제목이 실제로 그려진 것이다.
-    assert open_card(with_heading[1]).tobytes() != open_card(without_heading[1]).tobytes()
+    assert open_card(with_heading[0]).tobytes() != open_card(without_heading[0]).tobytes()
 
 
 def test_heading_only_slide_is_kept():
-    """본문이 비어도 소제목이 있으면 그 카드는 살린다 — 빈 카드로 취급해 버리면 장수가 어긋난다."""
-    images = build_card_images(sample_copy(cards=[CardSlide(heading="소제목만 있는 카드", body="")]), [])
+    """본문이 비어도 소제목이 있으면 그 요점은 살린다 — 빈 것으로 취급해 버리면 사실이 사라진다."""
+    images = build_card_images(sample_copy(cards=[CardSlide(heading="소제목만 있는 요점", body="")]), [])
 
-    assert len(images) == 2
-    assert (open_card(images[1]).width, open_card(images[1]).height) == (CARD_WIDTH, CARD_HEIGHT)
+    assert len(images) == 1
+    assert (open_card(images[0]).width, open_card(images[0]).height) == (CARD_WIDTH, CARD_HEIGHT)
 
 
 def test_legacy_string_cards_still_render():
@@ -90,10 +100,9 @@ def test_legacy_string_cards_still_render():
 
     images = build_card_images(legacy, [])
 
-    assert len(images) == 3, "표지 1장 + 본문 2장"
-    for raw in images:
-        card = open_card(raw)
-        assert (card.width, card.height) == (CARD_WIDTH, CARD_HEIGHT)
+    assert len(images) == 1
+    card = open_card(images[0])
+    assert (card.width, card.height) == (CARD_WIDTH, CARD_HEIGHT)
 
 
 def test_low_resolution_photo_is_not_upscaled():
@@ -120,7 +129,7 @@ def test_photo_exactly_at_threshold_is_used():
 def test_works_without_any_photo():
     images = build_card_images(sample_copy(), [])
 
-    assert len(images) == 4
+    assert len(images) == 1
     assert (open_card(images[0]).width, open_card(images[0]).height) == (CARD_WIDTH, CARD_HEIGHT)
 
 
@@ -128,7 +137,7 @@ def test_broken_attachment_is_skipped_not_fatal():
     """첨부 하나가 깨져도 카드는 나와야 한다."""
     images = build_card_images(sample_copy(), [b"not-an-image", photo_bytes(2000, 1500)])
 
-    assert len(images) == 4
+    assert len(images) == 1
 
 
 def test_very_long_headline_is_truncated_not_overflowed():
@@ -140,8 +149,8 @@ def test_very_long_headline_is_truncated_not_overflowed():
 def test_very_long_body_text_stays_inside_card():
     images = build_card_images(sample_copy(cards=[CardSlide(heading="긴 본문 카드", body="나" * 600)]), [])
 
-    assert len(images) == 2
-    assert (open_card(images[1]).width, open_card(images[1]).height) == (CARD_WIDTH, CARD_HEIGHT)
+    assert len(images) == 1
+    assert (open_card(images[0]).width, open_card(images[0]).height) == (CARD_WIDTH, CARD_HEIGHT)
 
 
 def test_empty_cover_is_rejected_rather_than_guessed():
@@ -156,14 +165,34 @@ def test_blank_body_cards_are_rejected():
         build_card_images(sample_copy(cards=blank), [photo_bytes(2000, 1500)])
 
 
-def test_cover_photo_is_not_reused_on_first_body_card():
-    """같은 사진이 연달아 나오면 카드뉴스가 지루해진다."""
-    two_photos = [photo_bytes(2000, 1500, (200, 60, 60)), photo_bytes(2000, 1500, (60, 200, 60))]
-    images = build_card_images(sample_copy(), two_photos)
+def test_first_photo_is_the_one_that_appears():
+    """카드가 한 장이라 사진도 한 장만 쓴다 — 첫 첨부가 그 자리를 갖는다."""
+    first_only = build_card_images(sample_copy(), [photo_bytes(2000, 1500, (200, 60, 60))])
+    with_spares = build_card_images(
+        sample_copy(),
+        [photo_bytes(2000, 1500, (200, 60, 60)), photo_bytes(2000, 1500, (60, 200, 60))],
+    )
 
-    cover_top = open_card(images[0]).crop((0, 0, 200, 200)).tobytes()
-    body_top = open_card(images[1]).crop((0, 0, 200, 200)).tobytes()
-    assert cover_top != body_top
+    assert open_card(first_only[0]).tobytes() == open_card(with_spares[0]).tobytes(), "뒤 첨부가 끼어들었다"
+
+
+def test_trailing_period_never_orphans_onto_its_own_line():
+    """마침표 하나만 남은 줄은 오식처럼 보인다(2026-08-10 시안에서 확인).
+
+    한 장 카드는 글자 크기를 분량에 맞춰 줄이므로 줄바꿈 지점이 매번 달라진다 —
+    특정 폭 하나가 아니라 넓은 구간을 훑어야 재발을 잡는다.
+    """
+    from PIL import ImageDraw
+
+    from news_summary.cardnews import _font, _wrap
+
+    draw = ImageDraw.Draw(Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT)))
+    text = "농업용수 부족에 대비해 가뭄대책반을 병행 운영하며 농작물 피해 예방에 나섭니다."
+    for size in (32, 28, 24):
+        font = _font(size, 500)
+        for width in range(360, 960, 4):
+            lines = _wrap(draw, text, font, width)
+            assert lines[-1].strip() != ".", f"글자 {size} · 폭 {width}에서 마침표가 혼자 남았다"
 
 
 def wide_photo_with_edge_markers() -> bytes:
@@ -187,8 +216,8 @@ def test_wide_photo_keeps_both_edges():
     images = build_card_images(sample_copy(), [wide_photo_with_edge_markers()])
     cover = open_card(images[0]).convert("RGB")
 
-    # 사진 밴드 한가운데 높이에서 좌우 끝 색을 본다.
-    y = int(CARD_HEIGHT * 0.58) // 2
+    # 밴드 높이는 글 분량에 따라 변한다 — 어떤 경우에도 밴드 안인 위쪽에서 잰다.
+    y = 100
     left = cover.getpixel((2, y))
     right = cover.getpixel((CARD_WIDTH - 3, y))
 
@@ -222,7 +251,7 @@ def test_long_human_edited_text_never_spills_past_the_card():
         sample_copy(cards=[CardSlide(heading="가" * 30, body="나" * 160)]),
         [photo_bytes(2000, 1500)],
     )
-    card = open_card(images[1]).convert("RGB")
+    card = open_card(images[0]).convert("RGB")
 
     # 맨 아랫줄이 배경색 그대로여야 글자가 안 샌 것이다.
     bottom = [card.getpixel((x, CARD_HEIGHT - 3)) for x in range(60, CARD_WIDTH - 60, 40)]
@@ -285,7 +314,7 @@ def test_releases_free_heap_even_when_rendering_fails(monkeypatch):
         lambda: calls.__setitem__("count", calls["count"] + 1) or True,
     )
     monkeypatch.setattr(
-        "news_summary.cardnews._render_cover",
+        "news_summary.cardnews._render_single",
         lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("boom")),
     )
 

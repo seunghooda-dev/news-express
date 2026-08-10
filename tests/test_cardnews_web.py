@@ -264,7 +264,7 @@ def test_editing_copy_saves_and_redraws_without_calling_ai(monkeypatch, tmp_path
 
     from news_summary.cardnews_service import load_set_images
 
-    assert len(load_set_images(tmp_path / "cardnews", "2026-08-09", set_id)) == 3
+    assert len(load_set_images(tmp_path / "cardnews", "2026-08-09", set_id)) == 1
 
 
 def test_editing_copy_rejects_empty_input(monkeypatch, tmp_path):
