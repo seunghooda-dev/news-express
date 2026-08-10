@@ -713,3 +713,111 @@ def test_build_says_when_the_article_simply_had_no_attachment(monkeypatch, tmp_p
     html = _build_one_set(client, draft_id).get_data(as_text=True)
 
     assert "쓸 수 있는 사진 첨부가 없어" in html
+
+
+def _publish_set(store, tmp_path, day: str, title: str) -> int:
+    """그 날짜에 그림까지 갖춘 발행 세트를 하나 만든다."""
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title=title,
+            url=f"https://example.com/{uuid4().hex}",
+            content="본문입니다.",
+            published_at=day,
+            assets=[],
+        )
+    )
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title=title,
+            body="담양군은 현장을 점검했습니다.",
+            review_note="",
+            model="gemini-3.5-flash",
+        )
+    )
+    set_id = store.save_card_news_set(
+        draft_id=draft_id,
+        press_release_id=release_id,
+        publish_date=day,
+        cover=f"{title} 표지",
+        cards=[{"heading": "소제목", "body": "본문입니다."}],
+        tags=[],
+        source_label="담양군청 보도자료",
+        image_count=1,
+    )
+    store.set_card_news_status(set_id, "published")
+    directory = tmp_path / "cardnews" / day / str(set_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "1.png").write_bytes(b"x")
+    return set_id
+
+
+def test_landing_falls_through_to_a_date_that_still_has_cards(monkeypatch, tmp_path):
+    """날짜 목록은 **행** 기준인데 화면은 **그림** 기준이라 어긋날 수 있다.
+
+    최신 날짜의 그림만 사라지면(부분 실패·수동 삭제) 바로 전날에 멀쩡한 카드가
+    있는데도 첫 화면이 빈 채로 나간다(2026-08-11 재현).
+    """
+    import shutil
+
+    store, _ = prepare(monkeypatch, tmp_path)
+    _publish_set(store, tmp_path, "2026-08-08", "옛날 기사")
+    _publish_set(store, tmp_path, "2026-08-09", "최신 기사")
+    client = make_client()
+
+    assert "최신 기사 표지" in client.get("/card-news").get_data(as_text=True)
+
+    shutil.rmtree(tmp_path / "cardnews" / "2026-08-09")
+
+    html = client.get("/card-news").get_data(as_text=True)
+
+    assert "옛날 기사 표지" in html, "그림 있는 날짜로 안 내려갔다 — 주민이 빈 화면을 본다"
+
+
+def test_explicitly_requested_date_still_shows_its_own_empty_state(monkeypatch, tmp_path):
+    """날짜를 직접 고른 방문자에게 다른 날짜를 슬쩍 보여 주면 안 된다."""
+    import shutil
+
+    store, _ = prepare(monkeypatch, tmp_path)
+    _publish_set(store, tmp_path, "2026-08-08", "옛날 기사")
+    _publish_set(store, tmp_path, "2026-08-09", "최신 기사")
+    client = make_client()
+    shutil.rmtree(tmp_path / "cardnews" / "2026-08-09")
+
+    html = client.get("/card-news?date=2026-08-09").get_data(as_text=True)
+
+    assert "옛날 기사 표지" not in html, "요청하지 않은 날짜 카드를 보여 줬다"
+
+
+def test_shared_link_never_shows_a_different_day_after_unpublish(monkeypatch, tmp_path):
+    """카톡·밴드로 퍼진 링크가 엉뚱한 날 뉴스를 보여 주면 안 된다.
+
+    발행을 내리는 순간(예: 다시 그리기) 그 날짜가 목록에서 빠지고, 종전에는
+    `target not in published`라 조용히 최신 날짜로 갈아 끼웠다(2026-08-11 재현).
+    """
+    store, _ = prepare(monkeypatch, tmp_path)
+    _publish_set(store, tmp_path, "2026-08-08", "옛날 기사")
+    newest = _publish_set(store, tmp_path, "2026-08-09", "최신 기사")
+    client = make_client()
+
+    store.set_card_news_status(newest, "draft")
+
+    html = client.get("/card-news?date=2026-08-09").get_data(as_text=True)
+
+    assert "옛날 기사 표지" not in html, "공유 링크가 다른 날 카드를 보여 줬다"
+    assert "최신 기사 표지" not in html, "발행 내린 카드가 여전히 보인다"
+    # 기본 랜딩은 여전히 볼 것을 찾아 준다.
+    assert "옛날 기사 표지" in client.get("/card-news").get_data(as_text=True)
+
+
+def test_unknown_date_does_not_crash_the_public_page(monkeypatch, tmp_path):
+    """요청 날짜를 그대로 쓰게 됐으므로 아무 값이나 들어와도 죽으면 안 된다."""
+    store, _ = prepare(monkeypatch, tmp_path)
+    _publish_set(store, tmp_path, "2026-08-08", "옛날 기사")
+    client = make_client()
+
+    for value in ("zzz", "2026/08/09", "../backups", ""):
+        assert client.get(f"/card-news?date={value}").status_code == 200

@@ -1546,17 +1546,36 @@ def create_app() -> Flask:
     @app.get("/card-news")
     def card_news():
         published = store.card_news_published_dates(limit=30)
-        target = (request.args.get("date") or "").strip()
-        if target not in published:
+        requested = (request.args.get("date") or "").strip()
+
+        def sets_for(day: str) -> list[dict]:
+            return _card_news_view_sets(store, cardnews_dir, day, status="published", require_images=True)
+
+        if requested:
+            # **요청한 날짜를 그대로 지킨다.** 그날 카드가 없다고 다른 날로 슬쩍
+            # 갈아 끼우면, 카톡·밴드로 퍼진 링크가 엉뚱한 날 뉴스를 보여 준다 —
+            # 발행을 내리는 순간(예: 다시 그리기) 바로 그 일이 벌어진다(2026-08-11 재현).
+            # 비어 있으면 빈 상태를 솔직히 보여 주고, 날짜 목록으로 옮겨 가게 한다.
+            target = requested
+            sets = sets_for(target)
+        else:
+            # 날짜 목록은 **행** 기준인데 화면은 **그림** 기준이라 어긋날 수 있다.
+            # 최신 날짜의 그림만 사라지면(부분 실패·수동 삭제) 바로 전날에 멀쩡한
+            # 카드가 있는데도 첫 화면이 빈 채로 나간다 — 2026-08-11 재현.
+            # 그림이 있는 첫 날짜로 내려간다.
             target = published[0] if published else datetime.now(LOCAL_TZ).date().isoformat()
+            sets = []
+            for day in published:
+                sets = sets_for(day)
+                if sets:
+                    target = day
+                    break
         return render_template(
             "card_news.html",
             publish_date=target,
             date_label=format_datetime_label(target),
             available_dates=published,
-            sets=_card_news_view_sets(
-                store, cardnews_dir, target, status="published", require_images=True
-            ),
+            sets=sets,
         )
 
     @app.get("/card-news/<int:set_id>/<int:index>.png")
