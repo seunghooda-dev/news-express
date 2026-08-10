@@ -363,12 +363,16 @@ def test_editing_copy_rejects_empty_input(monkeypatch, tmp_path):
     build_one(client, draft_id)
     set_id = store.card_news_set_by_draft(draft_id)["id"]
 
-    client.post(
+    response = client.post(
         f"/card-news/{set_id}/copy",
         data={"cover": "   ", "heading-0": "", "body-0": ""},
         follow_redirects=True,
     )
 
+    # **조작이 실제로 처리기에 닿았는지** 먼저 본다. 404·로그인 리다이렉트·CSRF
+    # 어디서 막혀도 "덮이지 않았다"는 똑같이 참이라, 이 확인이 없으면 엉뚱한
+    # 이유로 통과한다(2026-08-11 같은 함정을 세 번 밟았다).
+    assert "표지 문구는" in response.get_data(as_text=True), "거절 사유가 안 나왔다 — 폼이 처리되지 않았다"
     assert store.card_news_set(set_id)["cover"] == "담양 무더위쉼터 전면 점검", "빈 입력으로 덮이면 안 된다"
 
 
@@ -599,8 +603,10 @@ def test_redraw_of_a_published_set_sends_it_back_to_review(monkeypatch, tmp_path
     store.set_card_news_status(set_id, "published")
     assert store.card_news_set(set_id)["status"] == "published"
 
-    client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
+    response = client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
 
+    # 다시 그리기가 안 돌아도 상태는 그대로 'draft'다 — 조작이 닿았는지 먼저 본다.
+    assert "다시 그렸습니다" in response.get_data(as_text=True), "다시 그리기가 수행되지 않았다"
     assert store.card_news_set(set_id)["status"] == "draft", "발행 상태로 남았다"
     assert store.card_news_set(set_id)["published_at"] == ""
 
@@ -614,8 +620,12 @@ def test_redraw_of_a_draft_set_stays_a_draft(monkeypatch, tmp_path):
 
     set_id = int(store.card_news_set_by_draft(draft_id)["id"])
 
-    client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
+    response = client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
 
+    # 다시 그리기가 안 돌아도 상태는 그대로 'draft'다 — **조작이 닿았는지 먼저 본다.**
+    # 이 확인이 없으면 404·로그인 리다이렉트·조기 반환 어디서 막혀도 통과한다
+    # (2026-08-11에 같은 함정을 세 번 밟았다).
+    assert "다시 그렸습니다" in response.get_data(as_text=True), "다시 그리기가 수행되지 않았다"
     assert store.card_news_set(set_id)["status"] == "draft"
 
 
