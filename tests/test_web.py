@@ -10631,3 +10631,78 @@ def test_robots_txt_neither_opens_a_db_scope_nor_logs_a_visit():
     assert "robots_txt" in AUTH_EXEMPT_ENDPOINTS
     assert "robots_txt" in CONNECTION_SCOPE_EXEMPT_ENDPOINTS, "요청마다 DB 연결을 연다"
     assert _should_record_visitor_access("robots_txt", "GET") is False, "봇 히트가 방문 통계를 오염시킨다"
+
+
+def test_operations_action_invalidates_the_diagnostics_cache(monkeypatch):
+    """캐시가 **이제 실제로 맞으므로** 무효화가 빠지면 조용히 낡은 화면이 나간다.
+
+    2026-08-11 이전에는 캐시 키에 로그 파일 서명이 들어 있어 한 번도 안 맞았다 —
+    그래서 무효화가 빠져도 아무 일이 없었고, 그것을 지키는 테스트도 없었다.
+    이제는 운영자가 조작하고 그 결과를 최대 20초간 못 보는 일이 생길 수 있다.
+    """
+    db_path = Path(f"data/.test_ops_cache_invalidate_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATIONS_REPORT_CACHE_SECONDS", "60")
+
+    from news_summary import web as web_module
+
+    web_module._clear_operations_report_cache()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        web_module,
+        "_deployment_version_report",
+        lambda: calls.append("x")
+        or {
+            "status_label": "최신 배포",
+            "status_level": "ok",
+            "running_commit": "abc1234",
+            "latest_commit": "abc1234",
+            "repo": "seunghooda-dev/news-express",
+            "branch": "codex/news-express",
+            "auto_deploy_label": "커밋 시 자동 배포",
+            "auto_deploy_trigger": "commit",
+            "auto_deploy_level": "ok",
+        },
+    )
+    monkeypatch.setattr(
+        web_module,
+        "_cloudflare_quick_tunnel_status",
+        lambda: {"running": False, "public_url": "", "log_path": "", "updated_at": None, "label": "터널 미감지"},
+    )
+
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+    # 운영 변경은 비밀번호 확인 뒤에만 열린다 — 안 열면 POST가 302로 튕겨
+    # **조작 자체가 일어나지 않고**, 무효화가 안 되는 것이 정상이 되어 버린다.
+    from datetime import datetime, timezone
+
+    from news_summary.auth import set_admin_password
+    from news_summary.storage import Store as _Store
+
+    admin_store = _Store(db_path)
+    admin_store.init_db()
+    set_admin_password(admin_store, "opspass1234")
+    # 비밀번호를 설정하면 인증이 켜진다 — 로그인하지 않으면 /operations가 튕긴다.
+    client.post("/login", data={"password": "opspass1234"})
+    with client.session_transaction() as session:
+        session[web_module.OPERATIONS_WRITE_UNLOCKED_KEY] = True
+        session[web_module.OPERATIONS_WRITE_UNLOCKED_AT_KEY] = datetime.now(timezone.utc).isoformat()
+
+    client.get("/operations")
+    client.get("/operations")
+    assert calls == ["x"], "캐시가 안 맞고 있다 — 이 테스트의 전제가 깨졌다"
+
+    # 운영 조작 하나를 실제로 수행한다 — 프록시 방문 기록 정리는 자동 수집
+    # 컨트롤러가 없어도 끝까지 도는 경로다(auto-collect는 테스트 앱에 컨트롤러가
+    # 없어 "준비되지 않았습니다" 분기로 빠져 조작 자체가 일어나지 않는다).
+    done = client.post("/operations/visitor-logs/proxy-cleanup", follow_redirects=False)
+    assert done.status_code == 302, "조작이 수행되지 않았다"
+    location = done.headers.get("Location", "")
+    assert "/admin/setup" not in location and "tab=backup" not in location, (
+        f"조작이 권한에서 튕겼다({location}) — 이 테스트는 무효화를 검증하지 못한다"
+    )
+    client.get("/operations")
+
+    assert len(calls) == 2, "조작 뒤에도 옛 리포트를 그대로 내줬다 — 무효화가 빠졌다"
