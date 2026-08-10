@@ -19,7 +19,10 @@ MAX_COVER_CHARS = 36
 MIN_HEADING_CHARS = 4
 MAX_HEADING_CHARS = 16
 MIN_CARD_CHARS = 20
-MAX_CARD_CHARS = 55
+# 상한은 배치가 실제로 못 견디는 선이어야 한다. 실측(2026-08-10): 요점이 2~3개면
+# 120자까지도 안 잘리고, 4개일 때 100자가 한계다. 55로 뒀더니 57자 문안이 통째로
+# 거절돼 세트가 안 나왔다 — 길이 취향은 프롬프트의 목표치(30~45자)가 잡는다.
+MAX_CARD_CHARS = 70
 MIN_CARDS = 2
 MAX_CARDS = 4
 MAX_TAGS = 5

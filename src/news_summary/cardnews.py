@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
@@ -155,6 +156,7 @@ def _usable_photos(photos: Sequence[bytes]) -> list[Image.Image]:
     return usable
 
 
+@lru_cache(maxsize=64)
 def _font(size: int, weight: int = 700) -> ImageFont.FreeTypeFont:
     font = ImageFont.truetype(str(FONT_PATH), size)
     try:
