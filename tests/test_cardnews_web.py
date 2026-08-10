@@ -410,16 +410,52 @@ def test_editing_copy_enforces_the_same_limits_as_ai(monkeypatch, tmp_path):
     assert store.card_news_set(set_id)["cards"] == original
 
 
-def test_editing_copy_pairs_by_index_not_position(monkeypatch, tmp_path):
-    """위치로 zip하면 중간 필드가 빠졌을 때 소제목이 다른 카드 본문에 붙는다."""
+def test_editing_copy_pairs_by_index_even_with_a_gap_in_the_middle():
+    """가운데 카드가 통째로 빠져도 짝이 안 밀린다 — 관측 계약을 고정한다.
+
+    **주의: 이 테스트는 위치 zip 구현도 통과한다**(2026-08-11 실증). 비대칭 입력
+    (본문만·소제목만)은 아래 테스트가 보이듯 검증에서 거절되므로, 받아들여지는
+    입력에서는 두 구현이 같은 결과를 낸다. 즉 **짝짓기를 안전하게 만드는 것은
+    인덱스 읽기가 아니라 거절이다.** 인덱스 읽기는 그 위의 이중 방어다.
+
+    종전 테스트는 거절되는 입력을 넣고 단언을 `if` 안에 두어 **한 번도 실행되지
+    않았다.** 그 자리를 이 둘로 나눴다.
+    """
+    from news_summary.web import _card_news_form_copy
+
+    form = {
+        "cover": "짝짓기 확인 표지",
+        "heading-0": "첫째 소제목",
+        "body-0": "첫째 카드 본문입니다. 규격에 맞게 충분히 씁니다.",
+        # 1번은 통째로 없다.
+        "heading-2": "셋째 소제목",
+        "body-2": "셋째 카드 본문입니다. 규격에 맞게 충분히 씁니다.",
+    }
+
+    cover, cards, problem = _card_news_form_copy(form, expected=3)
+
+    assert problem == ""
+    assert cover == "짝짓기 확인 표지"
+    assert cards == [
+        {"heading": "첫째 소제목", "body": "첫째 카드 본문입니다. 규격에 맞게 충분히 씁니다."},
+        {"heading": "셋째 소제목", "body": "셋째 카드 본문입니다. 규격에 맞게 충분히 씁니다."},
+    ], "가운데가 빠지면서 짝이 밀렸다"
+
+
+def test_editing_copy_rejects_a_body_without_its_heading_and_saves_nothing(monkeypatch, tmp_path):
+    """짝짓기가 안전한 이유는 **한쪽만 있는 입력을 거절**하기 때문이다.
+
+    거절할 때 절반만 저장되면 그게 곧 짝이 어긋난 카드다 — 저장이 아예
+    일어나지 않아야 한다.
+    """
     store, draft_id = prepare(monkeypatch, tmp_path)
     stub_generation(monkeypatch)
     client = make_client()
     build_one(client, draft_id)
     set_id = store.card_news_set_by_draft(draft_id)["id"]
+    before = store.card_news_set(set_id)["cards"]
 
-    # 0번 소제목이 통째로 빠진 상황 — 1번 소제목이 0번 본문에 붙으면 안 된다.
-    client.post(
+    response = client.post(
         f"/card-news/{set_id}/copy",
         data={
             "cover": "짝짓기 확인 표지",
@@ -430,10 +466,8 @@ def test_editing_copy_pairs_by_index_not_position(monkeypatch, tmp_path):
         follow_redirects=True,
     )
 
-    saved = json.loads(store.card_news_set(set_id)["cards"])
-    for slide in saved:
-        if slide["heading"] == "둘째 소제목":
-            assert slide["body"].startswith("둘째"), "소제목이 다른 카드 본문에 붙었다"
+    assert "소제목은" in response.get_data(as_text=True), "거절 사유가 화면에 안 뜬다"
+    assert store.card_news_set(set_id)["cards"] == before, "거절했는데 문안이 바뀌었다"
 
 
 def test_public_page_offers_share_link_and_download(monkeypatch, tmp_path):
