@@ -34,6 +34,10 @@ class CardNewsSet:
     publish_date: str
     copy: CardCopy
     image_paths: list[Path]
+    # 카드에 사진이 실렸는지. 첨부가 있는데 실리지 않았다면 문턱(해상도·배너·화소)에
+    # 걸린 것이고, 운영자는 그 사실을 알아야 다른 기사를 고르든 원문을 확인하든 한다.
+    photo_used: bool = False
+    photo_attachments: int = 0
 
 
 def build_set_for_draft(
@@ -77,7 +81,8 @@ def build_set_for_draft(
     )
 
     photos = _own_photos(store, release_id, downloader)
-    images = build_card_images(copy, photos)
+    outcome: dict[str, bool] = {}
+    images = build_card_images(copy, photos, on_photo=lambda used: outcome.__setitem__("photo", used))
 
     set_id = store.save_card_news_set(
         draft_id=draft_id,
@@ -91,8 +96,25 @@ def build_set_for_draft(
         copy_model=copy.model,
     )
     paths = _write_images(output_root, publish_date, set_id, images)
-    logger.info("card news set built set_id=%s draft_id=%s cards=%s", set_id, draft_id, len(images))
-    return CardNewsSet(set_id=set_id, draft_id=draft_id, publish_date=publish_date, copy=copy, image_paths=paths)
+    photo_used = bool(outcome.get("photo"))
+    attachments = sum(1 for asset in store.press_release_assets(release_id) if asset["is_image"])
+    logger.info(
+        "card news set built set_id=%s draft_id=%s cards=%s photo=%s attachments=%s",
+        set_id,
+        draft_id,
+        len(images),
+        photo_used,
+        attachments,
+    )
+    return CardNewsSet(
+        set_id=set_id,
+        draft_id=draft_id,
+        publish_date=publish_date,
+        copy=copy,
+        image_paths=paths,
+        photo_used=photo_used,
+        photo_attachments=attachments,
+    )
 
 
 def rebuild_images_from_copy(

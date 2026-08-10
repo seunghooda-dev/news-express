@@ -657,3 +657,59 @@ def test_card_render_slot_is_released_after_a_failure(monkeypatch, tmp_path):
 
     assert web_module._card_render_limit.acquire(blocking=False), "실패 뒤 자리가 잠긴 채 남았다"
     web_module._card_render_limit.release()
+
+
+def test_build_tells_the_operator_why_the_card_has_no_photo(monkeypatch, tmp_path):
+    """카드에 사진이 없는 것은 화면에서 보이지만 **이유는 안 보인다**.
+
+    첨부가 없어서인지, 못 받아서인지, 오늘 넣은 문턱(해상도·배너·화소)에 걸려서인지
+    구별이 안 되면 운영자가 손쓸 방법이 없다.
+    """
+    _, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    # 첨부는 있는데 문턱에 걸리는 크기로 돌려준다(폭 800 미만).
+    small = io.BytesIO()
+    Image.new("RGB", (400, 300), (90, 120, 150)).save(small, format="JPEG", quality=85)
+    monkeypatch.setattr("news_summary.web._download_card_photo", lambda asset: small.getvalue())
+    client = make_client()
+
+    html = _build_one_set(client, draft_id).get_data(as_text=True)
+
+    assert "첨부 사진 1장이 모두 쓰이지 못했습니다" in html
+
+
+def test_build_says_when_the_article_simply_had_no_attachment(monkeypatch, tmp_path):
+    """첨부가 아예 없는 것과 문턱에 걸린 것은 다른 이야기다."""
+    db_path = Path(f"data/.test_nophoto_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_CARDNEWS_DIR", str(tmp_path / "cardnews"))
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    store = Store(db_path)
+    store.init_db()
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="damyang-county",
+            source_name="담양군청 보도자료",
+            region="전남 담양",
+            title="첨부 없는 기사",
+            url=f"https://example.com/{uuid4().hex}",
+            content="본문입니다.",
+            published_at="2026-08-09",
+            assets=[],
+        )
+    )
+    draft_id = store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="첨부 없는 기사",
+            body="담양군은 현장을 점검했습니다.",
+            review_note="",
+            model="gemini-3.5-flash",
+        )
+    )
+    stub_generation(monkeypatch)
+    client = make_client()
+
+    html = _build_one_set(client, draft_id).get_data(as_text=True)
+
+    assert "원문에 사진 첨부가 없어" in html

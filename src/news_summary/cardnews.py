@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -118,7 +118,12 @@ class CardNewsError(RuntimeError):
     """합성을 시작할 수 없는 입력일 때. 잘라내지 않고 거절한다."""
 
 
-def build_card_images(copy: CardCopy, photos: Iterable[bytes] = ()) -> list[bytes]:
+def build_card_images(
+    copy: CardCopy,
+    photos: Iterable[bytes] = (),
+    *,
+    on_photo: Callable[[bool], None] | None = None,
+) -> list[bytes]:
     """기사 한 건을 **카드 한 장**으로 만든다.
 
     전에는 표지 1장 + 본문 N장으로 넘겨 봤는데, 넘기지 않으면 첫 장의 제목만 남고
@@ -137,6 +142,10 @@ def build_card_images(copy: CardCopy, photos: Iterable[bytes] = ()) -> list[byte
     # 카드가 한 장이니 사진도 한 장이면 된다. photos가 지연 생성이면 여기서
     # 멈추는 만큼 내려받기도 멈춘다.
     usable = _usable_photos(photos, limit=1)
+    if on_photo is not None:
+        # 결과를 밖으로 알린다. 반환형(목록)을 바꾸지 않으려고 콜백을 쓴다 —
+        # 부르는 쪽 전부와 테스트가 이미 목록을 받아 쓰고 있다.
+        on_photo(bool(usable))
     try:
         return [_encode(_render_single(copy, slides, usable[0] if usable else None))]
     finally:

@@ -1617,7 +1617,18 @@ def create_app() -> Flask:
             logger.warning("card news build failed draft_id=%s error=%s", draft_id, exc)
             flash(f"카드뉴스 생성 실패: {exc}")
             return redirect(url_for("card_news_manage", date=target))
-        flash(f"카드뉴스 {len(result.image_paths)}장을 만들었습니다. 확인 후 발행하세요.")
+        message = f"카드뉴스 {len(result.image_paths)}장을 만들었습니다. 확인 후 발행하세요."
+        # 사진이 왜 없는지 알려 준다. 카드에 사진이 없는 것은 화면에서 보이지만
+        # **이유는 안 보인다** — 첨부가 없어서인지, 못 받아서인지, 문턱에 걸려서인지.
+        if not result.photo_used:
+            if result.photo_attachments:
+                message += (
+                    f" 다만 첨부 사진 {result.photo_attachments}장이 모두 쓰이지 못했습니다"
+                    " (해상도 800px 미만·가로로 지나치게 납작함·화소 과다 중 하나이거나 내려받기 실패)."
+                )
+            else:
+                message += " 원문에 사진 첨부가 없어 글자만으로 만들었습니다."
+        flash(message)
         return redirect(url_for("card_news_manage", date=target))
 
     @app.post("/card-news/<int:set_id>/copy")
