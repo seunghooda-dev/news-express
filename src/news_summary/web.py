@@ -143,7 +143,9 @@ PUBLIC_READ_ENDPOINTS = {
 }
 # 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
 # open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
-CONNECTION_SCOPE_EXEMPT_ENDPOINTS = {"static", "healthz", "healthz_details"}
+# robots.txt는 고정 문자열만 돌려주는데 DB를 열 이유가 없다. 크롤러가 가장 자주
+# 치는 URL이고, 이 라우트를 만든 목적 자체가 크롤러발 DB 부하를 줄이는 것이다.
+CONNECTION_SCOPE_EXEMPT_ENDPOINTS = {"static", "healthz", "healthz_details", "robots_txt"}
 OPERATIONS_ACCESS_ENDPOINTS = {
     "operations",
     "ops_logs",
@@ -1621,13 +1623,14 @@ def create_app() -> Flask:
         # 사진이 왜 없는지 알려 준다. 카드에 사진이 없는 것은 화면에서 보이지만
         # **이유는 안 보인다** — 첨부가 없어서인지, 못 받아서인지, 문턱에 걸려서인지.
         if not result.photo_used:
-            if result.photo_attachments:
+            if result.photo_attempts:
                 message += (
-                    f" 다만 첨부 사진 {result.photo_attachments}장이 모두 쓰이지 못했습니다"
+                    f" 다만 내려받아 본 사진 {result.photo_attempts}장이 모두 쓰이지 못했습니다"
                     " (해상도 800px 미만·가로로 지나치게 납작함·화소 과다 중 하나이거나 내려받기 실패)."
                 )
             else:
-                message += " 원문에 사진 첨부가 없어 글자만으로 만들었습니다."
+                # 첨부가 아예 없는 경우와, 있지만 전부 로고·배너로 걸러진 경우가 여기 온다.
+                message += " 쓸 수 있는 사진 첨부가 없어(없거나 로고·배너로 판단) 글자만으로 만들었습니다."
         flash(message)
         return redirect(url_for("card_news_manage", date=target))
 
@@ -3086,6 +3089,13 @@ def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, by
                     image.format,
                 )
                 return content_type, content
+            # **팔레트·흑백은 줄이기 전에 모드를 올린다.** Pillow의 resize는 모드가
+            # "P"나 "1"이면 요청한 필터를 무시하고 NEAREST로 바꿔치기한다 — 실측
+            # (2026-08-11): 사선 줄무늬 PNG-8을 줄였더니 고유색이 81 → **2**로 떨어져
+            # 계단현상이 그대로 남았다. 지자체 공고 스캔이 이 부류다. 화소 가드 뒤라
+            # 이 사본은 16MP로 묶여 있고, 옛 경로(캔버스+RGBA+붙이기 3벌)보다 싸다.
+            if image.mode in {"P", "1"}:
+                image = image.convert("RGBA" if has_alpha else "RGB")
             # **줄인 뒤에 알파를 합성한다.** 전체 해상도에서 합성하면 캔버스·RGBA
             # 사본·붙이기로 원본 3벌이 동시에 살아 있게 된다.
             image.thumbnail((max_edge, max_edge), Image.LANCZOS)
@@ -6273,7 +6283,17 @@ def _should_record_visitor_access(endpoint: str, method: str) -> bool:
         return False
     # preview_press_release_asset: 페이지가 썸네일을 자동 로드할 때마다 불리는 부수 요청이라
     # 접속 이력에 넣으면 한 번의 방문이 수십 건으로 잡힌다. 다운로드는 의도적 행동이라 기록 유지.
-    if endpoint in {"static", "favicon", "healthz", "healthz_details", "recrawl_status", "preview_press_release_asset"}:
+    # robots_txt: 봇이 실제 방문 전에 먼저 치는 요청이라, 기록하면 방문자 통계가
+    # 봇 히트로 오염되고 히트마다 INSERT가 하나씩 생긴다.
+    if endpoint in {
+        "static",
+        "favicon",
+        "healthz",
+        "healthz_details",
+        "recrawl_status",
+        "preview_press_release_asset",
+        "robots_txt",
+    }:
         return False
     if request.path.startswith("/static/"):
         return False

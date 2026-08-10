@@ -205,3 +205,28 @@ def test_recent_source_run_statuses_keeps_consecutive_failure_detection():
 
     assert counts.get("damyang") == 4, "최근 연속 실패를 놓쳤다"
     assert "gangjin" not in counts, "성공으로 끊긴 소스를 연속 실패로 셌다"
+
+
+def test_recent_source_run_statuses_keeps_enough_history_to_rank_outages():
+    """연속 실패 횟수는 판정(문턱 3)뿐 아니라 **화면 문구와 복구 우선순위**에도 쓰인다.
+
+    상한이 낮으면 3일 죽은 소스와 10시간 죽은 소스가 같은 값으로 붙어, 27곳 중
+    어디를 먼저 고칠지가 흐려진다(2026-08-11 지적). 매시 수집이므로 기본값 50은
+    이틀치다.
+    """
+    from news_summary.web import _consecutive_failure_counts
+
+    db_path = Path(f"data/.test_recent_runs_depth_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    for index in range(30):
+        store.record_source_collection_status("damyang", "담양군청", "failed", f"실패 {index}")
+    for index in range(12):
+        store.record_source_collection_status("gangjin", "강진군청", "failed", f"실패 {index}")
+
+    counts = _consecutive_failure_counts(store.recent_source_run_statuses())
+
+    assert counts["damyang"] == 30, f"오래 죽은 소스가 {counts['damyang']}회로 잘렸다"
+    assert counts["gangjin"] == 12
+    assert counts["damyang"] > counts["gangjin"], "더 오래 죽은 소스를 구분하지 못한다"

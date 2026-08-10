@@ -468,3 +468,69 @@ def test_tags_survive_junk_without_printing_python_objects(tmp_path):
     decoded = decode_cards(store.card_news_set(set_id))
 
     assert decoded.tags == ["담양", "2026"], f"태그에 파이썬 객체가 샜다: {decoded.tags}"
+
+
+def test_bad_date_does_not_touch_an_existing_published_set(tmp_path):
+    """검증이 파일 쓰기 시점에 있으면 **이미 늦다.**
+
+    `save_card_news_set`은 draft_id 기준 UPSERT라, 잘못된 날짜로 다시 만들면
+    발행 중이던 행이 먼저 덮이고(publish_date가 바뀌고 status가 draft로 내려가고
+    published_at이 비워진 뒤) 그다음에 실패한다. 롤백이 없다(2026-08-11 재현).
+    """
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+    out = tmp_path / "cardnews"
+    result = build_set_for_draft(
+        store, draft_id, "key", out, publish_date="2026-08-09",
+        downloader=lambda asset: photo_bytes(), copy_builder=fake_copy_builder,
+    )
+    store.set_card_news_status(result.set_id, "published")
+    before = dict(store.card_news_set(result.set_id))
+
+    ai_calls = {"count": 0}
+
+    def counting_builder(request, api_key):
+        ai_calls["count"] += 1
+        return fake_copy_builder(request, api_key)
+
+    with pytest.raises(CardNewsServiceError, match="날짜 형식"):
+        build_set_for_draft(
+            store, draft_id, "key", out, publish_date="2026/08/09",
+            downloader=lambda asset: photo_bytes(), copy_builder=counting_builder,
+        )
+
+    after = dict(store.card_news_set(result.set_id))
+    assert after["publish_date"] == before["publish_date"], "발행 세트의 날짜가 덮였다"
+    assert after["status"] == "published", "발행이 취소됐다"
+    assert after["published_at"] == before["published_at"]
+    assert ai_calls["count"] == 0, "거절할 입력인데 AI를 부르고 한도를 깎았다"
+
+
+def test_photo_attempts_counts_downloads_not_attachments(tmp_path):
+    """로고·배너는 시도 전에 걸러진다 — 첨부 수를 쓰면 안내가 거짓이 된다."""
+    store = make_store(tmp_path)
+    release_id, draft_id = seed(
+        store,
+        asset_urls=(
+            "https://example.com/logo.png",
+            "https://example.com/photo1.jpg",
+            "https://example.com/photo2.jpg",
+        ),
+    )
+    # 첫 첨부를 장식 이미지로 판정되게 만든다.
+    from news_summary import cardnews_service
+
+    noisy = {"https://example.com/logo.png"}
+    original = cardnews_service.is_display_noise_image_asset
+    cardnews_service.is_display_noise_image_asset = lambda asset: str(asset["url"]) in noisy
+    try:
+        result = build_set_for_draft(
+            store, draft_id, "key", tmp_path / "cardnews", publish_date="2026-08-09",
+            # 전부 실패시켜 사진이 안 실리게 한다 — 시도 수만 본다.
+            downloader=lambda asset: b"", copy_builder=fake_copy_builder,
+        )
+    finally:
+        cardnews_service.is_display_noise_image_asset = original
+
+    assert result.photo_used is False
+    assert result.photo_attempts == 2, f"첨부 3장 중 로고를 뺀 2장이어야 하는데 {result.photo_attempts}"

@@ -2078,11 +2078,17 @@ class Store:
             cur = conn.execute("DELETE FROM card_news_sets WHERE publish_date = ?", (publish_date,))
             return int(cur.rowcount or 0)
 
-    def recent_source_run_statuses(self, per_source: int = 10) -> list:
+    def recent_source_run_statuses(self, per_source: int = 50) -> list:
         """소스별 **최근 몇 건만** 돌려준다 — 연속 실패 판정에 필요한 전부다.
 
         쓰는 쪽(`_consecutive_failure_counts`)은 소스별로 첫 성공에서 멈추고
-        문턱이 3회다. 그런데 종전에는 네 곳이 각자 `ORDER BY source_id, id DESC`로
+        판정 문턱이 3회다. 다만 그 **횟수 자체가 화면 문구("연속 실패 N회")와
+        복구 우선순위 정렬에도 쓰인다** — 상한이 낮으면 3일 죽은 곳과 10시간 죽은
+        곳이 같은 값으로 붙어 어디를 먼저 고칠지가 흐려진다(2026-08-11 지적).
+        매시 수집이므로 50이면 이틀치다. 27개 × 50 = 1350행이라 전송량은 여전히
+        무시할 만하다.
+
+        그런데 종전에는 네 곳이 각자 `ORDER BY source_id, id DESC`로
         **전량**을 가져왔다(WHERE도 LIMIT도 없이). 이 테이블은 활성 27개 × 매시라
         하루 650건 넘게 늘고 **지우는 코드가 어디에도 없어** 계속 자란다 —
         그중 하나는 공개 첫 화면이 매 요청마다 부른다. 무료 DB 전송량이 이미

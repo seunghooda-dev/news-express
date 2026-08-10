@@ -34,10 +34,12 @@ class CardNewsSet:
     publish_date: str
     copy: CardCopy
     image_paths: list[Path]
-    # 카드에 사진이 실렸는지. 첨부가 있는데 실리지 않았다면 문턱(해상도·배너·화소)에
-    # 걸린 것이고, 운영자는 그 사실을 알아야 다른 기사를 고르든 원문을 확인하든 한다.
+    # 카드에 사진이 실렸는지. 실리지 않았다면 문턱(해상도·배너·화소)에 걸린 것이고,
+    # 운영자는 그 사실을 알아야 다른 기사를 고르든 원문을 확인하든 한다.
     photo_used: bool = False
-    photo_attachments: int = 0
+    # **실제로 내려받아 본 수**다. 첨부 전체가 아니다 — 로고·배너는 시도 전에 걸러지고
+    # 시도는 MAX_PHOTO_ATTEMPTS에서 멈추므로, 첨부 수를 쓰면 안내가 거짓이 된다.
+    photo_attempts: int = 0
 
 
 def build_set_for_draft(
@@ -65,7 +67,12 @@ def build_set_for_draft(
         raise CardNewsServiceError(f"초안 #{draft_id}의 원문을 찾을 수 없습니다.")
 
     source_label = str(release["source_name"] or "")
-    publish_date = publish_date or datetime.now().date().isoformat()
+    # 날짜 검증을 **맨 앞에서** 한다. 파일을 쓸 때 처음 던지면 이미 늦다 —
+    # `save_card_news_set`은 draft_id 기준 UPSERT라, 잘못된 날짜로 다시 만들면
+    # **발행 중이던 세트의 행이 먼저 덮이고**(publish_date가 바뀌고 status가 draft로
+    # 내려가고 published_at이 비워진 뒤) 그다음에 실패한다. 이미지는 옛 경로에
+    # 고아로 남고 롤백이 없다(2026-08-11 재현). 겸해서 Gemini 호출 전이라 한도도 안 깎는다.
+    publish_date = _safe_date_segment(publish_date or datetime.now().date().isoformat())
     # 기본 인자로 두면 정의 시점에 묶여 교체가 안 된다 — 호출 때 고른다.
     copy_builder = copy_builder or build_card_copy
 
@@ -80,8 +87,8 @@ def build_set_for_draft(
         api_key,
     )
 
-    photos = _own_photos(store, release_id, downloader)
-    outcome: dict[str, bool] = {}
+    outcome: dict[str, object] = {}
+    photos = _own_photos(store, release_id, downloader, tally=outcome)
     images = build_card_images(copy, photos, on_photo=lambda used: outcome.__setitem__("photo", used))
 
     set_id = store.save_card_news_set(
@@ -97,7 +104,7 @@ def build_set_for_draft(
     )
     paths = _write_images(output_root, publish_date, set_id, images)
     photo_used = bool(outcome.get("photo"))
-    attachments = sum(1 for asset in store.press_release_assets(release_id) if asset["is_image"])
+    attachments = int(outcome.get("attempts") or 0)
     logger.info(
         "card news set built set_id=%s draft_id=%s cards=%s photo=%s attachments=%s",
         set_id,
@@ -113,7 +120,7 @@ def build_set_for_draft(
         copy=copy,
         image_paths=paths,
         photo_used=photo_used,
-        photo_attachments=attachments,
+        photo_attempts=attachments,
     )
 
 
@@ -138,7 +145,7 @@ def rebuild_images_from_copy(
     return paths
 
 
-def _own_photos(store: Store, release_id: int, downloader) -> Iterator[bytes]:
+def _own_photos(store: Store, release_id: int, downloader, tally: dict | None = None) -> Iterator[bytes]:
     """**그 원문에 붙은 첨부만** 내려받는다. 다른 기사 사진이 섞일 여지를 두지 않는다.
 
     downloader는 자산 행을 통째로 받는다 — 요청 헤더(리퍼러 등)를 만들려면 URL만으로
@@ -158,6 +165,10 @@ def _own_photos(store: Store, release_id: int, downloader) -> Iterator[bytes]:
         if not asset["is_image"] or is_display_noise_image_asset(asset):
             continue
         attempts += 1
+        if tally is not None:
+            # 실제로 **내려받아 본** 수를 센다. 첨부 전체를 세면 로고 8장 + 사진
+            # 2장인 기사에서 "10장이 모두 안 쓰였다"고 말하게 된다(2026-08-11 지적).
+            tally["attempts"] = attempts
         try:
             content = downloader(asset)
         except Exception as exc:  # noqa: BLE001 - 첨부 하나가 실패해도 세트는 나와야 한다.

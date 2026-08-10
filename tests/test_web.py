@@ -10577,3 +10577,57 @@ def test_asset_download_slot_is_released_when_the_source_fails(monkeypatch):
     assert response.status_code == 302
     assert web_module._asset_fetch_slot.acquire(blocking=False), "실패 뒤 자리가 잠긴 채 남았다"
     web_module._asset_fetch_slot.release()
+
+
+def test_preview_downscales_palette_images_smoothly(monkeypatch):
+    """Pillow의 resize는 모드가 "P"나 "1"이면 요청 필터를 무시하고 NEAREST를 쓴다.
+
+    축소를 알파 합성 앞으로 옮기면서 팔레트 이미지가 그 경로에 걸렸다 — 실측
+    (2026-08-11): 사선 줄무늬 PNG-8의 고유색이 81 → **2**로 떨어졌다. 지자체
+    공고 스캔이 이 부류라 계단현상이 그대로 남는다.
+    """
+    import random
+
+    from PIL import Image, ImageDraw
+
+    from news_summary.web import _downscale_preview_image
+
+    random.seed(7)
+    canvas = Image.new("RGB", (3000, 3000), (250, 250, 248))
+    draw = ImageDraw.Draw(canvas)
+    for offset in range(0, 3000, 5):
+        draw.line([(0, offset), (3000, offset + 40)], fill=(30, 70, 150), width=2)
+    for _ in range(2000):
+        x, y = random.randrange(3000), random.randrange(3000)
+        draw.rectangle([x, y, x + random.randrange(4, 30), y + random.randrange(4, 14)], fill=(40, 40, 40))
+    palette = canvas.convert("P", palette=Image.ADAPTIVE, colors=64)
+    canvas.close()
+    buffer = io.BytesIO()
+    palette.save(buffer, format="PNG", optimize=True)
+    palette.close()
+
+    content_type, content = _downscale_preview_image("image/png", buffer.getvalue())
+
+    assert content_type == "image/jpeg", "축소가 일어나지 않았다 — 표본이 잘못됐다"
+    result = Image.open(io.BytesIO(content)).convert("RGB")
+    colors = len(result.getcolors(maxcolors=1_000_000) or [])
+    result.close()
+    # NEAREST면 원본 팔레트 수(64) 언저리에 머문다. 부드럽게 줄면 중간색이 쏟아진다.
+    assert colors > 1000, f"팔레트 이미지가 NEAREST로 줄었다(고유색 {colors})"
+
+
+def test_robots_txt_neither_opens_a_db_scope_nor_logs_a_visit():
+    """크롤러가 가장 자주 치는 URL이고, 이 라우트의 목적이 DB 부하 감축이다.
+
+    면제 집합이 셋인데 하나에만 넣어 두면 나머지 둘에서 조용히 비용이 난다 —
+    요청마다 연결 스코프를 열고 `visitor_access_logs`에 INSERT가 하나씩 생긴다.
+    """
+    from news_summary.web import (
+        AUTH_EXEMPT_ENDPOINTS,
+        CONNECTION_SCOPE_EXEMPT_ENDPOINTS,
+        _should_record_visitor_access,
+    )
+
+    assert "robots_txt" in AUTH_EXEMPT_ENDPOINTS
+    assert "robots_txt" in CONNECTION_SCOPE_EXEMPT_ENDPOINTS, "요청마다 DB 연결을 연다"
+    assert _should_record_visitor_access("robots_txt", "GET") is False, "봇 히트가 방문 통계를 오염시킨다"

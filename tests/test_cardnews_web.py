@@ -675,7 +675,7 @@ def test_build_tells_the_operator_why_the_card_has_no_photo(monkeypatch, tmp_pat
 
     html = _build_one_set(client, draft_id).get_data(as_text=True)
 
-    assert "첨부 사진 1장이 모두 쓰이지 못했습니다" in html
+    assert "내려받아 본 사진 1장이 모두 쓰이지 못했습니다" in html
 
 
 def test_build_says_when_the_article_simply_had_no_attachment(monkeypatch, tmp_path):
@@ -712,4 +712,4 @@ def test_build_says_when_the_article_simply_had_no_attachment(monkeypatch, tmp_p
 
     html = _build_one_set(client, draft_id).get_data(as_text=True)
 
-    assert "원문에 사진 첨부가 없어" in html
+    assert "쓸 수 있는 사진 첨부가 없어" in html
