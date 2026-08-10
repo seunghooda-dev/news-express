@@ -378,3 +378,48 @@ def test_prune_without_a_store_leaves_rows_alone(tmp_path):
 
     assert prune_old_dates(root, keep_days=0) == 0
     assert store.card_news_set(set_id) is not None
+
+
+def test_set_directory_rejects_a_date_that_escapes_the_card_root(tmp_path):
+    """이 값이 곧 경로 조각이고, 그 경로에 shutil.rmtree가 걸린다.
+
+    2026-08-11 재현: `../backups`가 카드뉴스 루트를 벗어났다. 로그인·CSRF 뒤라
+    공개 취약점은 아니지만, 더 잦을 형태는 오타다 — `2026/08/09`는 3단 중첩
+    폴더를 만들고 prune_old_dates가 그것을 하루로 세지 못해 영영 안 지운다.
+    """
+    root = tmp_path / "cardnews"
+
+    assert set_directory(root, "2026-08-09", 7) == root / "2026-08-09" / "7"
+
+    for bad in ("../backups", "..\backups", "2026/08/09", "", "   ", "2026-8-9"):
+        with pytest.raises(CardNewsServiceError, match="날짜 형식"):
+            set_directory(root, bad, 7)
+
+
+def test_build_refuses_a_malformed_publish_date(tmp_path):
+    """합성 진입점에서도 막혀야 한다 — 폴더를 만들기 전에 걸린다."""
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+
+    with pytest.raises(CardNewsServiceError, match="날짜 형식"):
+        build_set_for_draft(
+            store,
+            draft_id,
+            "key",
+            tmp_path / "cardnews",
+            publish_date="../backups",
+            downloader=lambda asset: photo_bytes(),
+            copy_builder=fake_copy_builder,
+        )
+
+
+def test_reading_a_set_with_a_broken_date_does_not_crash(tmp_path):
+    """검증이 생기기 전에 저장된 행이 있을 수 있다 — 읽기는 관대해야 한다.
+
+    쓰기는 그대로 거절하므로 새로 이상한 폴더가 생기지는 않는다. 그런데 읽기까지
+    막으면 그 행 하나 때문에 관리 화면이 통째로 500이 된다.
+    """
+    root = tmp_path / "cardnews"
+
+    assert load_set_images(root, "2026/08/09", 7) == []
+    delete_set_images(root, "../backups", 7)  # 예외 없이 아무것도 안 한다

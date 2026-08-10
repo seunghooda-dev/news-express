@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -145,7 +146,25 @@ def _own_photos(store: Store, release_id: int, downloader) -> Iterator[bytes]:
 
 
 def set_directory(output_root: Path, publish_date: str, set_id: int) -> Path:
-    return Path(output_root) / publish_date / str(set_id)
+    """세트 폴더 경로. **날짜를 먼저 검증한다** — 이 값이 곧 경로 조각이 된다.
+
+    `_write_images`가 이 경로에 `shutil.rmtree`를 부르므로 밖으로 새면 남의 폴더를
+    지운다(2026-08-11 재현: `../backups`가 카드뉴스 루트를 벗어났다). 로그인과
+    CSRF 뒤라 공개 취약점은 아니지만, 더 잦을 형태는 오타다 — `2026/08/09`라고
+    치면 3단 중첩 폴더가 생기고 `prune_old_dates`는 그것을 하루로 세지 못해
+    **영영 안 지운다.** 형식이 곧 안전이라 정규식 하나로 닫는다.
+    """
+    return Path(output_root) / _safe_date_segment(publish_date) / str(set_id)
+
+
+_DATE_SEGMENT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _safe_date_segment(publish_date: str) -> str:
+    value = (publish_date or "").strip()
+    if not _DATE_SEGMENT.match(value):
+        raise CardNewsServiceError(f"카드뉴스 날짜 형식이 잘못됐습니다: {publish_date!r}")
+    return value
 
 
 def _write_images(output_root: Path, publish_date: str, set_id: int, images: list[bytes]) -> list[Path]:
@@ -162,7 +181,14 @@ def _write_images(output_root: Path, publish_date: str, set_id: int, images: lis
 
 
 def load_set_images(output_root: Path, publish_date: str, set_id: int) -> list[Path]:
-    directory = set_directory(output_root, publish_date, set_id)
+    # **읽기는 관대하다.** 검증이 생기기 전에 저장된 행에 이상한 날짜가 들어 있으면
+    # 관리 화면이 통째로 500이 된다 — 그림이 없는 것으로 보고 넘어간다(쓰기 쪽은
+    # 그대로 거절하므로 새로 이상한 폴더가 생기지는 않는다).
+    try:
+        directory = set_directory(output_root, publish_date, set_id)
+    except CardNewsServiceError:
+        logger.warning("card news set has an unusable publish_date set_id=%s value=%r", set_id, publish_date)
+        return []
     if not directory.is_dir():
         return []
     # 숫자가 아닌 png가 섞이면 int()가 터져 화면이 500이 된다 — 그런 파일은 건너뛴다.
@@ -171,7 +197,13 @@ def load_set_images(output_root: Path, publish_date: str, set_id: int) -> list[P
 
 
 def delete_set_images(output_root: Path, publish_date: str, set_id: int) -> None:
-    shutil.rmtree(set_directory(output_root, publish_date, set_id), ignore_errors=True)
+    try:
+        directory = set_directory(output_root, publish_date, set_id)
+    except CardNewsServiceError:
+        # 지울 폴더를 특정할 수 없다 — 엉뚱한 곳을 지우느니 아무것도 안 한다.
+        logger.warning("card news delete skipped for unusable publish_date value=%r", publish_date)
+        return
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def prune_old_dates(output_root: Path, keep_days: int, store: Store | None = None) -> int:
