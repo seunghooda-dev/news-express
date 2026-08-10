@@ -27,7 +27,14 @@
       <span class="badge {% if item.status == 'published' %}badge-ok{% else %}badge-neutral{% endif %}">
         {% if item.status == 'published' %}발행됨{% else %}검수 대기{% endif %}
       </span>
+      {# 지금 배치는 기사 한 건이 카드 한 장이다. 여러 장이면 그 전에 만든 세트다. #}
+      {% if item.image_indexes|length > 1 %}
+        <span class="badge badge-warning">옛 형식 {{ item.image_indexes|length }}장</span>
+      {% endif %}
     </h3>
+    {% if item.image_indexes|length > 1 %}
+      <p class="empty-note">한 장 카드로 바뀌기 전에 만든 세트입니다. 아래 <strong>다시 그리기</strong>를 누르면 문안 그대로 한 장으로 다시 그립니다.</p>
+    {% endif %}
     <div class="cardnews-strip">
       {% for index in item.image_indexes %}
         <a class="cardnews-slide" href="{{ url_for('card_news_image', set_id=item.id, index=index) }}" target="_blank" rel="noopener">
@@ -60,6 +67,11 @@
       <a href="{{ url_for('draft_detail', draft_id=item.draft_id) }}">원문·초안 대조</a>
     </p>
     <div class="cardnews-controls">
+      {# 문안은 그대로 두고 그림만 새 배치로. AI를 안 부르니 글자가 안 덮이고 한도도 안 깎인다. #}
+      <form method="post" action="{{ url_for('card_news_redraw', set_id=item.id) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">다시 그리기</button>
+      </form>
       <form method="post" action="{{ url_for('card_news_build') }}">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="draft_id" value="{{ item.draft_id }}">

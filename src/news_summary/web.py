@@ -1561,6 +1561,27 @@ def create_app() -> Flask:
         flash("문안을 고치고 카드를 다시 그렸습니다.")
         return redirect(url_for("card_news_manage", date=target))
 
+    @app.post("/card-news/<int:set_id>/redraw")
+    def card_news_redraw(set_id: int):
+        """문안은 그대로 두고 그림만 다시 그린다.
+
+        배치가 바뀌면 이미 만든 세트는 옛 모습으로 남는다(2026-08-10: 한 장
+        카드로 바꿨는데 그 전에 만든 세트는 4장 그대로였다). AI를 부르지 않아
+        글자가 안 덮이고 한도도 안 깎인다.
+        """
+        row = store.card_news_set(set_id)
+        if not row:
+            abort(404)
+        target = str(row["publish_date"])
+        try:
+            paths = rebuild_images_from_copy(store, set_id, cardnews_dir, downloader=_download_card_photo)
+        except Exception as exc:  # noqa: BLE001 - 실패해도 옛 그림은 남아 있다.
+            logger.warning("card news redraw failed set_id=%s error=%s", set_id, exc)
+            flash(f"카드를 다시 그리지 못했습니다: {exc}")
+            return redirect(url_for("card_news_manage", date=target))
+        flash(f"지금 배치로 다시 그렸습니다. 카드 {len(paths)}장입니다.")
+        return redirect(url_for("card_news_manage", date=target))
+
     @app.post("/card-news/<int:set_id>/publish")
     def card_news_publish(set_id: int):
         row = store.card_news_set(set_id)
@@ -6788,7 +6809,12 @@ def _draft_rows_for_listing(
             f"""
             SELECT ad.*, pr.source_id, pr.source_name, pr.region, pr.url, {original_content_select},
                    pr.title AS original_title, pr.published_at,
-                   pr.validation_status, pr.validation_note
+                   pr.validation_status, pr.validation_note,
+                   -- 카드뉴스 후보 점수가 이 값을 본다. 빠져 있던 동안 card_picks의
+                   -- "사진 있음 +2"가 한 번도 붙지 않았다(2026-08-10 적발) — 테스트는
+                   -- 행을 직접 만들어 넣어서 통과하고 있었다.
+                   (SELECT COUNT(*) FROM press_release_assets pra
+                     WHERE pra.press_release_id = pr.id AND pra.is_image = 1) AS asset_count
             FROM article_drafts ad
             JOIN press_releases pr ON pr.id = ad.press_release_id
             {where_sql}

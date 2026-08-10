@@ -115,6 +115,69 @@ def test_public_page_offers_manage_link_only_to_logged_in_operator(monkeypatch, 
     assert "카드 만들기" in logged_in
 
 
+def test_candidate_score_sees_photos_through_the_real_query(monkeypatch, tmp_path):
+    """후보 점수는 랭킹 SQL이 돌려준 행만 본다.
+
+    2026-08-10 적발: 그 SQL에 asset_count가 없어 card_picks의 "사진 있음 +2"가
+    프로덕션에서 한 번도 붙지 않았다. test_card_picks는 행을 직접 만들어 넣어
+    통과하고 있었으므로 드리프트를 못 잡았다 — 실제 질의를 태워서 확인한다.
+    """
+    from news_summary.card_picks import rank_candidates
+    from news_summary.web import _draft_rows_for_listing
+
+    store, _ = prepare(monkeypatch, tmp_path)
+
+    rows = _draft_rows_for_listing(store, limit=10)
+
+    assert rows, "초안이 조회되지 않았다"
+    assert "asset_count" in rows[0].keys(), "랭킹 질의에 asset_count가 없다 — 사진 점수가 죽는다"
+    assert rows[0]["asset_count"] == 1
+
+    picks = rank_candidates(rows)
+    assert any("사진 있음" in reason for reason in picks[0].reasons), "점수에 사진이 반영되지 않았다"
+
+
+def test_redraw_applies_current_layout_without_calling_ai(monkeypatch, tmp_path):
+    """배치를 바꾸면 이미 만든 세트는 옛 모습 그대로 남는다.
+
+    2026-08-10에 한 장 카드로 바꿨는데, 그 전에 만들어 발행한 세트는 4장인 채로
+    주민에게 보이고 있었다. 문안은 건드리지 않고 그림만 지금 배치로 다시 그린다 —
+    AI를 부르면 손질한 글자가 덮이고 한도도 깎인다.
+    """
+    from news_summary.cardnews_service import load_set_images, set_directory
+
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    client.post(
+        "/card-news/build",
+        data={"draft_id": str(draft_id), "publish_date": "2026-08-09"},
+        follow_redirects=True,
+    )
+    row = store.card_news_set_by_draft(draft_id)
+    set_id = int(row["id"])
+    original_cards = json.loads(row["cards"])
+
+    # 옛 형식(여러 장)으로 남아 있는 상태를 만든다.
+    directory = set_directory(tmp_path / "cardnews", "2026-08-09", set_id)
+    for extra in ("2.png", "3.png", "4.png"):
+        (directory / extra).write_bytes((directory / "1.png").read_bytes())
+    assert len(load_set_images(tmp_path / "cardnews", "2026-08-09", set_id)) == 4
+
+    calls = {"ai": 0}
+    monkeypatch.setattr(
+        "news_summary.cardnews_service.build_card_copy",
+        lambda *args, **kwargs: calls.__setitem__("ai", calls["ai"] + 1),
+    )
+
+    response = client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
+
+    assert response.status_code == 200
+    assert len(load_set_images(tmp_path / "cardnews", "2026-08-09", set_id)) == 1, "옛 이미지가 남아 있다"
+    assert json.loads(store.card_news_set(set_id)["cards"]) == original_cards, "문안이 바뀌었다"
+    assert calls["ai"] == 0, "다시 그리기가 AI를 불렀다"
+
+
 def test_build_publish_and_public_listing(monkeypatch, tmp_path):
     store, draft_id = prepare(monkeypatch, tmp_path)
     stub_generation(monkeypatch)
