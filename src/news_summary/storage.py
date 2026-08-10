@@ -2072,6 +2072,12 @@ class Store:
         with self.connect() as conn:
             conn.execute("DELETE FROM card_news_sets WHERE id = ?", (set_id,))
 
+    def delete_card_news_sets_for_date(self, publish_date: str) -> int:
+        """그 날짜 세트를 통째로 지운다 — 보관 정리가 그림과 행을 함께 걷게 한다."""
+        with self.connect() as conn:
+            cur = conn.execute("DELETE FROM card_news_sets WHERE publish_date = ?", (publish_date,))
+            return int(cur.rowcount or 0)
+
     def prune_visitor_access_logs(self, cutoff_iso: str) -> int:
         with self.connect() as conn:
             row = conn.execute(

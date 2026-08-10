@@ -174,8 +174,14 @@ def delete_set_images(output_root: Path, publish_date: str, set_id: int) -> None
     shutil.rmtree(set_directory(output_root, publish_date, set_id), ignore_errors=True)
 
 
-def prune_old_dates(output_root: Path, keep_days: int) -> int:
-    """오래된 날짜 폴더를 지운다. 하루 5세트 × 5장 × 약 300KB = 약 7.5MB/일."""
+def prune_old_dates(output_root: Path, keep_days: int, store: Store | None = None) -> int:
+    """오래된 날짜 폴더를 지운다. 한 장 카드 실측으로 하루 약 0.6MB다.
+
+    **`store`를 주면 그 날짜의 세트 행도 함께 지운다.** 그림만 지우고 행을 남기면
+    주민 화면이 제목만 있고 카드가 없는 상태로 렌더된다 — `card_news_published_dates`
+    가 그 날짜를 계속 돌려주고, `load_set_images`는 조용히 빈 목록을 주며,
+    템플릿의 빈 상태 안내는 세트가 0개일 때만 뜨기 때문이다(2026-08-11 재현).
+    """
     root = Path(output_root)
     if keep_days <= 0 or not root.is_dir():
         return 0
@@ -183,6 +189,8 @@ def prune_old_dates(output_root: Path, keep_days: int) -> int:
     removed = 0
     for stale in dates[keep_days:]:
         shutil.rmtree(stale, ignore_errors=True)
+        if store is not None:
+            store.delete_card_news_sets_for_date(stale.name)
         removed += 1
     return removed
 

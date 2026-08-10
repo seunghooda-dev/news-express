@@ -798,13 +798,15 @@ class AutoCollector:
         return f"자동 백업 생성: {backup_path.name} ({reason})"
 
     def _prune_old_card_news_once(self) -> str | None:
-        """오래된 카드뉴스 날짜 폴더를 지운다. 하루 약 7.5MB라 두면 계속 쌓인다."""
+        """오래된 카드뉴스를 그림·행 함께 지운다. 한 장 카드 실측으로 하루 약 0.6MB다."""
         keep_days = env_int(CARD_NEWS_KEEP_DAYS_ENV, 30, minimum=0)
         if keep_days <= 0:
             return None
         backup_dir = env_path("NEWS_SUMMARY_BACKUP_DIR", "data/backups")
         root = env_path("NEWS_SUMMARY_CARDNEWS_DIR", str(backup_dir.parent / "cardnews"))
-        removed = prune_old_dates(root, keep_days)
+        # store를 함께 넘겨 그림과 세트 행이 같이 걷히게 한다 — 그림만 지우면
+        # 주민 화면에 제목만 있고 카드가 없는 기사가 남는다(2026-08-11 재현).
+        removed = prune_old_dates(root, keep_days, self.store)
         if not removed:
             return None
         logger.info("card news pruned days=%s keep=%s", removed, keep_days)

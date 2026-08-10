@@ -327,3 +327,54 @@ def test_editing_copy_keeps_the_recorded_model(tmp_path):
     )
 
     assert store.card_news_set(result.set_id)["copy_model"] == "gemini-3.1-flash-lite"
+
+
+def test_prune_removes_the_rows_with_the_images(tmp_path):
+    """그림만 걷고 행을 남기면 주민 화면에 제목만 있는 기사가 남는다."""
+    store = make_store(tmp_path)
+    root = tmp_path / "cardnews"
+    kept, pruned = "2026-08-09", "2026-07-01"
+    ids = {}
+    # 세트는 draft_id로 덮어쓰기(업서트)라 날짜마다 다른 초안이어야 한다.
+    for day in (kept, pruned):
+        release_id, draft_id = seed(store, title=f"{day} 기사")
+        (root / day / "1").mkdir(parents=True)
+        (root / day / "1" / "1.png").write_bytes(b"x")
+        ids[day] = store.save_card_news_set(
+            draft_id=draft_id,
+            press_release_id=release_id,
+            publish_date=day,
+            cover=f"{day} 표지",
+            cards=[{"heading": "소제목", "body": "본문입니다."}],
+            tags=[],
+            source_label="담양군청 보도자료",
+            image_count=1,
+        )
+
+    removed = prune_old_dates(root, keep_days=1, store=store)
+
+    assert removed == 1
+    assert not (root / pruned).exists()
+    assert store.card_news_set(ids[pruned]) is None, "그림은 지웠는데 행이 남았다"
+    assert store.card_news_set(ids[kept]) is not None, "보관 기간 안의 세트를 지웠다"
+
+
+def test_prune_without_a_store_leaves_rows_alone(tmp_path):
+    """store를 안 주면 종전대로 폴더만 정리한다 — 기존 호출부를 깨지 않는다."""
+    store = make_store(tmp_path)
+    release_id, draft_id = seed(store)
+    root = tmp_path / "cardnews"
+    (root / "2026-07-01" / "1").mkdir(parents=True)
+    set_id = store.save_card_news_set(
+        draft_id=draft_id,
+        press_release_id=release_id,
+        publish_date="2026-07-01",
+        cover="표지",
+        cards=[{"heading": "소제목", "body": "본문입니다."}],
+        tags=[],
+        source_label="담양군청 보도자료",
+        image_count=1,
+    )
+
+    assert prune_old_dates(root, keep_days=0) == 0
+    assert store.card_news_set(set_id) is not None

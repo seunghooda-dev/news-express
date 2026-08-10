@@ -1515,7 +1515,9 @@ def create_app() -> Flask:
             publish_date=target,
             date_label=format_datetime_label(target),
             available_dates=published,
-            sets=_card_news_view_sets(store, cardnews_dir, target, status="published"),
+            sets=_card_news_view_sets(
+                store, cardnews_dir, target, status="published", require_images=True
+            ),
         )
 
     @app.get("/card-news/<int:set_id>/<int:index>.png")
@@ -3107,11 +3109,24 @@ def _card_news_candidates(store: Store, publish_date: str, limit: int = DEFAULT_
     ]
 
 
-def _card_news_view_sets(store: Store, root: Path, publish_date: str, status: str | None = None) -> list[dict]:
+def _card_news_view_sets(
+    store: Store,
+    root: Path,
+    publish_date: str,
+    status: str | None = None,
+    require_images: bool = False,
+) -> list[dict]:
     sets = []
     for row in store.card_news_sets_for_date(publish_date, status=status):
         set_id = int(row["id"])
         images = load_set_images(root, publish_date, set_id)
+        # 주민 화면에는 **그림이 있는 세트만** 내보낸다. 보관 정리가 그림만 걷거나
+        # 합성이 중간에 죽으면 제목만 있는 기사가 남는데, 템플릿의 빈 상태 안내는
+        # 세트가 0개일 때만 뜨므로 조용히 이상해 보인다(2026-08-11 재현).
+        # 관리 화면은 걸러내지 않는다 — 운영자는 깨진 세트를 봐야 고칠 수 있다.
+        if require_images and not images:
+            logger.warning("card news set has no images set_id=%s date=%s", set_id, publish_date)
+            continue
         sets.append(
             {
                 "id": set_id,

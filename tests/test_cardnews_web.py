@@ -583,3 +583,36 @@ def test_redraw_of_a_draft_set_stays_a_draft(monkeypatch, tmp_path):
     client.post(f"/card-news/{set_id}/redraw", follow_redirects=True)
 
     assert store.card_news_set(set_id)["status"] == "draft"
+
+
+def test_public_page_hides_a_published_set_whose_images_vanished(monkeypatch, tmp_path):
+    """그림이 사라진 발행 세트는 주민에게 **제목만** 보이는 상태가 된다.
+
+    보관 정리가 그림만 걷거나 합성이 중간에 죽으면 그렇게 된다. 템플릿의 빈 상태
+    안내는 세트가 0개일 때만 뜨므로, 세트가 남아 있으면 안내도 안 뜨고 카드도
+    없는 화면이 나간다(2026-08-11 재현). 관리 화면은 걸러내면 안 된다 —
+    운영자는 깨진 세트를 봐야 고칠 수 있다.
+    """
+    import shutil
+
+    from news_summary.cardnews_service import set_directory
+
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    _build_one_set(client, draft_id)
+    set_id = int(store.card_news_set_by_draft(draft_id)["id"])
+    store.set_card_news_status(set_id, "published")
+
+    before = client.get("/card-news?date=2026-08-09").get_data(as_text=True)
+    assert "담양 무더위쉼터" in before
+
+    shutil.rmtree(set_directory(tmp_path / "cardnews", "2026-08-09", set_id))
+
+    after = client.get("/card-news?date=2026-08-09").get_data(as_text=True)
+    assert "담양 무더위쉼터" not in after, "그림 없는 세트가 주민 화면에 남았다"
+
+    with client.session_transaction() as session:
+        session["admin_authenticated"] = True
+    manage = client.get("/card-news/manage?date=2026-08-09").get_data(as_text=True)
+    assert "담양 무더위쉼터" in manage, "관리 화면에서까지 사라지면 고칠 수가 없다"
