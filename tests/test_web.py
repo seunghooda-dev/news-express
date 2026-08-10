@@ -10327,3 +10327,135 @@ def test_preview_flattens_transparency_onto_white_after_downscaling():
     result.close()
     assert min(corner) > 230, f"투명 배경이 흰색으로 안 깔렸다: {corner}"
     assert middle[0] > middle[1] and middle[0] > middle[2], f"가운데 색이 사라졌다: {middle}"
+
+
+def _concrete_path(rule) -> str:
+    """`<int:draft_id>` 같은 자리를 채워 실제로 요청할 수 있는 경로를 만든다."""
+    values = {}
+    for argument in rule.arguments:
+        converter = rule._converters.get(argument)
+        values[argument] = 1 if converter.__class__.__name__ == "IntegerConverter" else "x"
+    return rule.build(values, append_unknown=False)[1]
+
+
+def _auth_enabled_client(monkeypatch, name: str):
+    db_path = Path(f"data/.test_{name}_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "")
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "pw-for-test")
+    # CSRF가 켜져 있으면 토큰 없는 POST가 인증 검사 **앞에서** 400으로 끊겨,
+    # 인증을 통째로 지워도 통과하는 헛도는 테스트가 된다(2026-08-11 재현).
+    monkeypatch.setenv("NEWS_SUMMARY_CSRF_DISABLED", "1")
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = False
+    return app, app.test_client()
+
+
+def test_every_state_changing_route_requires_login(monkeypatch):
+    """새 POST 라우트가 기본값으로 무보호가 되는 것을 막는다.
+
+    라우트를 하나씩 세는 대신 url_map을 돌아 **앞으로 추가될 것까지** 덮는다.
+    2026-08-11 감사 시점에 로그인 요구가 검증되지 않던 POST가 11개였다.
+    """
+    from news_summary.web import AUTH_EXEMPT_ENDPOINTS, OPERATIONS_ACCESS_ENDPOINTS
+
+    app, client = _auth_enabled_client(monkeypatch, "post_guard")
+
+    checked = 0
+    for rule in app.url_map.iter_rules():
+        endpoint = rule.endpoint
+        if endpoint == "static" or "POST" not in rule.methods:
+            continue
+        if endpoint in AUTH_EXEMPT_ENDPOINTS or endpoint in OPERATIONS_ACCESS_ENDPOINTS:
+            continue
+        response = client.post(_concrete_path(rule), follow_redirects=False)
+        assert response.status_code == 302, f"{endpoint}가 로그인을 요구하지 않는다"
+        assert "/login" in response.headers["Location"], f"{endpoint}가 로그인으로 안 보낸다"
+        checked += 1
+
+    assert checked >= 15, f"검사한 POST가 {checked}개뿐이다 — 라우트 수집이 깨졌다"
+
+
+def test_auth_exempt_list_is_exactly_what_we_intend():
+    """면제 목록은 **눈으로 승인한 것만** 들어 있어야 한다.
+
+    위 메타테스트는 라우트를 돌며 검사하므로, 누가 엔드포인트를 면제 목록에
+    넣어 버리면 검사 대상에서 빠져 조용히 통과한다(2026-08-11 실증: 개수
+    단언에만 걸렸다). 목록 자체를 못박아 두면 추가가 바로 드러난다.
+    """
+    from news_summary.web import AUTH_EXEMPT_ENDPOINTS
+
+    assert AUTH_EXEMPT_ENDPOINTS == {
+        "favicon",  # 204만 돌려준다
+        "healthz",  # 감시가 로그인 없이 읽어야 한다
+        "login",
+        "logout",
+        "admin_setup",  # 부트스트랩용 — 재실행 방어는 라우트 안에 있다
+        "operations_login",
+        "robots_txt",  # 인증 뒤에 있으면 크롤러가 규칙을 못 읽는다
+        "static",
+    }, "인증 면제 목록이 바뀌었다 — 의도한 변경인지 확인하고 이 목록도 함께 고칠 것"
+
+
+def test_every_operations_route_needs_more_than_admin_login(monkeypatch):
+    """운영 관리는 **관리자 로그인만으로는** 못 들어간다 — 전용 비밀번호가 따로 있다.
+
+    익명으로 찌르면 관리자 로그인에서 먼저 걸려 게이트 자체를 검증하지 못한다.
+    로그인한 상태로 확인해야 두 번째 층이 실제로 사는지 알 수 있다.
+    """
+    from werkzeug.security import generate_password_hash
+
+    from news_summary.web import OPERATIONS_ACCESS_ENDPOINTS
+
+    monkeypatch.setenv(
+        "NEWS_SUMMARY_OPERATIONS_PASSWORD_HASH", generate_password_hash("opspass9999")
+    )
+    monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
+    app, client = _auth_enabled_client(monkeypatch, "ops_guard")
+    client.post("/login", data={"password": "pw-for-test"})
+    # 로그인이 실제로 됐는지 먼저 확인한다 — 아니면 아래가 헛돈다.
+    assert client.get("/writing-settings", follow_redirects=False).status_code == 200
+
+    checked = 0
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint not in OPERATIONS_ACCESS_ENDPOINTS:
+            continue
+        method = "POST" if "POST" in rule.methods else "GET"
+        response = client.open(_concrete_path(rule), method=method, follow_redirects=False)
+        assert response.status_code == 302, f"{rule.endpoint}가 관리자 로그인만으로 열렸다"
+        assert "/operations/login" in response.headers["Location"], (
+            f"{rule.endpoint}가 운영 게이트로 안 보낸다: {response.headers['Location']}"
+        )
+        checked += 1
+
+    assert checked >= 9, f"검사한 운영 라우트가 {checked}개뿐이다"
+
+
+def test_public_read_endpoints_stay_open_when_auth_is_on(monkeypatch):
+    """공개 읽기가 조용히 닫히면 주민 화면과 카톡 미리보기가 죽는다.
+
+    특히 `card_news_image`가 집합에서 빠지면 카드 PNG가 /login으로 302되어
+    **링크 미리보기가 사라진다** — 화면은 멀쩡해 보이고 아무도 못 잡는다.
+    """
+    from news_summary.web import PUBLIC_READ_ENDPOINTS
+
+    app, client = _auth_enabled_client(monkeypatch, "public_read")
+
+    checked = 0
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint not in PUBLIC_READ_ENDPOINTS or "GET" not in rule.methods:
+            continue
+        response = client.get(_concrete_path(rule), follow_redirects=False)
+        # 데이터가 없어 404·400이 나는 것은 상관없다. **로그인으로 튕기면** 안 된다.
+        if response.status_code == 302:
+            assert "/login" not in response.headers["Location"], (
+                f"{rule.endpoint}가 로그인으로 튕긴다 — 공개 경로가 닫혔다"
+            )
+        checked += 1
+
+    assert "card_news_image" in PUBLIC_READ_ENDPOINTS, "카드 이미지가 공개에서 빠졌다"
+    assert checked >= 12, f"검사한 공개 읽기 라우트가 {checked}개뿐이다"
