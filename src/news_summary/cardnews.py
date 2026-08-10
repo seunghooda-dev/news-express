@@ -146,6 +146,18 @@ def build_card_images(copy: CardCopy, photos: Iterable[bytes] = ()) -> list[byte
         release_free_heap()
 
 
+def draft_target(size: tuple[int, int], max_edge: int) -> tuple[int, int]:
+    """`draft()`에 넘길 **가로세로비를 지킨** 목표 크기(썸네일 경로와 공유한다)."""
+    width, height = size
+    if width <= 0 or height <= 0:
+        return (max_edge, max_edge)
+    longest = max(width, height)
+    if longest <= max_edge:
+        return (width, height)
+    scale = max_edge / longest
+    return (max(1, int(width * scale)), max(1, int(height * scale)))
+
+
 def _draft_target(size: tuple[int, int]) -> tuple[int, int]:
     """`draft()`에 넘길 **가로세로비를 지킨** 목표 크기.
 
@@ -154,14 +166,7 @@ def _draft_target(size: tuple[int, int]) -> tuple[int, int]:
     세로가 2160보다 작아 **1/1이 선택된다** — 24MP가 그대로 펼쳐진다(2026-08-11
     적발, 기존 회귀 테스트가 잡아 줬다). 긴 변만 맞춘 상자를 주면 1/2가 골라진다.
     """
-    width, height = size
-    if width <= 0 or height <= 0:
-        return (MAX_WORKING_EDGE, MAX_WORKING_EDGE)
-    longest = max(width, height)
-    if longest <= MAX_WORKING_EDGE:
-        return (width, height)
-    scale = MAX_WORKING_EDGE / longest
-    return (max(1, int(width * scale)), max(1, int(height * scale)))
+    return draft_target(size, MAX_WORKING_EDGE)
 
 
 def _usable_photos(photos: Iterable[bytes], limit: int | None = None) -> list[Image.Image]:

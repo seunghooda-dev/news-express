@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+import io
 import json
 import os
 import re
@@ -10277,3 +10278,52 @@ def test_attention_count_still_flags_a_body_that_repeats_the_title(monkeypatch):
     assert count == sum(1 for _, flagged in cases if flagged), (
         "본문을 잘라 가져오면서 형식 확인 판정이 달라졌다"
     )
+
+
+def test_preview_falls_back_instead_of_decoding_a_pixel_bomb():
+    """바이트 상한은 여기서 아무 방어도 못 한다 — PNG 압축률에 한계가 없다.
+
+    평면 스캔 공고는 **0.1MB 파일이 36MP로 펼쳐진다.** 실측(2026-08-11)에서 그 한
+    장이 피크 614.7MB였고 컨테이너는 512MB다. 걸리면 원본을 그대로 돌려준다 —
+    평면 PNG는 원본 자체가 작아서 손해가 없다.
+    """
+    from PIL import Image, ImageDraw
+
+    from news_summary.web import _downscale_preview_image
+
+    canvas = Image.new("RGB", (6000, 6000), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    for offset in range(0, 6000, 120):
+        draw.rectangle([0, offset, 6000, offset + 60], fill=(30, 80, 160))
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG", compress_level=9)
+    canvas.close()
+    original = buffer.getvalue()
+
+    content_type, content = _downscale_preview_image("image/png", original)
+
+    assert content is original, "화소 폭탄을 펼쳤다"
+    assert content_type == "image/png"
+
+
+def test_preview_flattens_transparency_onto_white_after_downscaling():
+    """알파 합성을 축소 뒤로 옮겼다 — 투명 배경이 검게 나오면 안 된다."""
+    from PIL import Image
+
+    from news_summary.web import _downscale_preview_image
+
+    canvas = Image.new("RGBA", (1200, 1200), (0, 0, 0, 0))  # 전부 투명
+    canvas.paste((200, 30, 30, 255), (400, 400, 800, 800))  # 가운데만 빨강
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    canvas.close()
+
+    content_type, content = _downscale_preview_image("image/png", buffer.getvalue())
+
+    assert content_type == "image/jpeg"
+    result = Image.open(io.BytesIO(content)).convert("RGB")
+    corner = result.getpixel((2, 2))
+    middle = result.getpixel((result.width // 2, result.height // 2))
+    result.close()
+    assert min(corner) > 230, f"투명 배경이 흰색으로 안 깔렸다: {corner}"
+    assert middle[0] > middle[1] and middle[0] > middle[2], f"가운데 색이 사라졌다: {middle}"

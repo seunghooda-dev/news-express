@@ -66,6 +66,7 @@ from .cardcopy import (
     MIN_COVER_CHARS,
     MIN_HEADING_CHARS,
 )
+from .cardnews import draft_target
 from .cardnews_service import (
     build_set_for_draft,
     decode_cards,
@@ -223,6 +224,9 @@ REQUIRED_DB_INDEXES = tuple(
 DEFAULT_MAX_ASSET_PREVIEW_BYTES = 12 * 1024 * 1024
 # 썸네일로 내보낼 때 긴 변의 최대 픽셀. 화면 표시는 100픽셀 미만이라 넉넉한 값이다.
 DEFAULT_ASSET_PREVIEW_MAX_EDGE = 480
+# 펼치기 전에 거르는 화소 상한. 16MP면 RGBA 한 벌이 64MB이고 동시 3건까지 허용하니
+# 192MB다. 미리보기는 480px로 줄여 쓰므로 그 위 해상도는 어차피 버려진다.
+MAX_PREVIEW_DECODE_PIXELS = 16_000_000
 # 캐시가 빈 썸네일 요청은 원본 내려받기와 축소로 메모리를 크게 쓴다. 512MB 인스턴스에서
 # 목록 한 화면 분량을 한꺼번에 처리하면 프로세스가 버티지 못하므로 동시 실행 수를 묶는다.
 _asset_preview_fetch_limit = BoundedSemaphore(3)
@@ -3040,11 +3044,28 @@ def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, by
         with Image.open(io.BytesIO(content)) as image:
             if max(image.size) <= max_edge:
                 return content_type, content
-            # JPEG는 디코딩 단계에서 미리 줄여 메모리와 시간을 아낀다.
-            image.draft("RGB", (max_edge, max_edge))
+            # JPEG는 디코딩 단계에서 미리 줄여 메모리와 시간을 아낀다. 정사각 상자를
+            # 주면 가로세로비가 다른 사진에서 축소가 통째로 무산되므로 비를 지킨다.
+            image.draft("RGB", draft_target(image.size, max_edge))
             has_alpha = image.mode in {"RGBA", "LA"} or (
                 image.mode == "P" and "transparency" in image.info
             )
+            # **바이트 상한은 여기서 아무 방어도 못 한다.** PNG 압축률에 한계가 없어서
+            # 평면 스캔 공고는 0.1MB 파일이 36MP로 펼쳐진다 — 실측(2026-08-11)에서
+            # 그 한 장이 피크 614.7MB였다(컨테이너는 512MB). draft **뒤** 크기로 재므로
+            # JPEG는 이미 줄어든 값이고, 걸리면 원본을 그대로 돌려준다(평면 PNG는
+            # 원본 자체가 작아서 손해가 없다).
+            if image.width * image.height > MAX_PREVIEW_DECODE_PIXELS:
+                logger.info(
+                    "asset preview too many pixels size=%sx%s format=%s",
+                    image.width,
+                    image.height,
+                    image.format,
+                )
+                return content_type, content
+            # **줄인 뒤에 알파를 합성한다.** 전체 해상도에서 합성하면 캔버스·RGBA
+            # 사본·붙이기로 원본 3벌이 동시에 살아 있게 된다.
+            image.thumbnail((max_edge, max_edge), Image.LANCZOS)
             if has_alpha:
                 canvas = Image.new("RGB", image.size, (255, 255, 255))
                 rgba = image.convert("RGBA")
@@ -3052,7 +3073,6 @@ def _downscale_preview_image(content_type: str, content: bytes) -> tuple[str, by
                 prepared = canvas
             else:
                 prepared = image.convert("RGB")
-            prepared.thumbnail((max_edge, max_edge), Image.LANCZOS)
             buffer = io.BytesIO()
             prepared.save(buffer, format="JPEG", quality=82, optimize=True)
     except Exception as exc:  # noqa: BLE001 - 축소 실패는 원본 제공으로 넘어간다.
