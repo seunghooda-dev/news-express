@@ -283,3 +283,64 @@ def test_opening_a_database_made_before_copy_model_adds_the_column():
     from news_summary.cardnews_service import decode_cards
 
     assert decode_cards(row).model == ""
+
+
+def test_every_ensure_column_branch_actually_restores_its_column():
+    """`_ensure_column`의 `ALTER TABLE` 분기 11곳이 **한 번도 실행된 적이 없었다.**
+
+    모든 테스트가 DB를 새로 만들고 즉시 `init_db()`를 부르므로 컬럼이 이미 다 있다.
+    이주가 안 돌면 그 칸을 읽는 화면이 500이 되는데, 그걸 지키는 것이 없었다.
+
+    각 칸마다 **그 칸만 뺀 스키마**로 테이블을 만들고 `init_db()`를 태워 되살아나는지
+    본다 — 개별 컬럼을 손으로 세지 않으므로 이주 목록이 늘어나면 자동으로 덮인다.
+
+    **무엇을 잡고 무엇을 못 잡는지 분명히 해 둔다**(2026-08-11 실증).
+
+    - 잡는다: 이주가 실제로 컬럼을 못 붙이는 경우(ALTER 문법·타입 오류 등)
+    - 잡는다: 이주 줄이 사라지는 경우 — 아래 개수 가드가 운다
+    - **못 잡는다**: `SCHEMA`에 칸을 새로 넣으면서 `_ensure_column`을 **안 쓴** 경우.
+      그러면 이 목록이 안 늘어나 조용히 지나간다. 그 방향은
+      `test_opening_a_database_made_before_copy_model_adds_the_column`처럼
+      칸마다 구스키마 표본을 따로 만들어야 잡힌다.
+
+    (처음에 "이주 목록의 칸이 새 DB에도 있는가"로 썼다가 버렸다. `init_db()`가 CREATE와
+    ALTER를 둘 다 돌려서 SCHEMA에서 빼도 이주가 메워 준다 — 아무것도 못 잡는다.)
+    """
+    import re
+    import sqlite3
+
+    from news_summary import storage as storage_module
+
+    source = Path(storage_module.__file__).read_text(encoding="utf-8")
+    migrated = re.findall(r'_ensure_column\(\s*conn,\s*"([^"]+)",\s*"([^"]+)"', source)
+    assert len(migrated) >= 11, f"이주 목록을 못 읽었다({len(migrated)}건) — 정규식이 깨졌다"
+
+    def create_sql_without(table: str, column: str) -> str:
+        match = re.search(
+            rf"CREATE TABLE IF NOT EXISTS {table} \((.*?)\n\);", storage_module.SCHEMA, re.S
+        )
+        assert match, f"{table} 스키마를 못 찾았다"
+        kept = [
+            line
+            for line in match.group(1).splitlines()
+            if not re.match(rf"\s*{column}\s", line)
+        ]
+        # 뺀 줄이 마지막이었으면 앞 줄의 쉼표를 지워야 문법이 산다.
+        body = "\n".join(kept).rstrip().rstrip(",")
+        return f"CREATE TABLE {table} ({body}\n)"
+
+    for table, column in migrated:
+        db_path = Path(f"data/.test_alter_{table}_{column}_{uuid4().hex}.sqlite").resolve()
+        conn = sqlite3.connect(db_path)
+        conn.execute(create_sql_without(table, column))
+        conn.commit()
+        before = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        conn.close()
+        assert column not in before, f"{table}.{column}을 빼지 못했다 — 표본이 틀렸다"
+
+        store = Store(db_path)
+        store.init_db()
+
+        with store.connect() as check:
+            after = {row["name"] for row in check.execute(f"PRAGMA table_info({table})").fetchall()}
+        assert column in after, f"{table}.{column} 이주가 안 돌았다 — 기존 DB가 그 칸을 영영 못 받는다"
