@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from collections import Counter, OrderedDict
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -225,6 +226,26 @@ DEFAULT_ASSET_PREVIEW_MAX_EDGE = 480
 # 캐시가 빈 썸네일 요청은 원본 내려받기와 축소로 메모리를 크게 쓴다. 512MB 인스턴스에서
 # 목록 한 화면 분량을 한꺼번에 처리하면 프로세스가 버티지 못하므로 동시 실행 수를 묶는다.
 _asset_preview_fetch_limit = BoundedSemaphore(3)
+# 카드 합성은 원본 사진을 펼쳐 1080x1350 PNG로 인코딩한다 — 한 건이 100MB 안팎을
+# 쥔다(2026-08-11 실측: 24MP JPEG 97MB · 25MP PNG는 거절 전 291MB). 이 서비스는
+# 512MB · threads 8이라 몇 건만 겹쳐도 넘긴다. 게다가 한 건에 15~40초가 걸려서
+# 반응이 없어 보이는 운영자가 버튼을 여러 번 누르기 쉽다. **한 번에 하나만** 돈다.
+_card_render_limit = BoundedSemaphore(1)
+
+
+@contextmanager
+def _card_render_slot():
+    """카드 합성 자리를 하나 잡는다. 이미 도는 중이면 `False`를 준다(기다리지 않는다).
+
+    기다리게 하면 스레드가 물려 다른 화면까지 느려진다 — 지금 하나가 도는 중이라고
+    알려 주고 돌려보내는 편이 운영자에게도 명확하다.
+    """
+    acquired = _card_render_limit.acquire(blocking=False)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            _card_render_limit.release()
 DEFAULT_ASSET_PREVIEW_CACHE_BYTES = 16 * 1024 * 1024
 DEFAULT_ASSET_PREVIEW_CACHE_SECONDS = 3600
 DEFAULT_ASSET_PREVIEW_STALE_SECONDS = 6 * 3600
@@ -1564,14 +1585,18 @@ def create_app() -> Flask:
             flash("Gemini API 키가 없어 카드 문안을 만들 수 없습니다.")
             return redirect(url_for("card_news_manage", date=target))
         try:
-            result = build_set_for_draft(
-                store,
-                draft_id,
-                api_key,
-                cardnews_dir,
-                publish_date=target,
-                downloader=_download_card_photo,
-            )
+            with _card_render_slot() as slot:
+                if not slot:
+                    flash("카드뉴스를 이미 만들고 있습니다. 끝나면 목록에 나타납니다.")
+                    return redirect(url_for("card_news_manage", date=target))
+                result = build_set_for_draft(
+                    store,
+                    draft_id,
+                    api_key,
+                    cardnews_dir,
+                    publish_date=target,
+                    downloader=_download_card_photo,
+                )
         except Exception as exc:  # noqa: BLE001 - 실패 사유를 화면에 보여 준다.
             logger.warning("card news build failed draft_id=%s error=%s", draft_id, exc)
             flash(f"카드뉴스 생성 실패: {exc}")
@@ -1593,7 +1618,11 @@ def create_app() -> Flask:
             return redirect(url_for("card_news_manage", date=target))
         store.update_card_news_copy(set_id, cover, cards)
         try:
-            rebuild_images_from_copy(store, set_id, cardnews_dir, downloader=_download_card_photo)
+            with _card_render_slot() as slot:
+                if not slot:
+                    flash("문안은 저장했습니다. 다른 카드를 만드는 중이라 그림은 잠시 뒤 다시 그려 주세요.")
+                    return redirect(url_for("card_news_manage", date=target))
+                rebuild_images_from_copy(store, set_id, cardnews_dir, downloader=_download_card_photo)
         except Exception as exc:  # noqa: BLE001 - 실패해도 문안은 저장돼 있다.
             logger.warning("card news copy rebuild failed set_id=%s error=%s", set_id, exc)
             flash(f"문안은 저장했지만 카드 이미지를 다시 그리지 못했습니다: {exc}")
@@ -1614,7 +1643,11 @@ def create_app() -> Flask:
             abort(404)
         target = str(row["publish_date"])
         try:
-            paths = rebuild_images_from_copy(store, set_id, cardnews_dir, downloader=_download_card_photo)
+            with _card_render_slot() as slot:
+                if not slot:
+                    flash("다른 카드를 만드는 중입니다. 끝나면 다시 눌러 주세요.")
+                    return redirect(url_for("card_news_manage", date=target))
+                paths = rebuild_images_from_copy(store, set_id, cardnews_dir, downloader=_download_card_photo)
         except Exception as exc:  # noqa: BLE001 - 실패해도 옛 그림은 남아 있다.
             logger.warning("card news redraw failed set_id=%s error=%s", set_id, exc)
             flash(f"카드를 다시 그리지 못했습니다: {exc}")

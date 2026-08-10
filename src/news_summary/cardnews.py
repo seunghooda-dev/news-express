@@ -34,6 +34,11 @@ MIN_PHOTO_EDGE = 800
 # RGB로 펼쳐 240MB인데 세트당 4장을 동시에 쥔다 — 이 서비스는 512MB에서 돈다.
 MAX_WORKING_EDGE = CARD_WIDTH * 2
 
+# 펼치기 전에 거르는 화소 상한. RGB 한 벌이 W×H×3이고 convert가 사본을 하나 더
+# 만드니 12MP면 약 72MB다. 카드는 2160px까지만 쓰므로 그 위는 어차피 줄인다 —
+# 지자체 첨부는 대개 1MP 남짓이고, 큰 DSLR 사진은 JPEG라 draft가 먼저 줄인다.
+MAX_DECODE_PIXELS = 12_000_000
+
 # 이보다 납작하면 사진이 아니라 배너다. 밴드(폭:높이 최대 2.35:1)에 넣어 봐야
 # 위아래가 검정으로 남는다.
 MAX_PHOTO_ASPECT = 3.0
@@ -141,6 +146,24 @@ def build_card_images(copy: CardCopy, photos: Iterable[bytes] = ()) -> list[byte
         release_free_heap()
 
 
+def _draft_target(size: tuple[int, int]) -> tuple[int, int]:
+    """`draft()`에 넘길 **가로세로비를 지킨** 목표 크기.
+
+    정사각 상자를 넘기면 축소가 통째로 무산된다. `draft`는 "요청 크기보다 작아지지
+    않는" 최대 축소만 고르는데, 6000x4000에 (2160, 2160)을 주면 1/2인 3000x2000의
+    세로가 2160보다 작아 **1/1이 선택된다** — 24MP가 그대로 펼쳐진다(2026-08-11
+    적발, 기존 회귀 테스트가 잡아 줬다). 긴 변만 맞춘 상자를 주면 1/2가 골라진다.
+    """
+    width, height = size
+    if width <= 0 or height <= 0:
+        return (MAX_WORKING_EDGE, MAX_WORKING_EDGE)
+    longest = max(width, height)
+    if longest <= MAX_WORKING_EDGE:
+        return (width, height)
+    scale = MAX_WORKING_EDGE / longest
+    return (max(1, int(width * scale)), max(1, int(height * scale)))
+
+
 def _usable_photos(photos: Iterable[bytes], limit: int | None = None) -> list[Image.Image]:
     """열리고 쓸 만한 사진만 남긴다. 깨진 첨부는 조용히 건너뛴다.
 
@@ -155,7 +178,20 @@ def _usable_photos(photos: Iterable[bytes], limit: int | None = None) -> list[Im
         try:
             image = Image.open(io.BytesIO(raw))
             # JPEG는 디코딩 단계에서 미리 줄여 펼치는 메모리 자체를 아낀다.
-            image.draft("RGB", (MAX_WORKING_EDGE, MAX_WORKING_EDGE))
+            image.draft("RGB", _draft_target(image.size))
+            # draft는 **JPEG에만** 구현돼 있다(PNG·WEBP·TIFF는 무동작). 그래서 여기서
+            # 재는 크기는 JPEG면 이미 줄어든 값, 그 밖이면 원본 그대로다 — 위험한
+            # 경우만 정확히 걸린다. 25MP 실측: JPEG +70.9MB / PNG **+199.2MB**
+            # (파일 75.5MB · 피크 291.2MB). 이 서비스는 512MB에서 돈다.
+            if image.width * image.height > MAX_DECODE_PIXELS:
+                logger.info(
+                    "card news photo too many pixels size=%sx%s format=%s",
+                    image.width,
+                    image.height,
+                    image.format,
+                )
+                image.close()
+                continue
             image.load()
             image = image.convert("RGB")
             if max(image.size) > MAX_WORKING_EDGE:

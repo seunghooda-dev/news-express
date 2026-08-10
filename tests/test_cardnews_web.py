@@ -616,3 +616,44 @@ def test_public_page_hides_a_published_set_whose_images_vanished(monkeypatch, tm
         session["admin_authenticated"] = True
     manage = client.get("/card-news/manage?date=2026-08-09").get_data(as_text=True)
     assert "담양 무더위쉼터" in manage, "관리 화면에서까지 사라지면 고칠 수가 없다"
+
+
+def test_only_one_card_render_runs_at_a_time(monkeypatch, tmp_path):
+    """카드 합성은 한 건이 100MB 안팎을 쥔다 — 512MB에서 겹치면 죽는다.
+
+    한 건에 15~40초가 걸려 반응이 없어 보이므로 운영자가 버튼을 여러 번 누르기
+    쉽다. 기다리게 하지 않고 "이미 만들고 있다"고 알려 주고 돌려보낸다.
+    """
+    from news_summary import web as web_module
+
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+
+    # 다른 요청이 이미 자리를 잡고 있는 상황을 만든다.
+    assert web_module._card_render_limit.acquire(blocking=False)
+    try:
+        response = _build_one_set(client, draft_id)
+    finally:
+        web_module._card_render_limit.release()
+
+    assert "이미 만들고 있습니다" in response.get_data(as_text=True)
+    assert store.card_news_set_by_draft(draft_id) is None, "자리를 못 잡았는데 세트가 생겼다"
+
+
+def test_card_render_slot_is_released_after_a_failure(monkeypatch, tmp_path):
+    """실패해도 자리를 놓아야 한다 — 안 놓으면 그 뒤로 영영 못 만든다."""
+    from news_summary import web as web_module
+
+    _, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    monkeypatch.setattr(
+        "news_summary.web.build_set_for_draft",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("합성 실패")),
+    )
+    client = make_client()
+
+    _build_one_set(client, draft_id)
+
+    assert web_module._card_render_limit.acquire(blocking=False), "실패 뒤 자리가 잠긴 채 남았다"
+    web_module._card_render_limit.release()

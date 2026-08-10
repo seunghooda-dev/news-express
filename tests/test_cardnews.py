@@ -402,3 +402,64 @@ def test_releases_free_heap_even_when_rendering_fails(monkeypatch):
         build_card_images(sample_copy(), [photo_bytes(2000, 1500)])
 
     assert calls["count"] == 1
+
+
+def test_absurdly_large_non_jpeg_photo_is_rejected_before_decoding(monkeypatch):
+    """펼치기 전에 화소 수로 거른다 — 512MB 컨테이너에서 한 장이 291MB를 쥐었다.
+
+    `Image.draft()`는 **JPEG에만** 구현돼 있어 PNG·WEBP·TIFF는 원본 해상도가
+    그대로 펼쳐진다. 25MP 실측(2026-08-11): JPEG +70.9MB / PNG +199.2MB
+    (파일 75.5MB · 피크 291.2MB → 가드 후 100.2MB).
+    """
+    from news_summary import cardnews
+
+    # 실제 25MP를 만들면 테스트가 느려진다 — 문턱을 낮춰 기전만 확인한다.
+    monkeypatch.setattr(cardnews, "MAX_DECODE_PIXELS", 1000)
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (900, 700), (120, 140, 160)).save(buffer, format="PNG")
+
+    assert cardnews._usable_photos([buffer.getvalue()], limit=1) == []
+
+
+def test_photo_within_the_pixel_budget_is_still_used(monkeypatch):
+    """가드가 멀쩡한 사진까지 막으면 카드에서 사진이 통째로 사라진다."""
+    from news_summary import cardnews
+
+    monkeypatch.setattr(cardnews, "MAX_DECODE_PIXELS", 12_000_000)
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (1600, 1200), (120, 140, 160)).save(buffer, format="PNG")
+
+    usable = cardnews._usable_photos([buffer.getvalue()], limit=1)
+
+    assert len(usable) == 1
+    for image in usable:
+        image.close()
+
+
+def test_draft_target_keeps_aspect_so_wide_photos_can_shrink():
+    """정사각 상자를 주면 draft가 축소를 통째로 포기한다.
+
+    `draft`는 "요청 크기보다 작아지지 않는" 최대 축소만 고른다. 6000x4000에
+    (2160, 2160)을 주면 1/2인 3000x2000의 세로가 2160보다 작아 1/1이 선택되고
+    **24MP가 그대로 펼쳐진다.** 긴 변만 맞춘 상자면 1/2가 골라진다.
+    """
+    from news_summary.cardnews import MAX_WORKING_EDGE, _draft_target
+
+    assert _draft_target((6000, 4000)) == (MAX_WORKING_EDGE, MAX_WORKING_EDGE * 2 // 3)
+    assert _draft_target((4000, 6000)) == (MAX_WORKING_EDGE * 2 // 3, MAX_WORKING_EDGE)
+    # 이미 작은 사진은 건드리지 않는다.
+    assert _draft_target((1000, 750)) == (1000, 750)
+
+
+def test_wide_dslr_photo_survives_and_is_downscaled():
+    """3:2 대형 JPEG는 실제로 들어오는 형태다 — 거르지 말고 줄여서 써야 한다."""
+    from news_summary.cardnews import MAX_WORKING_EDGE, _usable_photos
+
+    photos = _usable_photos([photo_bytes(6000, 4000)], limit=1)
+
+    assert photos, "정상적인 대형 사진이 걸러졌다"
+    assert max(photos[0].size) <= MAX_WORKING_EDGE
+    for photo in photos:
+        photo.close()
