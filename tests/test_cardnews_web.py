@@ -91,6 +91,30 @@ def test_public_card_news_page_opens_without_login(monkeypatch, tmp_path):
     assert "오늘의 카드뉴스" in response.data.decode("utf-8")
 
 
+def test_public_page_offers_manage_link_only_to_logged_in_operator(monkeypatch, tmp_path):
+    """메뉴의 '카드뉴스'는 이 공개 화면으로 온다.
+
+    여기서 관리 화면으로 갈 길이 없어 로그인한 사람이 만들 곳을 못 찾았다
+    (2026-08-10 사용자: "카드관리에 들어가면 카드만들기가 안보여 로그인해도").
+    주민에게는 보이면 안 된다 — 눌러도 로그인으로 튕길 뿐이다.
+    """
+    prepare(monkeypatch, tmp_path)
+    # 로그인 보호가 꺼져 있으면 익명 쪽 단언이 헛돈다 — 명시적으로 켠다.
+    monkeypatch.setenv("NEWS_SUMMARY_AUTH_DISABLED", "")
+    monkeypatch.setenv("NEWS_SUMMARY_ADMIN_PASSWORD", "test-password")
+    client = make_client()
+
+    anonymous = client.get("/card-news").get_data(as_text=True)
+    assert "/card-news/manage" not in anonymous, "주민 화면에 관리 링크가 노출됐다"
+
+    with client.session_transaction() as session:
+        session["admin_authenticated"] = True
+    logged_in = client.get("/card-news").get_data(as_text=True)
+
+    assert "/card-news/manage" in logged_in, "로그인해도 만들 곳으로 갈 링크가 없다"
+    assert "카드 만들기" in logged_in
+
+
 def test_build_publish_and_public_listing(monkeypatch, tmp_path):
     store, draft_id = prepare(monkeypatch, tmp_path)
     stub_generation(monkeypatch)

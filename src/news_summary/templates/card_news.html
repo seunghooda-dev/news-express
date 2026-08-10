@@ -10,6 +10,13 @@
 <section class="section-head">
   <h1>오늘의 카드뉴스</h1>
   <span class="cardnews-date">{{ date_label }}</span>
+  {# 메뉴의 '카드뉴스'는 이 공개 화면으로 온다. 여기서 관리 화면으로 갈 길이 없어
+     로그인한 사람이 만들 곳을 못 찾았다(2026-08-10 사용자: "어디서 만들으라구?"). #}
+  {% if admin_authenticated or not auth_state.enabled %}
+    <div class="section-actions">
+      <a class="source-link" href="{{ url_for('card_news_manage') }}">카드 만들기</a>
+    </div>
+  {% endif %}
 </section>
 
 {% if available_dates|length > 1 %}
