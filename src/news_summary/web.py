@@ -53,6 +53,7 @@ from .scheduler import (
     AUTO_RECOVERY_STATUS_KEY,
     AUTO_SERVER_HEALTH_STATUS_KEY,
     AUTO_URL_DISCOVERY_STATUS_KEY,
+    TABLE_SIZE_STATUS_KEY,
     _auto_queue_drain_interval_seconds,
     _auto_queue_drain_ready_recheck_seconds,
     _source_recovery_candidates,
@@ -128,9 +129,9 @@ AUTH_EXEMPT_ENDPOINTS = {
 # 기사 열람을 막자는 것이 아니었다. 읽기 전용 GET 페이지만 여기 올린다.
 PUBLIC_READ_ENDPOINTS = {
     "dashboard",
-    "drafts",
+    # 상세 페이지는 공개로 둔다 — 주민용 카드뉴스의 "기사 전문 보기"가 draft_detail로,
+    # 거기서 원문(press_release_detail)으로 이어진다. 여기를 막으면 주민이 전문을 못 본다.
     "draft_detail",
-    "press_releases",
     "press_release_detail",
     "source_detail",
     "preview_press_release_asset",
@@ -141,6 +142,14 @@ PUBLIC_READ_ENDPOINTS = {
     "card_news",
     "card_news_image",
 }
+# **편집 목록은 공개에서 뺐다(2026-08-12).** /drafts·/press-releases는 초안·원문을
+# 전량 나열하는 편집자용 화면인데 무인증으로 열려 있어, ①봇·프로브가 매 요청마다 DB를
+# 통째로 당겨 Supabase egress를 키우고 ②편집 초안 목록이 외부에 그대로 노출됐다(방문
+# 로그 실측: 봇 히트 상위가 /drafts·/press-releases였다). robots.txt가 이미 이 둘을
+# Disallow로 막아 둔 의도와도 어긋났다. 여기서 빠지면 익명 GET은 로그인으로 간다.
+# **상세(draft_detail·press_release_detail)는 남긴다** — 주민이 카드뉴스에서 전문을
+# 읽는 경로다. 루트 `/`(dashboard)도 집합에 남기되, 익명이면 핸들러가 DB를 건드리기 전에
+# 주민용 /card-news로 돌린다 — 공개 첫 화면이 무거운 운영 대시보드를 렌더하던 것을 없앤다.
 # 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
 # open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
 # robots.txt는 고정 문자열만 돌려주는데 DB를 열 이유가 없다. 크롤러가 가장 자주
@@ -169,6 +178,10 @@ NO_STORE_ENDPOINTS = {
     "admin_setup",
     "card_news_manage",  # 발행 전 문안을 그대로 렌더한다
     "download_backup",
+    # 편집 목록은 2026-08-12에 로그인 게이트로 바뀌었다 — 익명은 로그인으로 튕기고
+    # 관리자에게만 내용을 준다. 세션에 따라 응답이 갈리므로 공유 캐시에 남으면 안 된다.
+    "drafts",
+    "press_releases",
     "export_visitor_logs",  # 방문 기록(IP 포함) 내려받기 — download_backup과 같은 부류
     "gemini_usage",
     "healthz_details",
@@ -562,6 +575,13 @@ def create_app() -> Flask:
 
     @app.get("/")
     def dashboard():
+        # 익명 방문은 운영 대시보드를 렌더하지 않는다 — 주민용 카드뉴스로 보낸다.
+        # DB를 건드리기 전에 돌려보내는 것이 핵심이다: 봇이 루트를 아무리 때려도
+        # 무거운 대시보드 쿼리가 돌지 않는다(2026-08-12 egress 사건 대응).
+        # **인증이 켜져 있고 미인증일 때만** 돌린다 — 인증을 끈 배포(로컬·테스트)에서는
+        # 모두가 운영자이므로 대시보드를 그대로 보여 준다.
+        if auth_config(store).enabled and not session.get("admin_authenticated"):
+            return redirect(url_for("card_news"))
         selected_regions = _selected_regions(config_path)
         pending_drafts = _draft_rows_for_listing(
             store,
@@ -734,6 +754,7 @@ def create_app() -> Flask:
             payload.update(_deployment_version_health_payload())
             readiness_report = _production_readiness_report(store, backup_dir, auto_status, config_path)
             payload.update(_production_readiness_health_payload(readiness_report))
+            payload.update(_table_size_health_payload(store))
         else:
             payload["details_url"] = url_for("healthz_details")
         payload.update(_service_health_summary(payload))
@@ -5003,6 +5024,36 @@ def _metadata_json_report(store: Store, key: str, default: dict[str, object]) ->
     merged = dict(default)
     merged.update(payload)
     return merged
+
+
+def _table_size_health_payload(store: Store) -> dict[str, object]:
+    """유지보수가 기록한 테이블 크기 스냅샷을 헬스 상세에 노출한다(2026-08-12 ③).
+
+    커지는 테이블이 egress 사고의 선행 지표라, 운영자가 /healthz/details에서
+    임계 초과 여부를 바로 볼 수 있게 한다. 스냅샷이 없으면 조용히 넘어간다.
+    """
+    raw_value = store.get_app_metadata(TABLE_SIZE_STATUS_KEY)
+    if not raw_value:
+        return {}
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    counts = payload.get("counts")
+    over = payload.get("over_threshold") or []
+    if not isinstance(counts, dict):
+        return {}
+    return {
+        "table_sizes": {
+            "updated_at": payload.get("updated_at"),
+            "threshold": payload.get("threshold"),
+            "counts": counts,
+            "over_threshold": list(over) if isinstance(over, list) else [],
+            "level": "warning" if over else "ok",
+        }
+    }
 
 
 def _url_discovery_report(store: Store) -> dict[str, object]:

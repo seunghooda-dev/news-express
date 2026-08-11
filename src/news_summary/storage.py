@@ -160,6 +160,21 @@ POSTGRES_CONNECTION_HEALTH_CHECK_SECONDS = 60.0
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 10
 POSTGRES_SCHEMA_INIT_LOCK_ID = 907_260_718_101
 
+# `table_row_counts`가 셀 수 있는 테이블 화이트리스트. 테이블명은 SQL에 문자열로
+# 들어가므로(파라미터화 불가), 코드가 정한 이 목록 밖은 절대 받지 않는다.
+_COUNTABLE_TABLES = frozenset(
+    {
+        "press_releases",
+        "article_drafts",
+        "draft_history",
+        "draft_generation_failures",
+        "source_collection_runs",
+        "operation_events",
+        "visitor_access_logs",
+        "card_news_sets",
+    }
+)
+
 
 POSTGRES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS press_releases (
@@ -2195,6 +2210,50 @@ class Store:
             ).fetchone()
             conn.execute("DELETE FROM operation_events WHERE created_at < ?", (cutoff_iso,))
         return int(row["count"] or 0)
+
+    def prune_source_collection_runs(self, keep_per_source: int) -> int:
+        """소스별 최근 `keep_per_source`건만 남기고 나머지를 지운다.
+
+        이 테이블은 활성 27곳 × 매시라 하루 650건씩 무한히 커지는데 지우는 코드가
+        없었다. 크기 자체를 묶지 않으면, 이 테이블을 무심코 전량 당기는 쿼리가 하나만
+        생겨도 요청마다 인출량이 커져 Supabase egress가 눈덩이처럼 는다(2026-08-12
+        사건의 뿌리). 나이가 아니라 소스별 건수로 하드 바운드한다 — 연속 실패 판정과
+        최근 상태 조회가 소스별 최근 몇십 건만 보므로, 넉넉히 남겨도 안전하다.
+        """
+        if keep_per_source <= 0:
+            return 0
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM source_collection_runs
+                WHERE id NOT IN (
+                    SELECT id FROM (
+                        SELECT id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY source_id ORDER BY id DESC
+                               ) AS rn
+                        FROM source_collection_runs
+                    ) ranked
+                    WHERE rn <= ?
+                )
+                """,
+                (keep_per_source,),
+            )
+            return int(cursor.rowcount or 0)
+
+    def table_row_counts(self, tables: list[str]) -> dict[str, int]:
+        """감시할 테이블들의 행 수. **커지는 테이블이 egress 사건의 선행 지표**라,
+        유지보수가 이 값을 주기적으로 재서 임계를 넘으면 경보한다(2026-08-12 ③).
+
+        테이블명은 코드가 정하는 화이트리스트만 받는다 — 외부 입력을 SQL에 넣지 않는다.
+        """
+        counts: dict[str, int] = {}
+        allowed = {name for name in tables if name in _COUNTABLE_TABLES}
+        with self.connect() as conn:
+            for name in sorted(allowed):
+                row = conn.execute(f"SELECT COUNT(*) AS count FROM {name}").fetchone()
+                counts[name] = int(row["count"] or 0)
+        return counts
 
     def _record_draft_history(self, conn: sqlite3.Connection, row: sqlite3.Row, change_type: str) -> None:
         conn.execute(

@@ -167,3 +167,103 @@ def test_operation_event_pruning_stays_silent_when_nothing_is_old(tmp_path, monk
     collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
 
     assert collector._prune_old_operation_events_once(now) is None
+
+
+# --- 수집 이력 정리(②) + 테이블 크기 경보(③) : 2026-08-12 egress 사건 대응 --------
+
+
+def _seed_runs(store: Store, source_id: str, n: int) -> None:
+    for i in range(n):
+        store.record_source_collection_status(source_id, source_id, "ok", f"{i}회차")
+
+
+def test_source_runs_pruned_to_recent_n_per_source(tmp_path, monkeypatch):
+    """무한히 커지던 수집 이력을 소스별 최근 N건으로 하드 바운드한다.
+
+    크기 자체를 안 묶으면, 이 테이블을 전량 당기는 쿼리 하나가 요청마다 인출량을
+    키워 egress가 눈덩이처럼 는다(2026-08-12 사건의 뿌리).
+    """
+    from news_summary.scheduler import SOURCE_RUN_KEEP_PER_SOURCE_ENV
+
+    store = make_store(tmp_path)
+    _seed_runs(store, "damyang", 12)
+    _seed_runs(store, "gangjin", 8)
+    monkeypatch.setenv(SOURCE_RUN_KEEP_PER_SOURCE_ENV, "5")
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    message = collector._prune_old_source_collection_runs_once()
+
+    assert message is not None and "수집 이력" in message
+    # damyang 12→5(7삭제), gangjin 8→5(3삭제) = 10삭제
+    assert store.table_row_counts(["source_collection_runs"])["source_collection_runs"] == 10
+    per_source = {r["source_id"]: 0 for r in store.recent_source_run_statuses(per_source=50)}
+    for r in store.recent_source_run_statuses(per_source=50):
+        per_source[r["source_id"]] += 1
+    assert per_source == {"damyang": 5, "gangjin": 5}, f"소스별 5건이어야 하는데 {per_source}"
+
+
+def test_source_runs_prune_keeps_the_newest(tmp_path, monkeypatch):
+    """지우는 건 오래된 것이어야 한다 — 최근 상태·연속 실패 판정이 최신을 본다."""
+    from news_summary.scheduler import SOURCE_RUN_KEEP_PER_SOURCE_ENV
+
+    store = make_store(tmp_path)
+    _seed_runs(store, "damyang", 6)  # "0회차"..."5회차" 순, 5회차가 최신
+    monkeypatch.setenv(SOURCE_RUN_KEEP_PER_SOURCE_ENV, "2")
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    collector._prune_old_source_collection_runs_once()
+
+    with store.connect() as conn:
+        kept = sorted(
+            str(r["message"])
+            for r in conn.execute(
+                "SELECT message FROM source_collection_runs WHERE source_id = ?", ("damyang",)
+            ).fetchall()
+        )
+    assert kept == ["4회차", "5회차"], f"최신 2건이 아니라 {kept}를 남겼다"
+
+
+def test_source_runs_prune_off_switch(tmp_path, monkeypatch):
+    """0이면 '전부 지운다'가 아니라 '끈다'여야 한다 — 뒤집히면 되돌릴 수 없다."""
+    from news_summary.scheduler import SOURCE_RUN_KEEP_PER_SOURCE_ENV
+
+    store = make_store(tmp_path)
+    _seed_runs(store, "damyang", 4)
+    monkeypatch.setenv(SOURCE_RUN_KEEP_PER_SOURCE_ENV, "0")
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector._prune_old_source_collection_runs_once() is None
+    assert store.table_row_counts(["source_collection_runs"])["source_collection_runs"] == 4
+
+
+def test_table_size_check_warns_only_over_threshold(tmp_path, monkeypatch):
+    """커지는 테이블은 egress 사고의 선행 지표 — 임계를 넘으면 경보하고 스냅샷을 남긴다."""
+    from news_summary.scheduler import TABLE_SIZE_STATUS_KEY, TABLE_SIZE_WARN_THRESHOLD_ENV
+    from news_summary.web import _table_size_health_payload
+    import json as _json
+
+    store = make_store(tmp_path)
+    _seed_runs(store, "damyang", 5)
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    # 임계가 높으면 조용하다.
+    monkeypatch.setenv(TABLE_SIZE_WARN_THRESHOLD_ENV, "1000")
+    assert collector._check_table_sizes_once() is None
+    snap = _json.loads(store.get_app_metadata(TABLE_SIZE_STATUS_KEY))
+    assert snap["counts"]["source_collection_runs"] == 5
+    assert snap["over_threshold"] == []
+
+    # 임계를 낮추면 경보하고, 헬스 페이로드에도 warning으로 뜬다.
+    monkeypatch.setenv(TABLE_SIZE_WARN_THRESHOLD_ENV, "3")
+    message = collector._check_table_sizes_once()
+    assert message is not None and "source_collection_runs" in message
+    health = _table_size_health_payload(store)["table_sizes"]
+    assert health["level"] == "warning"
+    assert "source_collection_runs" in health["over_threshold"]
+
+
+def test_table_row_counts_rejects_unknown_tables(tmp_path):
+    """테이블명이 SQL에 문자열로 들어가므로 화이트리스트 밖은 절대 세지 않는다."""
+    store = make_store(tmp_path)
+    counts = store.table_row_counts(["press_releases", "sqlite_master; DROP TABLE x", "wat"])
+    assert set(counts) == {"press_releases"}, f"화이트리스트 밖을 셌다: {set(counts)}"

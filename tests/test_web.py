@@ -2640,8 +2640,11 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    # 열람은 공개, 내부 화면은 로그인(2026-08-03 "보기는 누구나, 변경은 관리자만").
-    assert client.get("/", follow_redirects=False).status_code == 200
+    # 주민 열람은 공개(카드뉴스), 익명 루트는 카드뉴스로 안내, 내부 화면은 로그인.
+    # (2026-08-03 "보기는 누구나, 변경은 관리자만" + 2026-08-12 편집 목록 게이트)
+    assert client.get("/card-news", follow_redirects=False).status_code == 200
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
     response = client.get("/writing-settings", follow_redirects=False)
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
@@ -2671,11 +2674,16 @@ def test_sensitive_routes_require_login_when_auth_is_enabled(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    # 열람 페이지는 공개다(2026-08-03 "보기는 누구나, 변경은 관리자만").
-    for path in ("/", "/drafts", "/press-releases"):
-        assert client.get(path, follow_redirects=False).status_code == 200, path
+    # 주민 열람(카드뉴스)은 공개. 익명 루트는 카드뉴스로 안내한다.
+    assert client.get("/card-news", follow_redirects=False).status_code == 200
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
 
+    # 편집 목록(/drafts·/press-releases)은 2026-08-12에 로그인 게이트로 옮겼다 —
+    # 무인증으로 열려 있어 봇이 매 요청마다 DB를 당겨 egress를 키웠다.
     protected_get_paths = [
+        "/drafts",
+        "/press-releases",
         "/writing-settings",
         "/gemini-usage",
         "/ops-logs",
@@ -3711,8 +3719,10 @@ def test_admin_setup_enables_login_without_env_password(monkeypatch):
     assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
 
     client.post("/logout")
-    # 열람(/)은 공개로 남고, 내부 화면이 로그인으로 잠긴다.
-    assert client.get("/", follow_redirects=False).status_code == 200
+    # 주민 열람(카드뉴스)은 공개, 익명 루트는 카드뉴스로 안내, 내부 화면은 로그인.
+    assert client.get("/card-news", follow_redirects=False).status_code == 200
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
     protected = client.get("/writing-settings", follow_redirects=False)
     assert protected.status_code == 302
     assert "/login" in protected.headers["Location"]
@@ -7895,13 +7905,17 @@ def test_public_can_read_news_but_writes_require_admin_login(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    # 읽기 전용 페이지: 로그인 없이 200
-    for path in ("/", "/drafts", "/press-releases"):
-        response = client.get(path)
-        assert response.status_code == 200, path
+    # 주민 열람은 공개: 카드뉴스는 200, 익명 루트는 카드뉴스로 안내한다.
+    assert client.get("/card-news", follow_redirects=False).status_code == 200
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
 
-    # 내부 화면·조작: 로그인으로 리다이렉트
+    # 내부 화면·조작·**편집 목록**: 로그인으로 리다이렉트
+    # (/drafts·/press-releases는 2026-08-12에 egress·노출 때문에 게이트로 옮겼다.
+    #  주민이 전문을 읽는 상세(/drafts/<id>)는 공개로 남는다.)
     for method, path in (
+        ("GET", "/drafts"),
+        ("GET", "/press-releases"),
         ("GET", "/writing-settings"),
         ("GET", "/gemini-usage"),
         ("POST", "/recrawl"),
@@ -10458,7 +10472,37 @@ def test_public_read_endpoints_stay_open_when_auth_is_on(monkeypatch):
         checked += 1
 
     assert "card_news_image" in PUBLIC_READ_ENDPOINTS, "카드 이미지가 공개에서 빠졌다"
-    assert checked >= 12, f"검사한 공개 읽기 라우트가 {checked}개뿐이다"
+    # 편집 목록(/drafts·/press-releases)은 2026-08-12에 공개에서 뺐다(상세는 유지) —
+    # 그래서 공개 읽기 라우트 수가 12 → 10으로 줄었다. 여기가 크게 줄면 주민 경로가
+    # 닫힌 것이니 최소선을 지킨다.
+    assert checked >= 7, f"검사한 공개 읽기 라우트가 {checked}개뿐이다 — 공개가 과도하게 닫혔다"
+
+
+def test_editorial_pages_require_login_after_egress_fix(monkeypatch):
+    """편집 페이지를 무인증으로 열어 두니 봇·프로브가 매 요청마다 DB를 당겨
+    Supabase egress를 키웠고, 초안이 외부에 그대로 노출됐다(2026-08-12 사건).
+
+    이제 /drafts·/press-releases는 로그인으로 가고, 루트 /는 익명이면 **DB를
+    건드리지 않고** 주민용 /card-news로 간다.
+    """
+    app, client = _auth_enabled_client(monkeypatch, "editorial_gate")
+
+    for path in ("/drafts", "/press-releases"):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 302, f"{path}가 무인증으로 열려 있다"
+        assert "/login" in response.headers["Location"], f"{path}가 로그인으로 가지 않는다"
+
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302, "익명 루트가 무거운 대시보드를 렌더한다"
+    assert "/card-news" in root.headers["Location"], "익명 루트가 카드뉴스로 가지 않는다"
+    assert "/login" not in root.headers["Location"], "익명 루트가 로그인 벽을 세운다(주민 front door가 사라진다)"
+
+    # 상세는 공개로 남아야 한다 — 주민이 카드뉴스의 "기사 전문 보기"로 전문을 읽는 경로다.
+    # 여기를 게이트하면 화면은 멀쩡해 보이는데 주민이 링크를 눌러도 로그인 벽에 막힌다.
+    from news_summary.web import PUBLIC_READ_ENDPOINTS
+
+    assert "draft_detail" in PUBLIC_READ_ENDPOINTS, "기사 전문(draft_detail)이 닫혀 주민이 못 본다"
+    assert "press_release_detail" in PUBLIC_READ_ENDPOINTS, "원문(press_release_detail)이 닫혔다"
 
 
 def test_asset_download_is_bounded_and_releases_its_slot(monkeypatch, tmp_path):

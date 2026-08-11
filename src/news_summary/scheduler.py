@@ -61,6 +61,26 @@ AUTO_BACKUP_KEEP_COUNT_ENV = "NEWS_SUMMARY_AUTO_BACKUP_KEEP_COUNT"
 AUTO_BACKUP_VERIFY_ENV = "NEWS_SUMMARY_AUTO_BACKUP_VERIFY"
 OPERATION_EVENT_RETENTION_DAYS_ENV = "NEWS_SUMMARY_OPERATION_EVENT_RETENTION_DAYS"
 DEFAULT_OPERATION_EVENT_RETENTION_DAYS = 180
+# source_collection_runs는 활성 27곳 × 매시라 무한히 커지는데 지우는 코드가 없었다.
+# 소스별 최근 N건만 남겨 크기 자체를 하드 바운드한다(2026-08-12 egress 대응 ②).
+# 연속 실패 판정·최근 상태는 소스별 최근 50건까지만 보므로 500이면 넉넉하다.
+SOURCE_RUN_KEEP_PER_SOURCE_ENV = "NEWS_SUMMARY_SOURCE_RUN_KEEP_PER_SOURCE"
+DEFAULT_SOURCE_RUN_KEEP_PER_SOURCE = 500
+# 커지는 테이블이 egress 사건의 선행 지표라, 유지보수가 크기를 재서 임계를 넘으면
+# 경보한다(2026-08-12 ③). 메일 오기 전에 우리가 먼저 알게 하는 것이 목적이다.
+TABLE_SIZE_WARN_THRESHOLD_ENV = "NEWS_SUMMARY_TABLE_SIZE_WARN_THRESHOLD"
+DEFAULT_TABLE_SIZE_WARN_THRESHOLD = 100_000
+TABLE_SIZE_STATUS_KEY = "table_size_snapshot"
+_MONITORED_TABLES = (
+    "press_releases",
+    "article_drafts",
+    "draft_history",
+    "draft_generation_failures",
+    "source_collection_runs",
+    "operation_events",
+    "visitor_access_logs",
+    "card_news_sets",
+)
 PUBLIC_URL_ENV = "NEWS_SUMMARY_PUBLIC_URL"
 AUTO_RECOVERY_STATUS_KEY = "auto_recovery_status_snapshot"
 AUTO_QUEUE_DRAIN_STATUS_KEY = "auto_queue_drain_status_snapshot"
@@ -543,6 +563,7 @@ class AutoCollector:
             ("중복 제거", lambda: _as_messages(self._deduplicate_press_releases_once())),
             ("초안 실패 정리", lambda: _as_messages(self._cleanup_stale_draft_failures_once())),
             ("운영 이벤트 정리", lambda: _as_messages(self._prune_old_operation_events_once(now))),
+            ("수집 이력 정리", lambda: _as_messages(self._prune_old_source_collection_runs_once())),
             ("장식 이미지 정리", _asset_messages),
             ("소스 복구", lambda: _as_messages(self._recover_failed_sources_once())),
             ("대기열 처리", lambda: _as_messages(self._drain_pending_queue_once())),
@@ -551,6 +572,7 @@ class AutoCollector:
             ("오래된 백업 정리", lambda: _as_messages(self._prune_old_backups_once())),
             ("오래된 카드뉴스 정리", lambda: _as_messages(self._prune_old_card_news_once())),
             ("백업 검증", lambda: _as_messages(self._verify_latest_backup_once())),
+            ("테이블 크기 점검", lambda: _as_messages(self._check_table_sizes_once())),
         ]
         for label, step in steps:
             try:
@@ -669,6 +691,57 @@ class AutoCollector:
         if deleted <= 0:
             return None
         return f"운영 변경 이력 {deleted}건 자동 정리"
+
+    def _prune_old_source_collection_runs_once(self) -> str | None:
+        """수집 이력을 소스별 최근 N건으로 하드 바운드한다(2026-08-12 egress 사건 ②).
+
+        테이블 크기 자체를 묶어, 이 테이블을 무심코 전량 당기는 쿼리가 생겨도
+        요청당 인출량이 무한히 커지지 않게 한다. 0이면 끈다.
+        """
+        keep = env_int(
+            SOURCE_RUN_KEEP_PER_SOURCE_ENV,
+            DEFAULT_SOURCE_RUN_KEEP_PER_SOURCE,
+            minimum=0,
+        )
+        if keep <= 0:
+            return None
+        deleted = self.store.prune_source_collection_runs(keep)
+        if deleted <= 0:
+            return None
+        logger.info("source collection runs pruned deleted=%s keep_per_source=%s", deleted, keep)
+        return f"수집 이력 {deleted}건 자동 정리(소스별 최근 {keep}건 유지)"
+
+    def _check_table_sizes_once(self) -> str | None:
+        """감시 테이블의 행 수를 재서 임계를 넘으면 경보한다(2026-08-12 egress 사건 ③).
+
+        커지는 테이블은 egress 사고의 선행 지표다 — 다음번엔 Supabase 메일이 아니라
+        이 점검이 먼저 알린다. 스냅샷은 운영/헬스 화면이 읽어 간다.
+        """
+        threshold = env_int(
+            TABLE_SIZE_WARN_THRESHOLD_ENV,
+            DEFAULT_TABLE_SIZE_WARN_THRESHOLD,
+            minimum=1,
+        )
+        counts = self.store.table_row_counts(list(_MONITORED_TABLES))
+        if not counts:
+            return None
+        over = {name: n for name, n in counts.items() if n >= threshold}
+        payload = {
+            "updated_at": _now(),
+            "threshold": threshold,
+            "counts": counts,
+            "over_threshold": sorted(over),
+        }
+        self.store.set_app_metadata(
+            TABLE_SIZE_STATUS_KEY, json.dumps(payload, ensure_ascii=False)
+        )
+        if not over:
+            return None
+        detail = ", ".join(f"{name} {counts[name]:,}행" for name in sorted(over))
+        logger.warning(
+            "table size over threshold threshold=%s tables=%s", threshold, detail
+        )
+        return f"테이블 크기 경보(임계 {threshold:,}): {detail}"
 
     def _recover_failed_sources_once(self) -> list[str]:
         limit = env_int(AUTO_RECOVERY_LIMIT_ENV, 5, minimum=0)
