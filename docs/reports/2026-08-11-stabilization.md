@@ -636,3 +636,46 @@ web._parse_datetime         naive -> KST   (사이트가 준 게시일도 받는
 실행하며 실패가 즉시 보이고, 후자의 미커버는 살아 있는 Postgres가 있어야 도는
 실행부다(§13). **숫자가 낮은 순서가 아니라 "무인 · 조용한 실패 · 되돌릴 수 없음"
 순서로 골랐다.**
+
+## 19. 스텁으로 꺼져 있던 유지보수 작업 둘 (2026-08-12)
+
+§16에서 유지보수 13개의 테스트 언급 수를 셌는데, **그 수치도 정확하지 않았다.**
+`_prune_old_operation_events_once`와 `_cleanup_stale_draft_failures_once`는 각각
+1건으로 잡혔지만, 그 1건은 **다른 시험이 이 작업을 꺼 두려고 만든 스텁**이었다.
+
+```python
+monkeypatch.setattr(collector, "_cleanup_stale_draft_failures_once", lambda: None)
+monkeypatch.setattr(collector, "_prune_old_operation_events_once", lambda now: None)
+```
+
+실제로 실행된 적은 0번이다. **"언급 수"는 §13에서 이미 틀린 지표로 판명났는데,
+§16에서 같은 지표를 다시 썼다** — 이번에는 방향이 반대로(과대평가) 틀렸다.
+
+### 확인하고 결함이 아니라고 판단한 것
+
+`prune_operation_events`는 `created_at < cutoff_iso`를 **문자열로** 비교한다.
+시간대가 섞이면 틀릴 자리라 확인했다.
+
+| 값 | 출처 | 형식 |
+|---|---|---|
+| `created_at` | `_now()` | aware UTC isoformat (`…+00:00`) |
+| `cutoff` | `_run_maintenance_if_due`의 `now = datetime.now(timezone.utc)` | 같은 형식 |
+
+**둘 다 aware UTC라 비교가 일관된다 — 결함이 아니다.** 오늘 시간대 결함을 세 개
+고친 뒤라 의심했지만, 이 자리는 처음부터 맞게 돼 있었다.
+
+### 채운 것
+
+저장소 계층(`prune_operation_events`·`cleanup_stale_draft_generation_failures`)은
+이미 덮여 있으므로, **스케줄러가 어떤 기준선으로 그것을 부르는지**만 고정했다.
+
+```
+적발  기본 보관값 180 -> 30
+적발  env 무시(항상 기본값)
+적발  기준선 부호 뒤집기(최근 것을 지움)
+적발  0건에도 메시지
+```
+
+기본 보관값 180일은 카드뉴스의 30일과 똑같이 **아무 시험도 지키지 않고 있었다.**
+운영 변경 이력은 사람이 나중에 되짚어 보는 기록이라, 여기가 조용히 짧아지면
+없어진 줄도 모른다.

@@ -6,12 +6,17 @@
 여기서는 스케줄러가 그것을 **어떤 값으로 부르는지**만 고정한다.
 """
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from news_summary.scheduler import CARD_NEWS_KEEP_DAYS_ENV, AutoCollector
+from news_summary.scheduler import (
+    CARD_NEWS_KEEP_DAYS_ENV,
+    OPERATION_EVENT_RETENTION_DAYS_ENV,
+    AutoCollector,
+)
 from news_summary.storage import Store
 
 
@@ -110,3 +115,55 @@ def test_default_keeps_thirty_days_when_env_is_unset(tmp_path, monkeypatch):
 
     assert message == "오래된 카드뉴스 1일분 정리", f"기본 보관값이 30이 아니다 — {message}"
     assert len(list(root.iterdir())) == 30
+
+
+# --- 운영 변경 이력 정리 ------------------------------------------------------
+#
+# 저장소의 `prune_operation_events`는 이미 덮여 있다(test_storage.py). 여기서는
+# 스케줄러가 **어떤 기준선으로 그것을 부르는지**만 고정한다 — 카드뉴스에서
+# 기본 보관값을 아무도 안 지키고 있던 것과 같은 자리다.
+
+
+def _plant_event(store: Store, days_ago: int, now: datetime) -> None:
+    store.record_operation_event(
+        "test_event",
+        detail=f"{days_ago}일 전",
+        created_at=(now - timedelta(days=days_ago)).isoformat(),
+    )
+
+
+def test_operation_event_default_retention_is_180_days(tmp_path, monkeypatch):
+    """기본값 180을 아무 시험도 지키지 않았다. 여기가 짧아지면 운영 이력이 조용히 사라진다."""
+    monkeypatch.delenv(OPERATION_EVENT_RETENTION_DAYS_ENV, raising=False)
+    store = make_store(tmp_path)
+    now = datetime.now(timezone.utc)
+    _plant_event(store, 181, now)
+    _plant_event(store, 179, now)
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    message = collector._prune_old_operation_events_once(now)
+
+    assert message == "운영 변경 이력 1건 자동 정리", f"보관 경계가 180일이 아니다 — {message}"
+    remaining = [str(row["detail"]) for row in store.operation_events(limit=10)]
+    assert remaining == ["179일 전"], f"경계 밖 이력을 지웠거나 안 지웠다 — {remaining}"
+
+
+def test_operation_event_retention_env_overrides_the_default(tmp_path, monkeypatch):
+    monkeypatch.setenv(OPERATION_EVENT_RETENTION_DAYS_ENV, "30")
+    store = make_store(tmp_path)
+    now = datetime.now(timezone.utc)
+    _plant_event(store, 31, now)
+    _plant_event(store, 29, now)
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector._prune_old_operation_events_once(now) == "운영 변경 이력 1건 자동 정리"
+
+
+def test_operation_event_pruning_stays_silent_when_nothing_is_old(tmp_path, monkeypatch):
+    monkeypatch.delenv(OPERATION_EVENT_RETENTION_DAYS_ENV, raising=False)
+    store = make_store(tmp_path)
+    now = datetime.now(timezone.utc)
+    _plant_event(store, 1, now)
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector._prune_old_operation_events_once(now) is None
