@@ -566,3 +566,35 @@ def test_publish_date_default_follows_korean_time(tmp_path, monkeypatch):
     assert result.publish_date == expected, (
         f"기본 발행일이 LOCAL_TZ를 안 따른다: {result.publish_date!r} (기대 {expected!r})"
     )
+
+
+def test_rebuild_refuses_when_the_source_release_is_already_pruned(tmp_path):
+    """오래된 카드를 다시 그리면 사진이 조용히 빠지고 되돌릴 수 없었다.
+
+    원문 보관은 **영업일 3일**인데 카드는 최신 30일분을 남긴다. 그래서 오래된
+    카드를 다시 그릴 때는 원문 첨부가 이미 없고, 그대로 진행하면 사진이 빠진
+    카드가 멀쩡한 그림을 **덮어쓴다**. 원본이 사라진 뒤라 복구할 수단이 없다.
+
+    2026-08-12 실측: 1,979,901 -> 27,847 바이트(1%).
+    """
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+    out = tmp_path / "cardnews"
+    result = build_set_for_draft(
+        store,
+        draft_id,
+        "key",
+        out,
+        publish_date="2026-08-09",
+        downloader=lambda asset: photo_bytes(),
+        copy_builder=fake_copy_builder,
+    )
+    before = Path(result.image_paths[0]).read_bytes()
+
+    store.delete_press_releases_before("2026-08-30")  # 보관 정리가 원문을 걷어 간다
+
+    with pytest.raises(CardNewsServiceError) as error:
+        rebuild_images_from_copy(store, result.set_id, out, downloader=lambda asset: photo_bytes())
+
+    assert "보관 기간" in str(error.value)
+    assert Path(result.image_paths[0]).read_bytes() == before, "멈췄다면서 그림을 덮어썼다"

@@ -142,7 +142,17 @@ def rebuild_images_from_copy(
     if not row:
         raise CardNewsServiceError(f"카드뉴스 #{set_id}을 찾을 수 없습니다.")
     copy = decode_cards(row)
-    photos = _own_photos(store, int(row["press_release_id"]), downloader)
+    release_id = int(row["press_release_id"])
+    # **덮어쓰기 전에 멈춘다.** 원문 보관은 영업일 3일인데 카드는 최신 30일분을
+    # 남기므로, 오래된 카드를 다시 그릴 때는 원문 첨부가 이미 없다. 그대로 진행하면
+    # 사진이 빠진 카드가 멀쩡한 그림을 덮어쓰고 원본이 없어 되돌릴 수 없다
+    # (2026-08-12 실측: 1,979,901 -> 27,847 바이트, 1%).
+    if store.get_press_release(release_id) is None:
+        raise CardNewsServiceError(
+            "원문이 보관 기간이 지나 정리돼 사진을 다시 받을 수 없습니다. "
+            "사진이 빠진 카드가 기존 그림을 덮어쓰지 않도록 멈췄습니다."
+        )
+    photos = _own_photos(store, release_id, downloader)
     images = build_card_images(copy, photos)
     paths = _write_images(output_root, str(row["publish_date"]), set_id, images)
     store.set_card_news_image_count(set_id, len(images))
