@@ -388,3 +388,45 @@ naive 복원 후   test_export_filename_uses_korean_time...   FAILED  ('20260812
 |---|---|
 | CSV 수식 주입(`=`·`+`·`@`로 시작하는 셀) | **기각.** 내용이 지자체 보도자료와 Gemini 한국어 산문이라 해당 문자로 시작하는 경우가 사실상 없다. 흔한 `- ` 불릿은 엑셀에서 실행이 아니라 `#NAME?` 오류로 끝난다. 반대로 `'` 접두 방어는 운영자가 보는 제목을 실제로 더럽힌다. 로컬 DB는 비어 있고 프로덕션 DB 접속 정보가 로컬에 없어 발생 빈도는 세지 못했다 — **세지 못했다는 것도 적어 둔다** |
 | 0건 내보내기도 빈 파일 2개를 만든다 | 사실이다. 다만 고치려면 `export_approved`의 반환 타입을 바꿔 호출자 둘을 손대야 하는데, 얻는 것은 "빈 파일 경로를 flash에 안 띄운다"뿐이다. **운영자 일과의 마지막 단계에 그 위험을 질 값이 아니다** |
+
+## 13. 다음 감사 대상을 고르는 지표가 틀렸다 (2026-08-12)
+
+시간대 건을 닫은 뒤 "테스트가 없는 모듈"을 다음 대상으로 고르려고, 모듈 이름이 테스트
+파일에 몇 번 나오는지 셌다. 결과는 이랬다.
+
+```
+memory        41줄   언급 0    <- 무방비
+card_picks   144줄   언급 2
+cardcopy     281줄   언급 2
+```
+
+**이 지표가 틀렸다.** `tests/test_card_picks.py`가 이미 있는데 2로 셌다 — 파일이 모듈을
+`from news_summary.card_picks import rank_candidates`로 한 번 임포트한 뒤로는 함수
+이름만 쓰기 때문이다. **함수만 이름으로 가져다 쓰는 모듈일수록 과소평가된다.**
+
+`coverage.py`를 venv에만 설치해(프로덕션 의존성이 아니므로 `requirements.txt` 미변경)
+실제로 쟀다.
+
+```
+card_picks    93 stmts   0 miss   100%   <- "언급 2"였던 모듈
+models        49 stmts   0 miss   100%
+cardnews     224 stmts   8 miss    96%
+web         4408 stmts 540 miss    88%
+scheduler    972 stmts 222 miss    77%
+memory        27 stmts  13 miss    52%
+cli          225 stmts 130 miss    42%
+migrate_postgres 53 stmts 38 miss  28%
+TOTAL       9223 stmts 1438 miss   84%
+```
+
+**낮은 %가 곧 위험은 아니다.** `migrate_postgres` 28%의 미커버 38줄은 전부
+살아 있는 Postgres가 있어야 도는 실행부(32-52·56-64·68-77)이고, 선언부
+(`TABLES`·`SEQUENCE_TABLES`·`_truncate_sql`)는 덮여 있다. 이번 세션에 내가 넣은
+`card_news_sets` 항목도 `tests/test_migrate_postgres.py`가 이미 검사한다.
+
+**교훈은 앞의 두 건(보관 증가·재파싱)과 같다.** 그때는 감사 보고서의 형용사를 수치로
+바꾸지 않아 우선순위를 잘못 매겼고, 이번에는 **수치처럼 보이는 것을 만들었는데 그 수치가
+틀렸다.** 지표를 만들면 그 지표부터 반례로 검증할 것 — `card_picks`가 반례였다.
+
+`.coverage`는 `.gitignore`에 없어 추적 대상이었다. 측정 산출물이 커밋될 뻔했으므로
+`.coverage`·`.coverage.*`·`htmlcov/`를 함께 막았다.
