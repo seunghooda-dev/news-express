@@ -157,11 +157,21 @@ NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해�
 
 `/healthz`는 Render가 사용하는 공개 헬스체크입니다. 내부 운영 상태가 더 많이 담긴 `/healthz/details`는 관리자 로그인이 켜진 운영 환경에서는 기본적으로 로그인 뒤에만 볼 수 있습니다. 외부 모니터링 도구가 상세 상태까지 꼭 봐야 할 때만 `NEWS_SUMMARY_PUBLIC_HEALTH_DETAILS=1`을 설정합니다. 상용 공유용 Render 환경에서 이 값이 켜져 있으면 내부 상태 노출 위험이 있어 상용 준비 점검에서 필수 보완 항목으로 표시됩니다.
 
-### Render 자동 배포 보완
+### 배포는 어떻게 일어나나
 
-Render의 `Auto-Deploy`가 `On Commit`인데도 GitHub 푸시가 자동 배포로 이어지지 않으면 GitHub Actions 보완 배포를 사용합니다. 저장소에는 `.github/workflows/render-deploy.yml`이 포함되어 있으며, `codex/news-express` 브랜치에서 운영 영향 경로가 바뀔 때만 Render Deploy Hook을 호출합니다.
+Render의 `Auto-Deploy`(On Commit)가 `codex/news-express` 브랜치 푸시를 받아 직접 배포합니다. 예전에 있던 GitHub Actions 보완 워크플로(`.github/workflows/render-deploy.yml`)는 **2026-07-14에 제거했습니다** — Git 재연결로 GitHub → Render webhook이 복구돼 필요가 없어졌습니다. `RENDER_DEPLOY_HOOK_URL` 비밀값을 만들 필요가 없습니다.
 
-배포 대상 경로:
+푸시는 `scripts/safe_deploy.py`로 합니다. 수집 회차가 도는 중이거나 정각이 가까우면 기다렸다가 푸시합니다 — 빌드가 회차를 덮치면 그 회차 수집이 통째로 유실됩니다.
+
+```
+PYTHONUTF8=1 ./.venv/Scripts/python.exe scripts/safe_deploy.py
+```
+
+#### 문서만 고쳤을 때는 배포를 건너뜁니다
+
+커밋 메시지에 `[skip render]`가 있으면 Render가 자동 배포를 건너뜁니다. 앱 코드가 한 줄도 바뀌지 않았는데 재빌드·재시작하면 그 창 동안 주민에게 502가 나갑니다(2026-08-12 실측).
+
+아래 경로가 **하나도 바뀌지 않은 커밋에만** 붙입니다. `git diff --name-only`로 확인하고 붙이며, 제품 경로가 하나라도 바뀌면 붙이지 않습니다 — 고친 것이 배포되지 않는 쪽이 훨씬 나쁩니다.
 
 - `src/**`
 - `config/**`
@@ -170,15 +180,8 @@ Render의 `Auto-Deploy`가 `On Commit`인데도 GitHub 푸시가 자동 배포�
 - `pyproject.toml`
 - `render.yaml`
 
-설정 순서:
+`render.yaml`에도 같은 목록이 `buildFilter`로 적혀 있지만 **이 서비스에는 효력이 없습니다.** 서비스가 대시보드에서 생성돼 블루프린트가 관리하지 않기 때문이고, `startCommand`에 대해 `render.yaml`이 이미 같은 경고를 달고 있습니다. 근본 처방은 Render Dashboard에서 빌드 필터를 직접 거는 것이고, 그때까지는 커밋 메시지 규약이 대신합니다.
 
-1. Render Dashboard의 `news-express` 서비스 `Settings` -> `Deploy Hook`에서 hook URL을 복사합니다.
-2. GitHub 저장소 `Settings` -> `Secrets and variables` -> `Actions`에서 새 Repository secret을 만듭니다.
-3. Secret 이름은 `RENDER_DEPLOY_HOOK_URL`로 지정하고, 값에는 Render Deploy Hook URL을 넣습니다.
-4. 이후 `codex/news-express` 브랜치의 운영 영향 경로가 바뀔 때 GitHub Actions가 Render 배포를 보완 실행합니다.
-
-Deploy Hook URL은 비밀번호와 같은 민감 정보입니다. README, 코드, 이슈, 채팅에 직접 저장하지 말고 GitHub Secret 또는 Render 화면 안에서만 관리합니다.
-Secret이 아직 없으면 워크플로는 실패하지 않고 보완 배포를 건너뜁니다.
 
 ## 외부 접속: Cloudflare Tunnel
 
