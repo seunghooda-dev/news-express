@@ -10761,3 +10761,45 @@ def test_card_manage_page_is_sent_with_no_store(monkeypatch):
 
     assert response.status_code == 200, "관리 화면이 안 열렸다 — 표본이 틀렸다"
     assert "no-store" in response.headers.get("Cache-Control", "")
+
+
+def test_every_endpoint_set_entry_names_a_real_endpoint():
+    """다섯 집합의 이름이 오타면 **조용히 아무 일도 안 한다.**
+
+    이름이 라우트와 안 맞아도 파이썬은 아무 말을 하지 않고, 집합에 넣은 의도만
+    사라진다. 방향이 나쁜 쪽으로 갈리는 것이 문제다.
+
+    - `NO_STORE_ENDPOINTS` 오타 -> **fail-open**. 민감한 화면에 캐시 금지 헤더가
+      안 붙어 공유 캐시에 남을 수 있다.
+    - `CONNECTION_SCOPE_EXEMPT_ENDPOINTS` 오타 -> 요청마다 DB 연결과 방문 로그
+      INSERT가 되살아난다(robots.txt에서 실제로 겪은 비용이다).
+
+    기존 시험들은 **엔드포인트 -> 집합** 방향만 본다. 오타를 잡으려면 반대
+    방향이 필요하다(2026-08-12 감사에서 확인 — 그때는 유령 0건이었다).
+    """
+    from news_summary.web import (
+        AUTH_EXEMPT_ENDPOINTS,
+        CONNECTION_SCOPE_EXEMPT_ENDPOINTS,
+        NO_STORE_ENDPOINTS,
+        OPERATIONS_ACCESS_ENDPOINTS,
+        PUBLIC_READ_ENDPOINTS,
+        create_app,
+    )
+
+    app = create_app()
+    registered = set(app.view_functions)
+
+    named_sets = {
+        "AUTH_EXEMPT_ENDPOINTS": AUTH_EXEMPT_ENDPOINTS,
+        "PUBLIC_READ_ENDPOINTS": PUBLIC_READ_ENDPOINTS,
+        "CONNECTION_SCOPE_EXEMPT_ENDPOINTS": CONNECTION_SCOPE_EXEMPT_ENDPOINTS,
+        "OPERATIONS_ACCESS_ENDPOINTS": OPERATIONS_ACCESS_ENDPOINTS,
+        "NO_STORE_ENDPOINTS": NO_STORE_ENDPOINTS,
+    }
+    ghosts = {
+        name: sorted(entry for entry in values if entry not in registered)
+        for name, values in named_sets.items()
+    }
+    ghosts = {name: missing for name, missing in ghosts.items() if missing}
+
+    assert not ghosts, f"실존하지 않는 엔드포인트 이름이 들어 있다: {ghosts}"

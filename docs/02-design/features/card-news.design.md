@@ -159,7 +159,8 @@
 
 사실 보존은 두 모델 모두 위반 0건이다. **차이는 사실이 아니라 문체·분량 준수에 있다.**
 
-산출물 `scratchpad/measure_copy_models.py`·`analyze_copy_ab.mjs`. 무료 티어를 아끼려고
+측정 스크립트는 세션 scratchpad에 두고 저장소에 넣지 않았다(`measure_copy_models.py`·
+`analyze_copy_ab.mjs` — 지금은 남아 있지 않으므로 다시 재려면 새로 쓴다). 무료 티어를 아끼려고
 모델별 1회씩만 돌리고 재시도는 제품 동작 그대로 뒀다(flash 9회 · lite 11회 소모).
 
 **운영 주의** — `gemini-3.5-flash`는 무료 티어 일일 20회 한도가 있다. 소진되면
