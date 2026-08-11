@@ -10706,3 +10706,58 @@ def test_operations_action_invalidates_the_diagnostics_cache(monkeypatch):
     client.get("/operations")
 
     assert len(calls) == 2, "조작 뒤에도 옛 리포트를 그대로 내줬다 — 무효화가 빠졌다"
+
+
+def test_every_session_dependent_page_forbids_shared_caching():
+    """같은 URL이 익명에게는 로그인으로 튕기고 관리자에게만 내용을 준다.
+
+    공유 캐시가 그 응답을 저장하면 뒤이은 익명 요청에 그대로 내준다. 이 프로젝트는
+    Cloudflare 터널을 쓴 이력이 있어 가정이 아니다 — 2026-08-11에 카드 이미지에서
+    같은 문제를 고쳤고, 전수로 훑어 넷을 더 찾았다(`card_news_manage`는 발행 전
+    문안을, `export_visitor_logs`는 방문 기록 IP를 담는다).
+
+    라우트를 하나씩 세는 대신 `url_map`을 돌아 **앞으로 추가될 것까지** 덮는다.
+    """
+    from news_summary.web import (
+        AUTH_EXEMPT_ENDPOINTS,
+        NO_STORE_ENDPOINTS,
+        OPERATIONS_ACCESS_ENDPOINTS,
+        PUBLIC_READ_ENDPOINTS,
+        create_app,
+    )
+
+    app = create_app()
+    missing: list[str] = []
+    checked = 0
+    for rule in app.url_map.iter_rules():
+        endpoint = rule.endpoint
+        if endpoint == "static" or "GET" not in rule.methods:
+            continue
+        if endpoint in AUTH_EXEMPT_ENDPOINTS or endpoint in PUBLIC_READ_ENDPOINTS:
+            continue
+        # 남는 것은 로그인 전용과 운영 게이트 — 둘 다 세션에 따라 달라진다.
+        checked += 1
+        if endpoint not in NO_STORE_ENDPOINTS:
+            missing.append(endpoint)
+
+    assert checked >= 8, f"검사한 라우트가 {checked}개뿐이다 — 수집이 깨졌다"
+    assert not missing, f"세션에 따라 달라지는데 no-store가 없다: {sorted(missing)}"
+
+
+def test_card_manage_page_is_sent_with_no_store(monkeypatch):
+    """목록만 맞추고 실제 응답 헤더를 안 보면, 적용 지점이 빠져도 통과한다."""
+    db_path = Path(f"data/.test_nostore_manage_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["admin_authenticated"] = True
+
+    response = client.get("/card-news/manage")
+
+    assert response.status_code == 200, "관리 화면이 안 열렸다 — 표본이 틀렸다"
+    assert "no-store" in response.headers.get("Cache-Control", "")

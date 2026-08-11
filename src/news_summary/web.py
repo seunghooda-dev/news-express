@@ -161,16 +161,24 @@ OPERATIONS_ACCESS_ENDPOINTS = {
     "purge_proxy_visitor_logs",
     "export_visitor_logs",
 }
+# **세션에 따라 내용이 달라지는 GET은 전부 여기 있어야 한다.** 같은 URL이 익명에게는
+# 로그인으로 튕기고 관리자에게만 내용을 주는데, 공유 캐시가 그 응답을 저장하면 뒤이은
+# 익명 요청에 그대로 내준다. 이 프로젝트는 Cloudflare 터널을 쓴 이력이 있어 가정이
+# 아니다(2026-08-11에 카드 이미지에서 같은 문제를 고쳤고, 전수로 훑어 넷을 더 찾았다).
 NO_STORE_ENDPOINTS = {
     "admin_setup",
+    "card_news_manage",  # 발행 전 문안을 그대로 렌더한다
     "download_backup",
+    "export_visitor_logs",  # 방문 기록(IP 포함) 내려받기 — download_backup과 같은 부류
     "gemini_usage",
     "healthz_details",
     "login",
+    "next_review_draft",
     "operations_login",
     "operations",
     "ops_logs",
     "recrawl_status",
+    "writing_settings",
 }
 CSRF_SESSION_KEY = "_csrf_token"
 CSRF_FORM_FIELD = "_csrf_token"
