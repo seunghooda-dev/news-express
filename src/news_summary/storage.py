@@ -997,6 +997,24 @@ class Store:
             grouped.setdefault(int(row["press_release_id"]), []).append(row)
         return grouped
 
+    def existing_draft_ids(self, draft_ids: list[int]) -> set[int]:
+        """살아 있는 초안 id만 돌려준다.
+
+        원문·초안 보관은 **영업일 3일**인데 카드뉴스는 최신 30개 날짜 폴더를
+        남긴다. 그래서 카드가 원본보다 오래 사는 것이 정상 상태이고, 그때
+        `기사 전문 보기`가 없는 초안을 가리킨다(2026-08-12 프로덕션 실측).
+        존재 확인만 하면 되므로 `get_draft`의 JOIN 대신 id만 한 번에 읽는다.
+        """
+        if not draft_ids:
+            return set()
+        placeholders = ",".join("?" for _ in draft_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT id FROM article_drafts WHERE id IN ({placeholders})",
+                tuple(draft_ids),
+            ).fetchall()
+        return {int(row["id"]) for row in rows}
+
     def press_release_assets_by_source(self, source_id: str, limit: int = 30) -> list[Any]:
         with self.connect() as conn:
             return conn.execute(

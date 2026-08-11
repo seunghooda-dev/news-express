@@ -3237,8 +3237,12 @@ def _card_news_view_sets(
     status: str | None = None,
     require_images: bool = False,
 ) -> list[dict]:
+    rows = store.card_news_sets_for_date(publish_date, status=status)
+    # 카드는 원본보다 오래 산다(원문 보관 영업일 3일 vs 카드 최신 30일분). 없는
+    # 초안을 가리키는 링크를 그리면 주민이 눌렀을 때 홈으로 튕긴다 — 한 번에 확인한다.
+    live_drafts = store.existing_draft_ids([int(row["draft_id"]) for row in rows])
     sets = []
-    for row in store.card_news_sets_for_date(publish_date, status=status):
+    for row in rows:
         set_id = int(row["id"])
         images = load_set_images(root, publish_date, set_id)
         # 주민 화면에는 **그림이 있는 세트만** 내보낸다. 보관 정리가 그림만 걷거나
@@ -3252,6 +3256,7 @@ def _card_news_view_sets(
             {
                 "id": set_id,
                 "draft_id": int(row["draft_id"]),
+                "draft_exists": int(row["draft_id"]) in live_drafts,
                 "status": str(row["status"]),
                 # "copy"로 두면 Jinja가 dict.copy 메서드를 먼저 집어 값이 통째로 빈다.
                 "card_copy": decode_cards(row),

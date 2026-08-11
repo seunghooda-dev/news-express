@@ -71,7 +71,9 @@
     </form>
     {# 사진과 본문이 어긋나면 신뢰 사고다 — 원문을 나란히 두어 사람이 대조하게 한다. #}
     <p class="cardnews-actions">
+      {% if item.draft_exists %}
       <a href="{{ url_for('draft_detail', draft_id=item.draft_id) }}">원문·초안 대조</a>
+      {% endif %}
     </p>
     <div class="cardnews-controls">
       {# 문안은 그대로 두고 그림만 새 배치로. AI를 안 부르니 글자가 안 덮이고 한도도 안 깎인다. #}

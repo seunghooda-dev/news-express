@@ -895,3 +895,50 @@ def test_draft_card_image_is_never_cached_publicly(monkeypatch, tmp_path):
     assert published.status_code == 200
     # 발행분은 카톡·밴드 미리보기가 가져가야 하므로 공개 캐시를 유지한다.
     assert "public" in published.headers.get("Cache-Control", "")
+
+
+def test_public_card_news_drops_the_link_when_the_draft_is_gone(monkeypatch, tmp_path):
+    """카드는 원본보다 오래 산다 — 그때 `기사 전문 보기`가 주민을 홈으로 튕겼다.
+
+    원문·초안 보관은 **영업일 3일**(`DEFAULT_RETENTION_DAYS = 3`)인데 카드뉴스는
+    **최신 30개 날짜 폴더**를 남긴다. 그래서 카드가 원본보다 오래 사는 것이
+    예외가 아니라 정상 상태다. 2026-08-12 프로덕션 실측에서 발행된 두 날짜 중
+    하나(08-07)가 이미 없는 초안을 가리키고 있었고, 누르면
+    `초안을 찾을 수 없습니다`와 함께 `/`로 302된다.
+    """
+    from news_summary import web as web_module
+
+    db_path = tmp_path / f"cardnews_dead_link_{uuid4().hex}.sqlite"
+    root = tmp_path / "cardnews"
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setenv("NEWS_SUMMARY_CARDNEWS_DIR", str(root))
+    monkeypatch.setenv("AUTH_DISABLED", "1")
+
+    store = Store(db_path)
+    store.init_db()
+    set_id = store.save_card_news_set(
+        draft_id=999_999,  # 보관 정리가 이미 걷어 간 초안
+        press_release_id=999_999,
+        publish_date="2026-08-07",
+        cover="담양군, 폭염 현장 점검",
+        cards=[{"heading": "소제목", "body": "본문입니다."}],
+        tags=["담양"],
+        source_label="담양군청 보도자료",
+        image_count=1,
+    )
+    store.set_card_news_status(set_id, "published")
+    set_dir = root / "2026-08-07" / str(set_id)
+    set_dir.mkdir(parents=True)
+    (set_dir / "1.png").write_bytes(b"fake")
+
+    app = web_module.create_app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/card-news?date=2026-08-07")
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "담양군, 폭염 현장 점검" in body, "카드 자체는 그대로 보여야 한다"
+    assert "기사 전문 보기" not in body, "없는 초안을 가리키는 링크가 그대로 나갔다"
+    assert "/drafts/999999" not in body
