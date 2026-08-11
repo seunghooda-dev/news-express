@@ -226,3 +226,25 @@ def test_verify_backup_reports_bad_zip(tmp_path):
 
     assert verification["ok"] is False
     assert verification["status_label"] == "백업 확인 필요"
+
+
+def test_backup_filename_uses_korean_time(tmp_path, monkeypatch):
+    """백업 파일명도 한국 시각이어야 한다 — 운영자가 날짜로 골라 받는다.
+
+    보관 정리는 mtime 정렬이라 이름을 바꿔도 지워지는 순서는 그대로다.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from news_summary import backup as backup_module
+
+    db_path = tmp_path / "data" / "news_summary.sqlite"
+    Store(db_path).init_db()
+    far_tz = timezone(timedelta(hours=-11))
+    monkeypatch.setattr(backup_module, "LOCAL_TZ", far_tz)
+
+    archive = backup_module.create_backup(tmp_path, db_path, tmp_path / "backups")
+
+    expected = datetime.now(far_tz).strftime("%Y%m%d-%H%M")
+    assert expected in archive.name, (
+        f"백업 파일명이 LOCAL_TZ를 안 따른다: {archive.name!r} (기대 {expected!r})"
+    )

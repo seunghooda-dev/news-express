@@ -6,7 +6,7 @@ import re
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .asset_filters import is_display_noise_image_asset
@@ -19,6 +19,10 @@ logger = get_logger("cardnews_service")
 
 # 쓸 만한 사진 하나를 찾을 때까지 **시도**할 첨부 수. 카드는 한 장이라 사진도
 # 한 장만 쓰므로, 첫 성공에서 멈춘다 — 이 값은 전부 실패할 때의 상한이다.
+# 컨테이너는 UTC다. naive now()로 날짜를 잡으면 한국 00~09시에 **어제 날짜**로
+# 카드가 묶인다 — 주민 화면에서 하루 밀려 보인다(2026-08-12 적발).
+LOCAL_TZ = timezone(timedelta(hours=9))
+
 MAX_PHOTO_ATTEMPTS = 4
 CARD_IMAGE_SUFFIX = ".png"
 
@@ -72,7 +76,7 @@ def build_set_for_draft(
     # **발행 중이던 세트의 행이 먼저 덮이고**(publish_date가 바뀌고 status가 draft로
     # 내려가고 published_at이 비워진 뒤) 그다음에 실패한다. 이미지는 옛 경로에
     # 고아로 남고 롤백이 없다(2026-08-11 재현). 겸해서 Gemini 호출 전이라 한도도 안 깎는다.
-    publish_date = _safe_date_segment(publish_date or datetime.now().date().isoformat())
+    publish_date = _safe_date_segment(publish_date or datetime.now(LOCAL_TZ).date().isoformat())
     # 기본 인자로 두면 정의 시점에 묶여 교체가 안 된다 — 호출 때 고른다.
     copy_builder = copy_builder or build_card_copy
 

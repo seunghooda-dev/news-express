@@ -328,3 +328,63 @@ date 이상     200 (무시)
 
 - 백업 검증이 15분마다 덤프 전체를 `json.load` → 지문 + 12시간으로 **96회 → 2회**
 - 카드에 사진이 왜 없는지 운영자가 모름 → 빌드 안내에 사유 표시(§9에서 문구 정정)
+
+## 12. 컨테이너는 UTC인데 세 곳이 그것을 몰랐다 (2026-08-12)
+
+내보내기(`exporter.py`)는 운영자 일과의 **마지막 단계**인데 테스트가 0건이라 감사 대상으로
+골랐다. 첫 의심(`approved_time` 별칭이 없어 정렬이 틀릴 것)은 **틀렸다** — 실제로 확인하니
+`approved_drafts`가 `COALESCE(ad.updated_at, ad.created_at) AS approved_time`으로 별칭을 준다.
+대신 그 옆에서 다른 것이 나왔다.
+
+### 실체
+
+```
+exporter.py:22          내보내기 파일명       datetime.now()   <- naive
+backup.py:57            백업 파일명           datetime.now()   <- naive
+cardnews_service.py:75  publish_date 기본값   datetime.now()   <- naive
+```
+
+`render.yaml`에 TZ 설정이 없어 **컨테이너는 UTC로 돈다.** 앱은 `web.py`에서만
+`datetime.now(LOCAL_TZ)`를 37곳에서 쓰고 있었으니 KST가 규약이고 이 셋만 예외였다.
+
+셋 다 사용자에게 보이는 값이고, **세 번째는 기능 버그다.** 한국 시각 00~09시에 카드뉴스를
+만들면 `publish_date`가 **어제 날짜**로 잡혀 주민 화면에서 하루 밀려 묶인다.
+
+### 고치기 전에 확인한 것
+
+백업 파일명을 바꾸면 **보관 정리가 흔들릴 수 있다**고 보고 먼저 봤다.
+`_backup_files_newest_first`는 `key=lambda path: path.stat().st_mtime`으로 정렬한다 —
+파일명이 아니라 mtime이다. 이름을 바꿔도 지워지는 순서는 그대로다.
+
+### 테스트 — 이 머신에서는 헛도는 테스트가 나오기 쉬웠다
+
+개발 PC가 KST라 `naive now()`와 `now(LOCAL_TZ)`가 **같은 값을 낸다.** "파일명이 지금
+시각과 맞는가"로 짜면 고치기 전 코드도 통과한다. 그래서 **모듈의 `LOCAL_TZ`를 UTC-11로
+바꿔치기하고 결과가 그것을 따라가는지** 본다 — 어느 시간대의 머신에서도 판별된다.
+
+이빨 검사(고치기 전 코드로 되돌려 실행).
+
+```
+naive 복원 후   test_export_filename_uses_korean_time...   FAILED  ('20260812_0224')
+                test_backup_filename_uses_korean_time      FAILED
+                test_publish_date_default_follows_korean_time  FAILED
+수정 복원 후    3건 전부 통과
+```
+
+`exporter.py`는 테스트가 0건이었으므로 시간대 외에 **재내보내기 방지**(두 번째 호출이
+0건)와 **엑셀 한글 깨짐 방지**(UTF-8 BOM)도 같이 덮었다.
+
+### 같은 계열을 넓혀 확인한 것
+
+| 확인 | 결과 |
+|---|---|
+| `src/`·`scripts/`의 다른 naive `now()`·`utcnow()`·`today()` | **0건** — 세 곳이 전부였다 |
+| `_approved_local_date`의 naive 분기가 실제로 도는가 | **안 돈다.** `_now()`가 `datetime.now(timezone.utc).isoformat()`로 aware를 저장하고, 스키마에 `CURRENT_TIMESTAMP` 기본값이 **하나도 없다**. 모든 행이 aware라 `astimezone` 분기만 탄다 |
+| "오늘 승인 기사" 내보내기 범위 | 위 때문에 **정확하다** — 의심했으나 버그가 아니었다 |
+
+### 확인 결과 고치지 않기로 한 것
+
+| 항목 | 판단 |
+|---|---|
+| CSV 수식 주입(`=`·`+`·`@`로 시작하는 셀) | **기각.** 내용이 지자체 보도자료와 Gemini 한국어 산문이라 해당 문자로 시작하는 경우가 사실상 없다. 흔한 `- ` 불릿은 엑셀에서 실행이 아니라 `#NAME?` 오류로 끝난다. 반대로 `'` 접두 방어는 운영자가 보는 제목을 실제로 더럽힌다. 로컬 DB는 비어 있고 프로덕션 DB 접속 정보가 로컬에 없어 발생 빈도는 세지 못했다 — **세지 못했다는 것도 적어 둔다** |
+| 0건 내보내기도 빈 파일 2개를 만든다 | 사실이다. 다만 고치려면 `export_approved`의 반환 타입을 바꿔 호출자 둘을 손대야 하는데, 얻는 것은 "빈 파일 경로를 flash에 안 띄운다"뿐이다. **운영자 일과의 마지막 단계에 그 위험을 질 값이 아니다** |

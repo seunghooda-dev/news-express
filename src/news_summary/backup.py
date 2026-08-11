@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,8 @@ REQUIRED_SQLITE_BACKUP_TABLES = tuple(
     for line in SCHEMA.splitlines()
     if line.startswith("CREATE TABLE IF NOT EXISTS ")
 )
+LOCAL_TZ = timezone(timedelta(hours=9))
+
 POSTGRES_BACKUP_TABLES = (
     "press_releases",
     "press_release_assets",
@@ -54,7 +56,9 @@ def create_backup(
     project_root = project_root.resolve()
     backup_dir = _resolve_backup_dir(project_root, backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # 컨테이너는 UTC라 naive now()면 파일명이 9시간 어긋난다(2026-08-12 적발).
+    # 보관 정리는 mtime으로 정렬하므로 이름을 바꿔도 영향이 없다.
+    timestamp = datetime.now(LOCAL_TZ).strftime("%Y%m%d-%H%M%S")
     backup_path = _unique_backup_path(backup_dir, timestamp)
     should_include_env = backup_include_env() if include_env is None else include_env
 

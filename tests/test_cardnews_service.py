@@ -534,3 +534,35 @@ def test_photo_attempts_counts_downloads_not_attachments(tmp_path):
 
     assert result.photo_used is False
     assert result.photo_attempts == 2, f"첨부 3장 중 로고를 뺀 2장이어야 하는데 {result.photo_attempts}"
+
+
+def test_publish_date_default_follows_korean_time(tmp_path, monkeypatch):
+    """컨테이너는 UTC다. naive `now()`로 날짜를 잡으면 한국 00~09시에 만든 카드가
+    **어제 날짜**로 묶여 주민 화면에서 하루 밀려 보인다.
+
+    개발 머신이 KST라 그냥 비교하면 헛돌므로, 모듈의 LOCAL_TZ를 바꿔치기해
+    기본 날짜가 그것을 따라가는지 본다.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from news_summary import cardnews_service
+
+    store = make_store(tmp_path)
+    _, draft_id = seed(store)
+    far_tz = timezone(timedelta(hours=-11))
+    monkeypatch.setattr(cardnews_service, "LOCAL_TZ", far_tz)
+
+    result = build_set_for_draft(
+        store,
+        draft_id,
+        "key",
+        tmp_path / "cardnews",
+        publish_date=None,
+        downloader=lambda asset: photo_bytes(),
+        copy_builder=fake_copy_builder,
+    )
+
+    expected = datetime.now(far_tz).date().isoformat()
+    assert result.publish_date == expected, (
+        f"기본 발행일이 LOCAL_TZ를 안 따른다: {result.publish_date!r} (기대 {expected!r})"
+    )
