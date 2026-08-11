@@ -1590,8 +1590,16 @@ def create_app() -> Flask:
         if not 1 <= index <= len(paths):
             abort(404)
         response = send_file(paths[index - 1], mimetype="image/png")
-        # 파일명이 곧 버전이 아니므로 재생성 시 갱신되도록 짧게 잡는다.
-        response.headers["Cache-Control"] = "public, max-age=600"
+        if str(row["status"]) == "published":
+            # 발행분은 주민에게 열려 있고 카톡·밴드 미리보기가 이 URL을 가져간다.
+            # 파일명이 곧 버전이 아니므로 재생성 시 갱신되도록 짧게 잡는다.
+            response.headers["Cache-Control"] = "public, max-age=600"
+        else:
+            # **발행 전은 관리자 세션에만 보인다** — 같은 URL이 익명에게는 404다.
+            # 그런데 `public`을 붙이면 공유 캐시가 그 응답을 공개 자원으로 저장해,
+            # 나중에 익명 방문자에게 초안 카드를 내줄 수 있다(2026-08-11 감사).
+            # 이 프로젝트는 Cloudflare 터널을 쓴 이력이 있어 가정이 아니다.
+            response.headers["Cache-Control"] = "private, no-store"
         return response
 
     @app.get("/card-news/manage")

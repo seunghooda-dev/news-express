@@ -865,3 +865,33 @@ def test_unknown_date_does_not_crash_the_public_page(monkeypatch, tmp_path):
 
     for value in ("zzz", "2026/08/09", "../backups", ""):
         assert client.get(f"/card-news?date={value}").status_code == 200
+
+
+def test_draft_card_image_is_never_cached_publicly(monkeypatch, tmp_path):
+    """발행 전 카드가 공유 캐시에 공개 자원으로 저장되면 익명에게 새어 나간다.
+
+    같은 URL이 익명에게는 404이고 관리자 세션에만 200이다. 그런데 `public`을 붙이면
+    캐시가 그 200을 저장해 뒤이은 익명 요청에 내줄 수 있다. 관리 화면이 초안 카드를
+    그대로 렌더하므로 그 응답은 평소에 자주 나간다(2026-08-11 감사).
+    """
+    store, draft_id = prepare(monkeypatch, tmp_path)
+    stub_generation(monkeypatch)
+    client = make_client()
+    _build_one_set(client, draft_id)
+    set_id = int(store.card_news_set_by_draft(draft_id)["id"])
+
+    with client.session_transaction() as session:
+        session["admin_authenticated"] = True
+
+    draft_image = client.get(f"/card-news/{set_id}/1.png")
+    assert draft_image.status_code == 200, "관리자 미리보기가 막혔다 — 표본이 틀렸다"
+    cache = draft_image.headers.get("Cache-Control", "")
+    assert "public" not in cache, f"발행 전 카드에 공개 캐시가 붙었다: {cache!r}"
+    assert "no-store" in cache
+
+    store.set_card_news_status(set_id, "published")
+    published = client.get(f"/card-news/{set_id}/1.png")
+
+    assert published.status_code == 200
+    # 발행분은 카톡·밴드 미리보기가 가져가야 하므로 공개 캐시를 유지한다.
+    assert "public" in published.headers.get("Cache-Control", "")
