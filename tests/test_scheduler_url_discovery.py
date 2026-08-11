@@ -232,3 +232,97 @@ def test_discovery_respects_the_limit(fake_http):
     source = make_source(base_url="https://www.damyang.go.kr/", list_url=None, feed_url=None)
 
     assert len(_discover_candidate_urls(source, limit=3)) == 3
+
+
+# --- 유지보수 루프와 운영 화면의 이음매 -------------------------------------
+
+
+def test_discovery_can_be_turned_off_by_limit_zero(tmp_path, monkeypatch, fake_http):
+    """끌 수 있어야 한다 — 진단이 부담이 되는 날 운영자가 막을 수단이다."""
+    from news_summary.scheduler import AUTO_URL_DISCOVERY_LIMIT_ENV, AutoCollector
+
+    store = make_store(tmp_path)
+    monkeypatch.setenv(AUTO_URL_DISCOVERY_LIMIT_ENV, "0")
+    monkeypatch.setattr(
+        scheduler, "_collectable_source_map", lambda path: {"damyang-county": make_source()}
+    )
+    fail(store, "damyang-county", 5)
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector._discover_fallback_url_candidates_once() == []
+    assert fake_http.requested == [], "꺼 뒀는데 홈페이지를 긁었다"
+
+
+def test_discovery_snapshot_round_trips_to_the_operations_screen(tmp_path, monkeypatch, fake_http):
+    """스케줄러가 쓰고 운영 화면이 읽는다 — 모양이 어긋나면 화면이 조용히 빈다."""
+    from news_summary.scheduler import AUTO_URL_DISCOVERY_LIMIT_ENV, AutoCollector
+    from news_summary.web import _url_discovery_report
+
+    store = make_store(tmp_path)
+    monkeypatch.setenv(AUTO_URL_DISCOVERY_LIMIT_ENV, "3")
+    monkeypatch.setattr(
+        scheduler, "_collectable_source_map", lambda path: {"damyang-county": make_source()}
+    )
+    fail(store, "damyang-county", 3)
+    fake_http.pages["https://www.damyang.go.kr/"] = (
+        '<a href="/board/press">보도자료</a><a href="/news/list">군정소식</a>'
+    )
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    messages = collector._discover_fallback_url_candidates_once()
+
+    assert messages == ["담양군청 보도자료 대체 URL 후보 2개 발견"]
+
+    report = _url_discovery_report(store)
+    assert report["updated_at"], "언제 찾았는지가 화면에 안 간다"
+    assert len(report["discoveries"]) == 1
+    found = report["discoveries"][0]
+    assert found["source_id"] == "damyang-county"
+    assert found["url_count"] == 2
+    assert found["urls"] == [
+        "https://www.damyang.go.kr/board/press",
+        "https://www.damyang.go.kr/news/list",
+    ]
+
+
+def test_discovery_records_nothing_when_no_links_are_found(tmp_path, monkeypatch, fake_http):
+    """못 찾았으면 빈 항목을 남기지 않는다 — 화면에 빈 줄이 쌓이면 신호가 죽는다."""
+    from news_summary.scheduler import AUTO_URL_DISCOVERY_LIMIT_ENV, AutoCollector
+    from news_summary.web import _url_discovery_report
+
+    store = make_store(tmp_path)
+    monkeypatch.setenv(AUTO_URL_DISCOVERY_LIMIT_ENV, "3")
+    monkeypatch.setattr(
+        scheduler, "_collectable_source_map", lambda path: {"damyang-county": make_source()}
+    )
+    fail(store, "damyang-county", 3)
+    fake_http.pages["https://www.damyang.go.kr/"] = "<a href='/about'>군수 인사말</a>"
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+
+    assert collector._discover_fallback_url_candidates_once() == []
+    assert _url_discovery_report(store)["discoveries"] == []
+
+
+def test_discovery_limit_env_caps_how_many_sources_are_probed(tmp_path, monkeypatch, fake_http):
+    """상한이 실제로 후보 수를 자르는지 — 27곳이 한꺼번에 깨진 날 홈페이지를 27번 긁으면 안 된다.
+
+    off 스위치 시험만으로는 이 경로에 이빨이 없다. `limit <= 0` 가드를 지워도
+    `LIMIT 0` 쿼리가 우연히 같은 결과를 내기 때문이다(2026-08-12 변이 검사에서
+    적발). 상한이 0이 아닌 값에서 동작하는지를 따로 건다.
+    """
+    from news_summary.scheduler import AUTO_URL_DISCOVERY_LIMIT_ENV, AutoCollector
+
+    store = make_store(tmp_path)
+    sources = {f"town-{i}": make_source(f"town-{i}") for i in range(3)}
+    monkeypatch.setenv(AUTO_URL_DISCOVERY_LIMIT_ENV, "1")
+    monkeypatch.setattr(scheduler, "_collectable_source_map", lambda path: sources)
+    for source_id in sources:
+        fail(store, source_id, 3)
+    fake_http.pages["https://www.damyang.go.kr/"] = '<a href="/board/press">보도자료</a>'
+
+    collector = AutoCollector(store, Path("unused.yaml"), enabled=True)
+    messages = collector._discover_fallback_url_candidates_once()
+
+    assert len(messages) == 1, f"상한 1인데 {len(messages)}곳을 긁었다"
