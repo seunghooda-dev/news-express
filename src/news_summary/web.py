@@ -148,8 +148,9 @@ PUBLIC_READ_ENDPOINTS = {
 # 로그 실측: 봇 히트 상위가 /drafts·/press-releases였다). robots.txt가 이미 이 둘을
 # Disallow로 막아 둔 의도와도 어긋났다. 여기서 빠지면 익명 GET은 로그인으로 간다.
 # **상세(draft_detail·press_release_detail)는 남긴다** — 주민이 카드뉴스에서 전문을
-# 읽는 경로다. 루트 `/`(dashboard)도 집합에 남기되, 익명이면 핸들러가 DB를 건드리기 전에
-# 주민용 /card-news로 돌린다 — 공개 첫 화면이 무거운 운영 대시보드를 렌더하던 것을 없앤다.
+# 읽는 경로다. 루트 `/`(dashboard)도 집합에 남긴다 — 첫 화면은 로그인 여부와 무관하게
+# 기사 초안 대시보드를 보여 준다(2026-08-12 사용자 지시). egress 안전은 이 공개 여부가
+# 아니라 쿼리·테이블 바운드(위 ②)와 크기 감시(③)로 확보한다.
 # 요청 시작 시 DB 연결을 미리 열지 않는 엔드포인트. 헬스체크가 여기 있는 이유는
 # open_store_connection_scope 주석 참조 — 연결 실패가 핸들러 이전 500이 되면 안 된다.
 # robots.txt는 고정 문자열만 돌려주는데 DB를 열 이유가 없다. 크롤러가 가장 자주
@@ -575,13 +576,10 @@ def create_app() -> Flask:
 
     @app.get("/")
     def dashboard():
-        # 익명 방문은 운영 대시보드를 렌더하지 않는다 — 주민용 카드뉴스로 보낸다.
-        # DB를 건드리기 전에 돌려보내는 것이 핵심이다: 봇이 루트를 아무리 때려도
-        # 무거운 대시보드 쿼리가 돌지 않는다(2026-08-12 egress 사건 대응).
-        # **인증이 켜져 있고 미인증일 때만** 돌린다 — 인증을 끈 배포(로컬·테스트)에서는
-        # 모두가 운영자이므로 대시보드를 그대로 보여 준다.
-        if auth_config(store).enabled and not session.get("admin_authenticated"):
-            return redirect(url_for("card_news"))
+        # 첫 화면은 기사 초안 대시보드다 — 로그인 없이 공개(2026-08-12 사용자 지시로
+        # 카드뉴스 리다이렉트를 걷어냄). egress 안전은 여기 리다이렉트가 아니라,
+        # ①매 요청 전량을 당기던 쿼리를 바운드하고 ②source_collection_runs를 소스별
+        # 최근 N건으로 묶고 ③테이블 크기를 감시하는 것으로 이미 확보돼 있다.
         selected_regions = _selected_regions(config_path)
         pending_drafts = _draft_rows_for_listing(
             store,

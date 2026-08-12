@@ -2640,11 +2640,10 @@ def test_admin_login_is_required_when_password_is_configured(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    # 주민 열람은 공개(카드뉴스), 익명 루트는 카드뉴스로 안내, 내부 화면은 로그인.
-    # (2026-08-03 "보기는 누구나, 변경은 관리자만" + 2026-08-12 편집 목록 게이트)
+    # 첫 화면 /는 로그인 없이도 대시보드를 보여 준다(2026-08-12 지시). 내부 화면은 로그인.
+    # (2026-08-03 "보기는 누구나, 변경은 관리자만" + 2026-08-12 편집 목록만 게이트)
     assert client.get("/card-news", follow_redirects=False).status_code == 200
-    root = client.get("/", follow_redirects=False)
-    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
+    assert client.get("/", follow_redirects=False).status_code == 200
     response = client.get("/writing-settings", follow_redirects=False)
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
@@ -2674,10 +2673,9 @@ def test_sensitive_routes_require_login_when_auth_is_enabled(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    # 주민 열람(카드뉴스)은 공개. 익명 루트는 카드뉴스로 안내한다.
+    # 주민 열람(카드뉴스)은 공개. 첫 화면 /는 로그인 없이도 대시보드를 보여 준다.
     assert client.get("/card-news", follow_redirects=False).status_code == 200
-    root = client.get("/", follow_redirects=False)
-    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
+    assert client.get("/", follow_redirects=False).status_code == 200
 
     # 편집 목록(/drafts·/press-releases)은 2026-08-12에 로그인 게이트로 옮겼다 —
     # 무인증으로 열려 있어 봇이 매 요청마다 DB를 당겨 egress를 키웠다.
@@ -3719,10 +3717,9 @@ def test_admin_setup_enables_login_without_env_password(monkeypatch):
     assert "관리자 로그인을 활성화했습니다." in setup.data.decode("utf-8")
 
     client.post("/logout")
-    # 주민 열람(카드뉴스)은 공개, 익명 루트는 카드뉴스로 안내, 내부 화면은 로그인.
+    # 첫 화면 /는 로그인 없이도 대시보드를 보여 준다(2026-08-12 지시), 내부 화면은 로그인.
     assert client.get("/card-news", follow_redirects=False).status_code == 200
-    root = client.get("/", follow_redirects=False)
-    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
+    assert client.get("/", follow_redirects=False).status_code == 200
     protected = client.get("/writing-settings", follow_redirects=False)
     assert protected.status_code == 302
     assert "/login" in protected.headers["Location"]
@@ -7905,10 +7902,9 @@ def test_public_can_read_news_but_writes_require_admin_login(monkeypatch):
     app.testing = True
     client = app.test_client()
 
-    # 주민 열람은 공개: 카드뉴스는 200, 익명 루트는 카드뉴스로 안내한다.
+    # 주민 열람은 공개: 카드뉴스는 200. 첫 화면 /는 로그인 없이도 대시보드를 보여 준다.
     assert client.get("/card-news", follow_redirects=False).status_code == 200
-    root = client.get("/", follow_redirects=False)
-    assert root.status_code == 302 and "/card-news" in root.headers["Location"]
+    assert client.get("/", follow_redirects=False).status_code == 200
 
     # 내부 화면·조작·**편집 목록**: 로그인으로 리다이렉트
     # (/drafts·/press-releases는 2026-08-12에 egress·노출 때문에 게이트로 옮겼다.
@@ -10492,10 +10488,9 @@ def test_editorial_pages_require_login_after_egress_fix(monkeypatch):
         assert response.status_code == 302, f"{path}가 무인증으로 열려 있다"
         assert "/login" in response.headers["Location"], f"{path}가 로그인으로 가지 않는다"
 
+    # 첫 화면 /는 로그인 여부와 무관하게 기사 초안 대시보드를 보여 준다(2026-08-12 지시).
     root = client.get("/", follow_redirects=False)
-    assert root.status_code == 302, "익명 루트가 무거운 대시보드를 렌더한다"
-    assert "/card-news" in root.headers["Location"], "익명 루트가 카드뉴스로 가지 않는다"
-    assert "/login" not in root.headers["Location"], "익명 루트가 로그인 벽을 세운다(주민 front door가 사라진다)"
+    assert root.status_code == 200, "첫 화면이 대시보드를 보여 주지 않는다"
 
     # 상세는 공개로 남아야 한다 — 주민이 카드뉴스의 "기사 전문 보기"로 전문을 읽는 경로다.
     # 여기를 게이트하면 화면은 멀쩡해 보이는데 주민이 링크를 눌러도 로그인 벽에 막힌다.
