@@ -5,6 +5,7 @@
 멈춘다** — 정작 이 루프는 깨진 소스를 되살리려고 있는 것이다.
 """
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,6 +40,11 @@ def make_source(source_id: str, name: str) -> Source:
     )
 
 
+def _within_retention_date() -> str:
+    """보관 기간(영업일 3일) 밖 날짜는 복구가 저장 전에 걸러낸다 — 오늘(KST)로 시간 의존을 없앤다."""
+    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+
+
 def make_release(source: Source) -> PressRelease:
     return PressRelease(
         source_id=source.id,
@@ -47,7 +53,7 @@ def make_release(source: Source) -> PressRelease:
         title=f"{source.name} 소식",
         url=f"https://{source.id}.go.kr/{uuid4().hex}",
         content="본문입니다.",
-        published_at="2026-08-11",
+        published_at=_within_retention_date(),
         assets=[],
     )
 
