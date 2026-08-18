@@ -2726,6 +2726,14 @@ def test_operations_page_requires_password_when_site_auth_is_disabled(monkeypatc
     assert log_blocked.status_code == 302
     assert "/operations/login" in log_blocked.headers["Location"]
 
+    # 기사 설정·Gemini 사용량은 "운영 관리" 안에서만 들어가는 하위 화면이라, 사이트
+    # 인증을 꺼도(나머지 전부 공개) 운영 비밀번호로 보호된다(2026-08-18 사용자 지시
+    # "운영관리만 비밀번호, 나머지 공개").
+    for internal_path in ("/writing-settings", "/gemini-usage"):
+        gated = client.get(internal_path, follow_redirects=False)
+        assert gated.status_code == 302, internal_path
+        assert "/operations/login" in gated.headers["Location"], internal_path
+
     wrong = client.post(
         "/operations/login",
         data={"password": "wrong", "next": "/operations"},
@@ -10387,7 +10395,10 @@ def test_every_state_changing_route_requires_login(monkeypatch):
         assert "/login" in response.headers["Location"], f"{endpoint}가 로그인으로 안 보낸다"
         checked += 1
 
-    assert checked >= 15, f"검사한 POST가 {checked}개뿐이다 — 라우트 수집이 깨졌다"
+    # 기준선은 13이다 — 2026-08-18에 update_writing_settings·reset_gemini_usage 두
+    # POST를 운영 tier로 옮겨(운영 비밀번호로 보호) 이 루프의 대상에서 빠졌다. 두
+    # 라우트는 test_every_operations_route_needs_more_than_admin_login이 대신 덮는다.
+    assert checked >= 13, f"검사한 POST가 {checked}개뿐이다 — 라우트 수집이 깨졌다"
 
 
 def test_auth_exempt_list_is_exactly_what_we_intend():
@@ -10427,8 +10438,10 @@ def test_every_operations_route_needs_more_than_admin_login(monkeypatch):
     monkeypatch.setenv("NEWS_SUMMARY_TEST_OPERATIONS_AUTH", "1")
     app, client = _auth_enabled_client(monkeypatch, "ops_guard")
     client.post("/login", data={"password": "pw-for-test"})
-    # 로그인이 실제로 됐는지 먼저 확인한다 — 아니면 아래가 헛돈다.
-    assert client.get("/writing-settings", follow_redirects=False).status_code == 200
+    # 로그인이 실제로 됐는지 먼저 확인한다 — 아니면 아래가 헛돈다. 기준 페이지는
+    # 관리자 로그인만으로 열리고 운영 tier가 아닌 /drafts를 쓴다(/writing-settings는
+    # 2026-08-18에 운영 tier로 옮겨져 더 이상 이 검증의 기준이 될 수 없다).
+    assert client.get("/drafts", follow_redirects=False).status_code == 200
 
     checked = 0
     for rule in app.url_map.iter_rules():

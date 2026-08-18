@@ -170,6 +170,15 @@ OPERATIONS_ACCESS_ENDPOINTS = {
     "restore_backup_route",
     "purge_proxy_visitor_logs",
     "export_visitor_logs",
+    # 기사 설정·Gemini 사용량은 "운영 관리" 페이지 안에서만 들어가는 하위 화면이라
+    # 운영 tier로 묶는다. 이렇게 해야 사이트 인증을 끄고(NEWS_SUMMARY_AUTH_DISABLED=1)
+    # 나머지를 전부 공개해도, 이 두 내부 설정이 익명에게 열리지 않는다(2026-08-18
+    # 사용자 지시 "운영관리만 비밀번호, 나머지 공개"). 인증이 켜진 상태에서는 종전처럼
+    # 관리자 로그인 게이트가 먼저 걸리므로 동작이 바뀌지 않는다.
+    "writing_settings",
+    "update_writing_settings",
+    "gemini_usage",
+    "reset_gemini_usage",
 }
 # **세션에 따라 내용이 달라지는 GET은 전부 여기 있어야 한다.** 같은 URL이 익명에게는
 # 로그인으로 튕기고 관리자에게만 내용을 주는데, 공유 캐시가 그 응답을 저장하면 뒤이은
