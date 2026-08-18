@@ -10176,9 +10176,10 @@ def test_robots_txt_is_served_without_login(monkeypatch):
     client = app.test_client()
 
     # 인증이 실제로 켜졌는지 먼저 확인한다(이게 아니면 아래 단언이 무의미하다).
-    # /operations는 **운영 게이트만으로도** 302라 인증이 꺼져 있어도 통과한다 —
-    # 로그인만 요구하는(OPERATIONS_ACCESS_ENDPOINTS에 없는) 화면으로 확인해야 한다.
-    guard = client.get("/writing-settings", follow_redirects=False)
+    # 운영 tier(/operations·/writing-settings 등)는 인증이 꺼져 있어도
+    # /operations/login으로 302라("...login" 포함) 인증 ON을 구별하지 못한다.
+    # 인증이 켜졌을 때만 /login으로 튕기고 꺼지면 공개(200)인 /drafts로 확인한다.
+    guard = client.get("/drafts", follow_redirects=False)
     assert guard.status_code == 302 and "/login" in guard.headers["Location"]
 
     response = client.get("/robots.txt", follow_redirects=False)
@@ -10395,10 +10396,11 @@ def test_every_state_changing_route_requires_login(monkeypatch):
         assert "/login" in response.headers["Location"], f"{endpoint}가 로그인으로 안 보낸다"
         checked += 1
 
-    # 기준선은 13이다 — 2026-08-18에 update_writing_settings·reset_gemini_usage 두
-    # POST를 운영 tier로 옮겨(운영 비밀번호로 보호) 이 루프의 대상에서 빠졌다. 두
-    # 라우트는 test_every_operations_route_needs_more_than_admin_login이 대신 덮는다.
-    assert checked >= 13, f"검사한 POST가 {checked}개뿐이다 — 라우트 수집이 깨졌다"
+    # 기준선은 11이다 — 2026-08-18에 update_writing_settings·reset_gemini_usage·
+    # collect·recrawl 네 POST를 운영 tier로 옮겨(운영 비밀번호로 보호) 이 루프의
+    # 대상에서 빠졌다. 네 라우트는 test_every_operations_route_needs_more_than_admin_login이
+    # 대신 덮는다.
+    assert checked >= 11, f"검사한 POST가 {checked}개뿐이다 — 라우트 수집이 깨졌다"
 
 
 def test_auth_exempt_list_is_exactly_what_we_intend():

@@ -179,6 +179,12 @@ OPERATIONS_ACCESS_ENDPOINTS = {
     "update_writing_settings",
     "gemini_usage",
     "reset_gemini_usage",
+    # 수집·재수집 트리거도 운영 tier로 묶는다(2026-08-18 사용자 지시). 이 둘은
+    # 스크래핑·Gemini 호출을 일으켜 비용·부하가 나가므로, 사이트 인증을 끈 공개
+    # 상태에서 익명이 눌러 반복 트리거하지 못하게 운영 비밀번호로 막는다. 상태 조회
+    # (recrawl_status)는 트리거가 아니라 공개(PUBLIC_READ)로 둔다.
+    "collect",
+    "recrawl",
 }
 # **세션에 따라 내용이 달라지는 GET은 전부 여기 있어야 한다.** 같은 URL이 익명에게는
 # 로그인으로 튕기고 관리자에게만 내용을 주는데, 공유 캐시가 그 응답을 저장하면 뒤이은
