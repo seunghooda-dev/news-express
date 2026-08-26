@@ -8293,14 +8293,15 @@ def test_healthz_and_operations_warn_long_running_auto_collection(monkeypatch):
 def test_source_coverage_report_covers_required_municipal_sources():
     report = _source_coverage_report(Path("config/municipalities.yaml"))
 
-    # 2026-08-26: 강진을 싱가포르 IP 도달 실측을 위해 다시 켰다. 도달 성공이면 유지,
-    # 실패면 config와 이 테스트를 함께 27/28(강진 비활성)로 되돌린다. 이제 필수 28곳 모두 활성.
-    assert report["status_level"] == "ok"
+    # 강진은 2026-07-30 사용자 지시로 당분간 비활성화했다(연결 차단 미해결).
+    # 필수 목록에는 남겨 두어 운영 화면이 계속 상기시키도록 했으므로 warning이 정상 상태다.
+    # 강진을 되살릴 때 이 테스트가 실패하면서 여기도 함께 갱신하도록 의도한 것이다.
+    assert report["status_level"] == "warning"
     assert report["expected_total"] == 28
     assert report["configured_required_count"] == 28
-    assert report["enabled_required_count"] == 28
+    assert report["enabled_required_count"] == 27
     assert report["missing_labels"] == []
-    assert report["disabled_labels"] == []
+    assert report["disabled_labels"] == ["강진"]
     assert report["duplicate_ids"] == []
 
 
@@ -8350,9 +8351,9 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     html = operations_html(client)
 
     assert "수집 대상 커버리지" in html
-    # 2026-08-26 강진 재활성(싱가포르 도달 실측) — 필수 28곳 모두 활성이라 28/28·정상.
-    assert "28/28" in html
-    assert "광주·전남 필수 수집 대상이 모두 포함되어 있습니다." in html
+    # 강진을 당분간 비활성화했으므로 27/28로 표시되고 비활성화 경고가 뜬다.
+    assert "27/28" in html
+    assert "필수 기관 1곳이 비활성화되어 있습니다." in html
 
 
 def test_collection_check_coverage_report_flags_unchecked_business_day_sources(monkeypatch):
@@ -9614,8 +9615,8 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
     assert response.status_code == 200
-    # 초안 한도는 활성 기관 수에 연동된다(2026-08-26 강진 재활성으로 활성 28곳 × 10).
-    assert collector.calls == [(10, 280, "수동 재수집")]
+    # 초안 한도는 활성 기관 수에 연동된다(강진 비활성화로 활성 27곳 × 10).
+    assert collector.calls == [(10, 270, "수동 재수집")]
 
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2
