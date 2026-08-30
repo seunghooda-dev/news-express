@@ -12,6 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .backup import create_backup, verify_backup
+from .memory import release_free_heap
 from .models import Source
 from .ops_logging import get_logger
 from .service import (
@@ -339,7 +340,19 @@ class AutoCollector:
             if error:
                 report_messages.append(f"{label} 실패: {error}")
             self._refresh_collection_report_snapshots(report_messages, finished)
-        logger.info("collector run finished label=%s error=%s messages=%s", label, bool(error), len(messages))
+            # 회차가 펼친 힙(HTML 파싱·이미지)은 free돼도 glibc가 arena에 쥐고 있어
+            # RSS가 내려가지 않는다. 회차마다 +50~150MB가 남아 512MB 한도를 넘겼다
+            # (2026-08-29 OOM 재시작). 썸네일 경로에서 1건당 1MB→0.19MB로 효과가
+            # 입증된 같은 호출을, 메모리를 가장 많이 쓰는 회차 끝에도 넣는다.
+            # 실패해도 조용히 False를 돌려주므로 수집 결과에 영향을 주지 않는다.
+            heap_released = release_free_heap()
+        logger.info(
+            "collector run finished label=%s error=%s messages=%s heap_released=%s",
+            label,
+            bool(error),
+            len(messages),
+            heap_released,
+        )
 
         return messages
 

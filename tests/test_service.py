@@ -2014,6 +2014,41 @@ def test_repair_missing_published_dates_reads_detail_registration_date(monkeypat
     assert row["published_at"] == "2026-05-08 13:08:00"
 
 
+def test_collection_cycle_returns_freed_heap_to_the_os(monkeypatch):
+    """회차가 펼친 힙을 OS에 돌려주지 않으면 RSS가 계단식으로 올라 512MB에서 죽는다.
+
+    2026-08-29 OOM 재시작 대응이다. 파이썬이 free해도 glibc가 arena에 쥐고 있어
+    회차마다 +50~150MB가 남았다. **성공·실패 어느 쪽으로 끝나도 반납해야 한다** —
+    실패한 회차도 이미 메모리를 다 쓴 뒤이고, 오히려 그쪽이 더 위험하다.
+    """
+    db_path = Path(f"data/.test_collect_heap_release_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    calls: list[str] = []
+
+    def _fake_release() -> bool:
+        calls.append("released")
+        return True
+
+    monkeypatch.setattr("news_summary.scheduler.load_sources", lambda config_path: [])
+    monkeypatch.setattr("news_summary.scheduler.release_free_heap", _fake_release)
+
+    monkeypatch.setattr("news_summary.scheduler.collect_and_draft_cycle", lambda *args, **kwargs: ["수집 완료"])
+    collector = AutoCollector(store, Path("unused.yaml"))
+    collector.run_once(label="자동 수집")
+
+    assert calls == ["released"], "정상 회차 뒤에 힙을 반납하지 않았다"
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("수집 실패")
+
+    monkeypatch.setattr("news_summary.scheduler.collect_and_draft_cycle", _boom)
+    collector.run_once(label="자동 수집")
+
+    assert calls == ["released", "released"], "실패한 회차 뒤에 힙을 반납하지 않았다"
+
+
 def test_auto_collector_tracks_last_automatic_finish_separately(monkeypatch):
     db_path = Path(f"data/.test_auto_collect_metadata_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
