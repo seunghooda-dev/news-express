@@ -67,18 +67,23 @@ sources:
     type: html_board
     # 첨부가 hwpx 문서뿐이고 사진은 싣지 않는다(2026-07-29 확인) — 사진 첨부 점검 제외
     expects_images: false
-    list_url: "https://www.namgu.gwangju.kr/api/eminwon/pressList.es?mid=a10605050000"
+    # 2026-09-01: 남구청이 홈페이지를 개편하며 보도자료를 별도 서버로 옮겼다.
+    # 옛 주소(www.namgu.gwangju.kr/api/eminwon/pressList.es)는 404이고, 실물은
+    # eminwon 서브도메인의 OfrAction.do에 있다. 8/28 이후 나흘간 수집이 0건이었다.
+    # jndinm=OfrBcAdvNewsEJB가 보도자료다 — OfrNotAncmtEJB는 고시공고라 섞으면 안 된다.
+    list_url: "https://eminwon.namgu.gwangju.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do?jndinm=OfrBcAdvNewsEJB&context=NTIS&method=selectListOfrNews&methodnm=selectListOfrNewsHomepage&ofr_pageSize=30&homepage_pbs_yn=Y&subCheck=Y&news_epct_yn=1&pageIndex=1&data_open_yn=1"
     include_url_contains:
-      - "pressView.es"
+      - "OfrAction.do"
       - "news_epct_no="
     selectors:
-      item: "table.tbltype1 tbody tr"
+      # 목록은 표가 아니라 ul/li다. 헤더는 .dhead에 따로 있어 .dbody만 잡으면 된다.
+      item: ".dbody ul"
       link: "a[onclick*='searchDetail']"
-      title: "a[onclick*='searchDetail']"
-      published_at: "td:nth-child(4)"
-      detail_url_template: "/api/eminwon/pressView.es?mid=a10605050000&news_epct_no={detail_id}&method=selectOfrNews&methodnm=selectOfrNewsMgt"
+      title: "li.title"
+      published_at: "li.col04"
+      detail_url_template: "/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do?jndinm=OfrBcAdvNewsEJB&context=NTIS&method=selectOfrNews&methodnm=selectOfrNewsMgt&news_epct_no={detail_id}&subCheck=Y"
       content:
-        - "table.tstyle_view td.tb_contents"
+        - ".tb_contents"
 
   - id: gwangju-bukgu
     name: 광주 북구청 보도자료
