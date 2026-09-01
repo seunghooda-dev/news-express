@@ -63,7 +63,13 @@ sources:
   - id: gwangju-namgu
     name: 광주 남구청 보도자료
     region: 전남광주통합특별시 광주 남구
-    enabled: true
+    # 2026-09-01 자동 수집에서 제외한다. 아래 새 주소는 맞지만(로컬 200·858ms)
+    # 서버(싱가포르)에서는 ConnectTimeout이라 원문이 0건이다 — 강진과 같은 해외
+    # 클라우드 IP 차단이다. 켜 두면 매시간 실패가 쌓이고 자동 재검증까지 끌려가
+    # 회차 완주를 막으므로(2026-07-30 강진 실사고) 끄고, 로컬 PC 중계가 대신 채운다
+    # (C:\Users\seung\news-express-gangjin-relay, 매시 정각).
+    # 되살리는 조건: 서버에서 eminwon.namgu.gwangju.kr 연결이 확인되면 true로.
+    enabled: false
     type: html_board
     # 첨부가 hwpx 문서뿐이고 사진은 싣지 않는다(2026-07-29 확인) — 사진 첨부 점검 제외
     expects_images: false

@@ -8293,15 +8293,16 @@ def test_healthz_and_operations_warn_long_running_auto_collection(monkeypatch):
 def test_source_coverage_report_covers_required_municipal_sources():
     report = _source_coverage_report(Path("config/municipalities.yaml"))
 
-    # 강진은 2026-07-30 사용자 지시로 당분간 비활성화했다(연결 차단 미해결).
-    # 필수 목록에는 남겨 두어 운영 화면이 계속 상기시키도록 했으므로 warning이 정상 상태다.
-    # 강진을 되살릴 때 이 테스트가 실패하면서 여기도 함께 갱신하도록 의도한 것이다.
+    # 서버(싱가포르)에서 연결이 차단된 두 곳은 자동 수집에서 빼고 로컬 PC 중계가
+    # 대신 채운다 — 강진(2026-08-26 실측) · 광주 남구(2026-09-01 실측, 개편된 새
+    # 주소도 서버에서는 ConnectTimeout). 필수 목록에는 남겨 두어 운영 화면이 계속
+    # 상기시키므로 warning이 정상 상태다. 되살릴 때 이 테스트가 실패하며 함께 갱신된다.
     assert report["status_level"] == "warning"
     assert report["expected_total"] == 28
     assert report["configured_required_count"] == 28
-    assert report["enabled_required_count"] == 27
+    assert report["enabled_required_count"] == 26
     assert report["missing_labels"] == []
-    assert report["disabled_labels"] == ["강진"]
+    assert report["disabled_labels"] == ["광주 남구", "강진"]
     assert report["duplicate_ids"] == []
 
 
@@ -8351,9 +8352,9 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     html = operations_html(client)
 
     assert "수집 대상 커버리지" in html
-    # 강진을 당분간 비활성화했으므로 27/28로 표시되고 비활성화 경고가 뜬다.
-    assert "27/28" in html
-    assert "필수 기관 1곳이 비활성화되어 있습니다." in html
+    # 강진·광주 남구를 자동 수집에서 뺐으므로 26/28로 표시되고 비활성화 경고가 뜬다.
+    assert "26/28" in html
+    assert "필수 기관 2곳이 비활성화되어 있습니다." in html
 
 
 def test_collection_check_coverage_report_flags_unchecked_business_day_sources(monkeypatch):
@@ -9615,8 +9616,8 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
     assert response.status_code == 200
-    # 초안 한도는 활성 기관 수에 연동된다(강진 비활성화로 활성 27곳 × 10).
-    assert collector.calls == [(10, 270, "수동 재수집")]
+    # 초안 한도는 활성 기관 수에 연동된다(강진·광주 남구 비활성화로 활성 26곳 × 10).
+    assert collector.calls == [(10, 260, "수동 재수집")]
 
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2
