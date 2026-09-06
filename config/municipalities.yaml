@@ -269,7 +269,13 @@ sources:
   - id: gurye-county
     name: 구례군청 보도자료
     region: 전남광주통합특별시 구례
-    enabled: true
+    # 2026-09-06 자동 수집에서 제외한다. 서버(싱가포르)에서 성공 기록이 0이고
+    # 최근 50회 전부 실패다(누적 TLS 시간 초과 270회 · 연결 오류 232회). 로컬
+    # (한국)에서는 같은 설정으로 15건이 수집되므로 주소·선택자 문제가 아니라
+    # 강진·남구와 같은 해외 클라우드 IP 차단이다. 켜 두면 매시간 실패가 쌓이고
+    # 자동 재검증까지 끌려가 회차 완주를 막는다(2026-07-30 강진 실사고).
+    # 로컬 PC 중계가 대신 채운다(C:\Users\seung\news-express-gangjin-relay).
+    enabled: false
     type: html_board
     list_url: "https://www.gurye.go.kr/board/list.do?bbsId=BBS_0000000000000300&menuNo=115004006000"
     include_url_contains:

@@ -8300,9 +8300,9 @@ def test_source_coverage_report_covers_required_municipal_sources():
     assert report["status_level"] == "warning"
     assert report["expected_total"] == 28
     assert report["configured_required_count"] == 28
-    assert report["enabled_required_count"] == 26
+    assert report["enabled_required_count"] == 25
     assert report["missing_labels"] == []
-    assert report["disabled_labels"] == ["광주 남구", "강진"]
+    assert report["disabled_labels"] == ["광주 남구", "구례", "강진"]
     assert report["duplicate_ids"] == []
 
 
@@ -8352,9 +8352,9 @@ def test_operations_page_shows_source_coverage_card(monkeypatch):
     html = operations_html(client)
 
     assert "수집 대상 커버리지" in html
-    # 강진·광주 남구를 자동 수집에서 뺐으므로 26/28로 표시되고 비활성화 경고가 뜬다.
-    assert "26/28" in html
-    assert "필수 기관 2곳이 비활성화되어 있습니다." in html
+    # 강진·광주 남구·구례를 자동 수집에서 뺐으므로 25/28로 표시되고 비활성화 경고가 뜬다.
+    assert "25/28" in html
+    assert "필수 기관 3곳이 비활성화되어 있습니다." in html
 
 
 def test_collection_check_coverage_report_flags_unchecked_business_day_sources(monkeypatch):
@@ -9616,8 +9616,8 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 
     response = client.post("/recrawl", data={"limit": "10"}, follow_redirects=True)
     assert response.status_code == 200
-    # 초안 한도는 활성 기관 수에 연동된다(강진·광주 남구 비활성화로 활성 26곳 × 10).
-    assert collector.calls == [(10, 260, "수동 재수집")]
+    # 초안 한도는 활성 기관 수에 연동된다(강진·광주 남구·구례 비활성화로 활성 25곳 × 10).
+    assert collector.calls == [(10, 250, "수동 재수집")]
 
     status = client.get("/recrawl/status").get_json()
     assert status["progress_current"] == 2
