@@ -9629,23 +9629,35 @@ def test_recrawl_dashboard_shows_live_progress_and_starts_background_job(monkeyp
 def test_recrawl_status_uses_persisted_auto_collector_snapshot(monkeypatch):
     db_path = Path(f"data/.test_recrawl_persisted_status_{uuid4().hex}.sqlite").resolve()
     monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
-    monkeypatch.setenv("NEWS_SUMMARY_AUTO_RUNNING_STALE_MINUTES", "100000")
 
     from news_summary.scheduler import AUTO_COLLECT_STATUS_KEY
     from news_summary.web import create_app
 
     store = Store(db_path)
     store.init_db()
+    # 고정 날짜는 실시간 stale 판정에 걸려 시간이 지나면 깨진다(2026-09 만료) — 지금 기준 상대 시각을 쓴다.
+    recent_status_updated_at = (datetime.now(LOCAL_TZ) - timedelta(minutes=3)).isoformat()
     store.set_app_metadata(
         AUTO_COLLECT_STATUS_KEY,
-        (
-            '{"enabled": true, "running": true, "active_label": "자동 수집", '
-            '"progress_current": 7, "progress_total": 29, '
-            '"progress_message": "7/29 수집 중", "progress_source_name": "전남광주통합특별시청 보도자료", '
-            '"progress_phase": "collecting", "last_error": null, '
-            '"last_started_at": "2026-07-06T04:36:22+00:00", "last_finished_at": null, '
-            '"last_auto_finished_at": "2026-07-03T04:15:43+00:00", "next_run_at": null, '
-            '"run_count": 0, "status_updated_at": "2026-07-06T04:39:54+00:00"}'
+        json.dumps(
+            {
+                "enabled": True,
+                "running": True,
+                "active_label": "자동 수집",
+                "progress_current": 7,
+                "progress_total": 29,
+                "progress_message": "7/29 수집 중",
+                "progress_source_name": "전남광주통합특별시청 보도자료",
+                "progress_phase": "collecting",
+                "last_error": None,
+                "last_started_at": recent_status_updated_at,
+                "last_finished_at": None,
+                "last_auto_finished_at": "2026-07-03T04:15:43+00:00",
+                "next_run_at": None,
+                "run_count": 0,
+                "status_updated_at": recent_status_updated_at,
+            },
+            ensure_ascii=False,
         ),
     )
 
