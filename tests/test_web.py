@@ -6800,6 +6800,91 @@ def test_healthz_details_reports_deployment_version_warning(monkeypatch):
     )
 
 
+def _relay_heartbeat_store(monkeypatch, relayed_labels, heartbeat=None):
+    """중계 점검 테스트용 — 중계 대상 기관을 주입하고, 필요하면 heartbeat 기록을 심은 Store를 돌려준다."""
+    from news_summary import web as web_module
+
+    db_path = Path(f"data/.test_relay_heartbeat_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    monkeypatch.setattr(
+        web_module,
+        "_source_coverage_report",
+        lambda config_path: {
+            "status_level": "warning" if relayed_labels else "ok",
+            "message": "테스트 주입",
+            "disabled_labels": list(relayed_labels),
+        },
+    )
+    store = Store(db_path)
+    store.init_db()
+    if heartbeat is not None:
+        store.set_app_metadata(web_module.RELAY_HEARTBEAT_KEY, json.dumps(heartbeat, ensure_ascii=False))
+    return web_module, store
+
+
+def test_relay_heartbeat_warns_when_no_record_exists(monkeypatch):
+    web_module, store = _relay_heartbeat_store(monkeypatch, ["강진", "광주 남구"])
+
+    payload = web_module._relay_heartbeat_health_payload(store, Path("unused.yaml"))
+
+    assert payload["relay_status"] == "warning"
+    assert payload["relay_age_minutes"] is None
+    assert "강진·광주 남구" in payload["relay_message"]
+    assert "기록이 없습니다" in payload["relay_message"]
+
+
+def test_relay_heartbeat_is_ok_when_recent_and_names_the_host(monkeypatch):
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    heartbeat = {"updated_at": (now - timedelta(minutes=30)).isoformat(), "host": "OFFICE-PC"}
+    web_module, store = _relay_heartbeat_store(monkeypatch, ["강진"], heartbeat)
+
+    payload = web_module._relay_heartbeat_health_payload(store, Path("unused.yaml"), now=now)
+
+    assert payload["relay_status"] == "ok"
+    assert payload["relay_age_minutes"] == 30
+    assert payload["relay_host"] == "OFFICE-PC"
+    assert "OFFICE-PC" in payload["relay_message"]
+
+
+def test_relay_heartbeat_warns_only_after_the_stale_threshold(monkeypatch):
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    web_module, store = _relay_heartbeat_store(monkeypatch, ["강진"])
+
+    def payload_for(age_minutes):
+        heartbeat = {"updated_at": (now - timedelta(minutes=age_minutes)).isoformat(), "host": "MY-PC"}
+        store.set_app_metadata(web_module.RELAY_HEARTBEAT_KEY, json.dumps(heartbeat))
+        return web_module._relay_heartbeat_health_payload(store, Path("unused.yaml"), now=now)
+
+    assert payload_for(web_module.RELAY_STALE_MINUTES)["relay_status"] == "ok"
+    stale = payload_for(web_module.RELAY_STALE_MINUTES + 1)
+    assert stale["relay_status"] == "warning"
+    assert "MY-PC" in stale["relay_message"]
+    assert "강진" in stale["relay_message"]
+    assert "5시간" in payload_for(5 * 60)["relay_message"]
+
+
+def test_relay_heartbeat_is_not_checked_when_server_collects_every_source(monkeypatch):
+    web_module, store = _relay_heartbeat_store(monkeypatch, [])
+
+    payload = web_module._relay_heartbeat_health_payload(store, Path("unused.yaml"))
+
+    assert payload["relay_status"] == "neutral"
+
+
+def test_healthz_details_reports_relay_warning_in_service_status(monkeypatch):
+    web_module, _store = _relay_heartbeat_store(monkeypatch, ["강진", "구례"])
+    app = web_module.create_app()
+    app.testing = True
+
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["relay_status"] == "warning"
+    assert any(
+        issue["component"] == "relay" and "강진·구례" in issue["message"]
+        for issue in payload["service_status_issues"]
+    )
+
+
 def test_service_health_summary_merges_duplicate_operational_warnings():
     summary = _service_health_summary(
         {

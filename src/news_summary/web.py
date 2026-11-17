@@ -764,6 +764,7 @@ def create_app() -> Flask:
             backup_verify_report = _backup_verify_report(store, backup_dir)
             payload.update(_backup_health_payload(backup_dir, backup_verify_report))
             payload.update(_operations_snapshot_freshness_payload(store))
+            payload.update(_relay_heartbeat_health_payload(store, config_path))
             payload.update(_deployment_version_health_payload())
             readiness_report = _production_readiness_report(store, backup_dir, auto_status, config_path)
             payload.update(_production_readiness_health_payload(readiness_report))
@@ -2494,6 +2495,10 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     operations_snapshot_status = str(payload.get("operations_snapshot_status") or "")
     if operations_snapshot_status in {"warning", "error"}:
         add_issue(operations_snapshot_status, "operations_snapshot", payload.get("operations_snapshot_message"))
+
+    relay_status = str(payload.get("relay_status") or "")
+    if relay_status in {"warning", "error"}:
+        add_issue(relay_status, "relay", payload.get("relay_message"))
 
     if any(issue["level"] == "error" for issue in issues):
         level = "error"
@@ -4802,6 +4807,12 @@ OPERATIONS_SNAPSHOT_FRESHNESS_KEYS = (
     (AUTO_SERVER_HEALTH_STATUS_KEY, "server_health", "서버 상태 점검"),
 )
 
+# 로컬 중계(저장소 밖 gangjin_relay.py)가 매 실행 끝에 남기는 생존 기록 키.
+# 중계 스크립트가 같은 문자열을 직접 쓰므로 바꾸면 양쪽을 함께 고쳐야 한다.
+RELAY_HEARTBEAT_KEY = "relay_heartbeat"
+# 중계는 매시 정각에 돈다. 3회(3시간) 연속 기록이 없으면 멈춘 것으로 본다.
+RELAY_STALE_MINUTES = 180
+
 
 def _operations_snapshot_freshness_payload(store: Store, now: datetime | None = None) -> dict[str, object]:
     now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4848,6 +4859,52 @@ def _operations_snapshot_freshness_payload(store: Store, now: datetime | None = 
         ),
         "operations_snapshot_stale_after_minutes": stale_minutes,
         "operations_snapshot_checks": checks,
+    }
+
+
+def _relay_heartbeat_health_payload(
+    store: Store,
+    config_path: Path,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """서버가 수집하지 않는 필수 기관을 대신 수집하는 로컬 중계의 생존을 점검한다.
+
+    서버 설정에서 비활성인 필수 기관은 기존 수집 점검이 세지 않아, 중계가 멈춰도 서버는
+    "정상"으로 보였다(2026-11-18 실측: 강진·남구·구례 원문이 0건이었다). 중계 대상이
+    하나라도 있으면 heartbeat의 나이를 보고, 없으면(모두 서버 수집으로 복귀) 점검하지 않는다.
+    """
+    relayed_labels = [str(label) for label in _source_coverage_report(config_path).get("disabled_labels") or []]
+    report = _metadata_json_report(store, RELAY_HEARTBEAT_KEY, {"updated_at": None, "host": None})
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    age_minutes = _age_minutes(report.get("updated_at"), now_utc)
+    host = report.get("host")
+    labels_text = "·".join(relayed_labels)
+    host_text = f" (마지막 실행 PC: {host})" if host else ""
+
+    if not relayed_labels:
+        status = "neutral"
+        message = "서버가 직접 수집하지 않는 기관이 없어 로컬 중계 점검 대상이 아닙니다."
+    elif age_minutes is None:
+        status = "warning"
+        message = f"로컬 중계 실행 기록이 없습니다 — {labels_text} 원문이 들어오지 않을 수 있습니다."
+    elif age_minutes > RELAY_STALE_MINUTES:
+        age_text = f"{age_minutes // 60}시간" if age_minutes >= 120 else f"{age_minutes}분"
+        status = "warning"
+        message = (
+            f"로컬 중계가 {age_text}째 실행되지 않았습니다{host_text} — "
+            f"{labels_text} 원문이 들어오지 않을 수 있습니다."
+        )
+    else:
+        status = "ok"
+        message = f"로컬 중계 정상 — {age_minutes}분 전 실행{host_text}"
+
+    return {
+        "relay_status": status,
+        "relay_message": message,
+        "relay_last_run_at": report.get("updated_at"),
+        "relay_age_minutes": age_minutes,
+        "relay_host": host,
+        "relay_stale_after_minutes": RELAY_STALE_MINUTES,
     }
 
 
@@ -7589,6 +7646,7 @@ OPERATIONS_COMPONENT_CARD_MAP = {
     "draft_conversion_coverage": ("ops-draft-conversion", "오늘 초안 변환 커버리지"),
     "gemini_queue": ("ops-gemini-retry-queue", "Gemini 재처리 대기열"),
     "operations_snapshot": ("ops-service-status", "운영 스냅샷"),
+    "relay": ("ops-collection-coverage", "오늘 수집 점검 커버리지"),
 }
 
 
@@ -7623,6 +7681,7 @@ def _operations_service_status_report(
     if isinstance(backup_health_report, dict):
         payload.update(backup_health_report)
     payload.update(_operations_snapshot_freshness_payload(store))
+    payload.update(_relay_heartbeat_health_payload(store, config_path))
     deployment_report = reports.get("deployment_version")
     if isinstance(deployment_report, dict):
         payload.update(_deployment_version_health_payload_from_report(deployment_report))
