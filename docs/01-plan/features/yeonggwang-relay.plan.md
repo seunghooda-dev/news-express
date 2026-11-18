@@ -38,3 +38,13 @@
   없었다면 손실도 없다(로컬 목록의 최신 글이 11/17이다).
 - 이 PC가 꺼져 있으면 영광도 멈춘다. 중계 감시(`relay-heartbeat.plan.md`)가 3시간 넘게 안 돌면 서비스 상태에 경고한다.
 - 중계 한 회차가 4곳이 되어 길어진다(약 2~3분). 작업 제한 15분 안이다.
+
+## 배포 기록 (2026-11-19)
+
+- 11/18 07:11(`a50373d`)·11:33(`eef3e71`) 푸시 두 건을 Render가 감지하지 못했다. Render 이벤트에 배포 시작·실패
+  기록이 아예 없었다(마지막 자동 배포는 9/6 `d0fd253`). Auto-Deploy "On Commit"·브랜치 `codex/news-express`·
+  Git Credentials 설정은 정상이었다 — GitHub→Render 푸시 감지만 끊긴 것으로 본다.
+- 11/19 06:13 Render 대시보드에서 수동 배포(Deploy latest commit)로 `eef3e71`을 올렸다(06:14:40 반영, 약 1분 30초).
+  `/healthz/details`에서 `relay_status: ok`(실행 PC `HSH`)·`deployment_version_status: ok`를 확인했다.
+- 06:17 자동 배포 감지 복구를 위해 Settings > Build > Source에서 같은 저장소·브랜치를 다시 선택해 저장했다.
+  이 문서 커밋의 푸시가 자동 배포 이벤트를 만들면 복구된 것이고, 만들지 못하면 이후에도 수동 배포가 필요하다.
