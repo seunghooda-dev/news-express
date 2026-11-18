@@ -2,15 +2,59 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
 HEALTH_URL = "https://news-express-1.onrender.com/healthz"
 POLL_SECONDS = 30
+
+# Render가 GitHub 푸시를 못 알아챌 때(2026-11 실측: 푸시 두 건에 배포 기록이 아예 없었다)를 위한
+# 보완 경로. 이 값이 있으면 푸시 직후 Render 배포 훅을 직접 부른다. URL에 비밀 키가 들어 있으니
+# 저장소에 넣지 말고 환경변수나 .gitignore된 .env에만 둔다. 자동 배포가 복구되면 값을 지운다
+# (둘 다 켜 두면 같은 커밋이 두 번 배포된다).
+HOOK_ENV = "RENDER_DEPLOY_HOOK_URL"
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+# 훅은 Render의 [skip render] 판정을 거치지 않으므로 같은 규약을 여기서 지킨다.
+SKIP_MARKERS = ("[skip render]", "[render skip]", "[skip deploy]", "[deploy skip]")
+
+
+def deploy_hook_url() -> str | None:
+    value = os.getenv(HOOK_ENV)
+    if not value:
+        try:
+            from dotenv import dotenv_values
+
+            value = dotenv_values(ENV_PATH).get(HOOK_ENV)
+        except ModuleNotFoundError:
+            value = None
+    return (value or "").strip() or None
+
+
+def head_message(ref: str) -> str:
+    return subprocess.check_output(["git", "log", "-1", "--format=%B", ref], text=True, encoding="utf-8")
+
+
+def trigger_deploy_hook(url: str, message: str) -> int:
+    if any(marker in message.lower() for marker in SKIP_MARKERS):
+        print("커밋 메시지에 [skip render]가 있어 배포 훅을 부르지 않습니다.")
+        return 0
+    try:
+        response = httpx.get(url, timeout=20)
+    except httpx.HTTPError as exc:
+        # 예외 메시지에는 키가 든 URL이 그대로 실릴 수 있어 종류만 남긴다.
+        print(f"배포 훅 호출 실패({type(exc).__name__}) — 푸시는 끝났으니 Render 대시보드에서 수동 배포하세요.", file=sys.stderr)
+        return 3
+    if response.status_code >= 400:
+        print(f"배포 훅이 HTTP {response.status_code}를 돌려줬습니다 — Render 대시보드에서 수동 배포하세요.", file=sys.stderr)
+        return 3
+    print(f"배포 훅 호출 완료(HTTP {response.status_code}) — Render가 배포를 시작합니다.")
+    return 0
 
 
 def collector_state() -> tuple[object, str]:
@@ -81,7 +125,13 @@ def main() -> int:
         print(f"수집 회차 진행 중(run={run_minutes}분) — {int(remaining // 60)}분 더 기다립니다.")
         time.sleep(POLL_SECONDS)
 
-    return subprocess.call(["git", "push", args.remote, args.ref])
+    code = subprocess.call(["git", "push", args.remote, args.ref])
+    if code != 0:
+        return code
+    hook_url = deploy_hook_url()
+    if not hook_url:
+        return 0
+    return trigger_deploy_hook(hook_url, head_message(args.ref))
 
 
 if __name__ == "__main__":

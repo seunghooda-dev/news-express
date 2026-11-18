@@ -159,9 +159,21 @@ NEWS_SUMMARY_ADMIN_PASSWORD_HASH=admin-password-hash 명령으로 생성한 해�
 
 ### 배포는 어떻게 일어나나
 
-Render의 `Auto-Deploy`(On Commit)가 `codex/news-express` 브랜치 푸시를 받아 직접 배포합니다. 예전에 있던 GitHub Actions 보완 워크플로(`.github/workflows/render-deploy.yml`)는 **2026-07-14에 제거했습니다** — Git 재연결로 GitHub → Render webhook이 복구돼 필요가 없어졌습니다. `RENDER_DEPLOY_HOOK_URL` 비밀값을 만들 필요가 없습니다.
+Render의 `Auto-Deploy`(On Commit)가 `codex/news-express` 브랜치 푸시를 받아 직접 배포하는 것이 기본 경로입니다. 예전에 있던 GitHub Actions 보완 워크플로(`.github/workflows/render-deploy.yml`)는 2026-07-14에 Git 재연결로 webhook이 복구돼 제거했습니다.
 
-푸시는 `scripts/safe_deploy.py`로 합니다. 수집 회차가 도는 중이거나 정각이 가까우면 기다렸다가 푸시합니다 — 빌드가 회차를 덮치면 그 회차 수집이 통째로 유실됩니다.
+**그런데 이 감지가 다시 끊긴 적이 있습니다(2026-11-18).** 푸시 두 건에 Render 이벤트의 배포 기록이 아예 없었고(설정은 정상), Source 저장소 재선택으로도 복구되지 않았습니다. 그래서 `safe_deploy.py`가 푸시 직후 Render **배포 훅**을 직접 부르는 보완 경로를 갖습니다. Render 대시보드 › 서비스 › Settings › Deploy Hook의 URL(비밀 키가 들어 있음)을 `.env`(`.gitignore`됨)나 환경변수에 둡니다.
+
+```
+RENDER_DEPLOY_HOOK_URL=https://api.render.com/deploy/srv-...?key=...
+```
+
+- 값이 없으면 훅은 호출되지 않습니다(기존 동작 그대로).
+- 커밋 메시지에 `[skip render]`(또는 `[render skip]`·`[skip deploy]`·`[deploy skip]`)가 있으면 훅도 부르지 않습니다 — 아래 규약을 그대로 지킵니다.
+- 푸시할 것이 없어도 훅은 호출됩니다. 푸시는 됐는데 배포가 안 된 커밋을 다시 올릴 때 그대로 쓸 수 있고, 반대로 습관적으로 두 번 실행하면 재배포되어 몇 초 502가 나갑니다.
+- 훅 호출이 실패하면 종료 코드 3입니다(푸시는 이미 끝난 상태). 키가 든 URL은 출력하지 않습니다.
+- **자동 배포가 복구되면 이 값을 지웁니다.** 둘 다 켜 두면 같은 커밋이 두 번 배포됩니다.
+
+푸시는 `scripts/safe_deploy.py`로 합니다. 수집 회차가 도는 중이거나 정각이 가까우면 기다렸다가 푸시합니다 — 빌드가 회차를 덮치면 그 회차 수집이 통째로 유실됩니다. 훅 호출도 이 점검을 통과한 뒤에만 일어납니다.
 
 ```
 PYTHONUTF8=1 ./.venv/Scripts/python.exe scripts/safe_deploy.py
