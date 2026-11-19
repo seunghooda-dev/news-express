@@ -3231,6 +3231,87 @@ sources:
     assert len(without_config["priority_sources"]) == 1
 
 
+def test_source_collection_health_ignores_disabled_source_failures(tmp_path):
+    """서버가 수집하지 않는(중계로 넘긴) 기관의 마지막 실패 행이 "일시 장애 재검증"으로 영구히 남으면 안 된다.
+
+    2026-11-19 실측: 영광+강진·남구·구례 4곳이 24시간이 지나도 빠지지 않았고, 중계 기관이 늘 때마다 하나씩 늘었다.
+    """
+    db_path = Path(f"data/.test_source_collection_health_disabled_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.record_source_collection_status(
+        "gangjin-county", "강진군청 보도자료", "failed", "연결 실패",
+        failure_stage="연결", failure_reason="ConnectTimeout",
+    )
+    store.record_source_collection_status(
+        "active-county", "활성군청 보도자료", "failed", "연결 실패",
+        failure_stage="연결", failure_reason="ConnectTimeout",
+    )
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+sources:
+  - id: gangjin-county
+    name: 강진군청 보도자료
+    region: 전남 강진
+    type: html_board
+    enabled: false
+  - id: active-county
+    name: 활성군청 보도자료
+    region: 전남 활성
+    type: html_board
+""",
+        encoding="utf-8",
+    )
+
+    from news_summary.web import _source_collection_health_payload
+
+    with_config = _source_collection_health_payload(store, config_path)
+    without_config = _source_collection_health_payload(store)
+
+    # 활성 기관의 실패는 그대로 센다 — 비활성만 빠진다.
+    assert with_config["source_collection_temporary_count"] == 1
+    assert with_config["source_collection_recent_failure_count"] == 1
+    assert [item["source_id"] for item in with_config["source_collection_recent_failed_sources"]] == ["active-county"]
+    assert with_config["source_collection_message"] == "일시 장애 재검증 대상 1곳"
+    # 설정을 못 읽는 경우에는 종전대로 보수적으로 모두 센다.
+    assert without_config["source_collection_temporary_count"] == 2
+    assert without_config["source_collection_recent_failure_count"] == 2
+
+
+def test_source_collection_health_is_ok_when_only_disabled_sources_failed(tmp_path):
+    db_path = Path(f"data/.test_source_collection_health_only_disabled_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    for _ in range(3):
+        store.record_source_collection_status(
+            "gangjin-county", "강진군청 보도자료", "failed", "연결 실패",
+            failure_stage="연결", failure_reason="ConnectTimeout",
+        )
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+sources:
+  - id: gangjin-county
+    name: 강진군청 보도자료
+    region: 전남 강진
+    type: html_board
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    from news_summary.web import _source_collection_health_payload
+
+    payload = _source_collection_health_payload(store, config_path)
+
+    assert payload["source_collection_status"] == "ok"
+    assert payload["source_collection_unresolved_count"] == 0
+    assert payload["source_collection_temporary_count"] == 0
+    assert payload["source_collection_recent_failure_count"] == 0
+    assert payload["source_collection_message"] == "지자체 수집 상태 정상 범위"
+
+
 def test_visitor_logs_export_requires_operations_password(monkeypatch):
     """CSV 내보내기도 운영 관리 잠금 뒤에 있어야 한다."""
     db_path = Path(f"data/.test_visitor_csv_auth_{uuid4().hex}.sqlite").resolve()
@@ -5401,10 +5482,27 @@ def test_service_health_summary_includes_backup_warning():
     assert summary["service_status_issues"][0]["component"] == "backup"
 
 
+def _add_undrafted_release(store: Store) -> None:
+    """초안이 없는 원문 하나 — Gemini 큐에 대기 건이 있는 상태를 만든다."""
+    store.add_press_release(
+        PressRelease(
+            source_id="alpha",
+            source_name="전남광주통합특별시 테스트군청 보도자료",
+            region="전남 테스트",
+            title="초안 대기 원문",
+            url=f"https://example.com/queue-pending-{uuid4().hex}",
+            content="큐에 대기 중인 원문입니다.",
+            published_at="2026-07-10",
+        )
+    )
+
+
 def test_operations_snapshot_freshness_warns_when_metadata_is_stale(monkeypatch):
     db_path = Path(f"data/.test_operations_snapshot_stale_{uuid4().hex}.sqlite").resolve()
     store = Store(db_path)
     store.init_db()
+    # 큐 점검 스냅샷은 대기 건이 있을 때만 갱신된다 — 대기 건이 있는데 멈춘 것이 진짜 지연이다.
+    _add_undrafted_release(store)
     now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
     stale_at = (now - timedelta(hours=4, minutes=1)).isoformat()
     fresh_at = (now - timedelta(minutes=20)).isoformat()
@@ -5428,6 +5526,133 @@ def test_operations_snapshot_freshness_warns_when_metadata_is_stale(monkeypatch)
     assert payload["operations_snapshot_stale_count"] == 1
     assert payload["operations_snapshot_oldest_age_minutes"] == 241
     assert payload["operations_snapshot_message"] == "운영 스냅샷 갱신 지연: Gemini 큐 점검 241분 전"
+
+
+def test_operations_snapshot_freshness_ignores_idle_queue_drain_snapshot(monkeypatch):
+    """대기열이 비면 큐 점검 스냅샷이 안 갱신되는 것이 정상이다 — 오탐으로 경고하지 않는다.
+
+    2026-11-19 실측: 대기 건이 없는데 "Gemini 큐 점검 692분 전" 경고가 상시 떠 있었다.
+    """
+    db_path = Path(f"data/.test_operations_snapshot_idle_queue_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
+    stale_at = (now - timedelta(hours=11, minutes=32)).isoformat()
+    fresh_at = (now - timedelta(minutes=20)).isoformat()
+
+    for key in (
+        AUTO_DAILY_REPORT_KEY,
+        AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+        AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+        AUTO_SERVER_HEALTH_STATUS_KEY,
+    ):
+        store.set_app_metadata(key, json.dumps({"updated_at": fresh_at}, ensure_ascii=False))
+    store.set_app_metadata(
+        AUTO_QUEUE_DRAIN_STATUS_KEY,
+        json.dumps({"updated_at": stale_at}, ensure_ascii=False),
+    )
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATIONS_SNAPSHOT_STALE_MINUTES", "180")
+
+    payload = _operations_snapshot_freshness_payload(store, now=now)
+
+    assert payload["operations_snapshot_status"] == "ok"
+    assert payload["operations_snapshot_stale_count"] == 0
+    # 나이는 점검 목록에 계속 보인다 — 경고로만 세지 않을 뿐이다.
+    queue_check = next(item for item in payload["operations_snapshot_checks"] if item["component"] == "queue_drain")
+    assert queue_check["age_minutes"] == 692
+
+    # 다른 스냅샷이 멈춘 것은 대기열이 비어도 그대로 경고한다.
+    store.set_app_metadata(
+        AUTO_SERVER_HEALTH_STATUS_KEY,
+        json.dumps({"updated_at": stale_at}, ensure_ascii=False),
+    )
+    payload = _operations_snapshot_freshness_payload(store, now=now)
+
+    assert payload["operations_snapshot_status"] == "warning"
+    assert payload["operations_snapshot_stale_count"] == 1
+    assert payload["operations_snapshot_message"] == "운영 스냅샷 갱신 지연: 서버 상태 점검 692분 전"
+
+
+def test_operations_snapshot_freshness_counts_stale_queue_when_pending_check_fails(monkeypatch):
+    """대기 건 조회가 실패하면 지연을 숨기지 않고 종전처럼 경고하며, 헬스체크는 예외 없이 응답한다."""
+    db_path = Path(f"data/.test_operations_snapshot_pending_fail_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
+    stale_at = (now - timedelta(hours=11)).isoformat()
+    fresh_at = (now - timedelta(minutes=20)).isoformat()
+    for key in (
+        AUTO_DAILY_REPORT_KEY,
+        AUTO_OPERATIONS_SUMMARY_STATUS_KEY,
+        AUTO_COLLECTION_ANOMALY_STATUS_KEY,
+        AUTO_SERVER_HEALTH_STATUS_KEY,
+    ):
+        store.set_app_metadata(key, json.dumps({"updated_at": fresh_at}, ensure_ascii=False))
+    store.set_app_metadata(AUTO_QUEUE_DRAIN_STATUS_KEY, json.dumps({"updated_at": stale_at}, ensure_ascii=False))
+    monkeypatch.setenv("NEWS_SUMMARY_OPERATIONS_SNAPSHOT_STALE_MINUTES", "180")
+
+    def broken():
+        raise RuntimeError("DB 연결 끊김")
+
+    monkeypatch.setattr(store, "has_pending_press_release", broken)
+
+    payload = _operations_snapshot_freshness_payload(store, now=now)
+
+    assert payload["operations_snapshot_status"] == "warning"
+    assert payload["operations_snapshot_stale_count"] == 1
+
+
+def test_healthz_details_ignores_failures_of_sources_disabled_in_the_config(monkeypatch):
+    """/healthz/details가 설정 경로를 넘겨 비활성 기관(강진)의 마지막 실패를 거른다."""
+    db_path = Path(f"data/.test_healthz_disabled_source_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.record_source_collection_status(
+        "gangjin-county", "강진군청 보도자료", "failed", "연결 실패",
+        failure_stage="연결", failure_reason="ConnectTimeout",
+    )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    payload = app.test_client().get("/healthz/details").get_json()
+
+    assert payload["source_collection_temporary_count"] == 0
+    assert payload["source_collection_status"] == "ok"
+
+
+def test_operations_service_status_skips_failures_of_disabled_sources(monkeypatch, tmp_path):
+    """운영 화면의 서비스 상태 요약도 설정 경로를 넘겨 비활성 기관의 마지막 실패를 거른다."""
+    db_path = Path(f"data/.test_ops_status_disabled_source_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    store.record_source_collection_status(
+        "gangjin-county", "강진군청 보도자료", "failed", "연결 실패",
+        failure_stage="연결", failure_reason="ConnectTimeout",
+    )
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+sources:
+  - id: gangjin-county
+    name: 강진군청 보도자료
+    region: 전남 강진
+    type: html_board
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    from news_summary.web import _operations_service_status_report, create_app
+
+    app = create_app()
+    with app.test_request_context():  # 요약이 url_for로 카드 링크를 만든다
+        report = _operations_service_status_report(store, config_path, None, {})
+
+    assert "source_collection" not in [issue["component"] for issue in report["issues"]]
 
 
 def test_operations_page_shows_attention_source_queue(monkeypatch):

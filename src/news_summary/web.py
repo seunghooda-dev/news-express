@@ -757,7 +757,7 @@ def create_app() -> Flask:
         if include_details:
             payload.update(_database_schema_health_payload(store))
             payload.update(_gemini_queue_health_payload(store))
-            payload.update(_source_collection_health_payload(store))
+            payload.update(_source_collection_health_payload(store, config_path))
             payload.update(_collection_check_coverage_health_payload(store, config_path))
             payload.update(_image_coverage_health_payload(store, config_path))
             payload.update(_draft_conversion_coverage_health_payload(store))
@@ -4814,6 +4814,16 @@ RELAY_HEARTBEAT_KEY = "relay_heartbeat"
 RELAY_STALE_MINUTES = 180
 
 
+def _queue_has_pending(store: Store) -> bool:
+    """Gemini 큐에 대기 건이 있는가. 조회가 실패하면 있는 것으로 본다 — 지연을 숨기는 것보다
+    경고하는 쪽이 보수적이고, 헬스체크가 이 조회 때문에 500이 되어서도 안 된다."""
+    try:
+        return store.has_pending_press_release()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("queue pending check failed error=%s", exc)
+        return True
+
+
 def _operations_snapshot_freshness_payload(store: Store, now: datetime | None = None) -> dict[str, object]:
     now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     stale_minutes = _operations_snapshot_stale_minutes()
@@ -4834,6 +4844,11 @@ def _operations_snapshot_freshness_payload(store: Store, now: datetime | None = 
         if age_minutes is None:
             missing.append(item)
         elif age_minutes > stale_minutes:
+            # 큐 점검 스냅샷은 대기 건이 있을 때만 갱신된다(scheduler._drain_pending_queue_once).
+            # 대기열이 비어 오래 안 갱신된 것은 정상이라 경고로 세지 않는다. 대기 건이 있는데
+            # 멈춘 것만 진짜 지연이다.
+            if component == "queue_drain" and not _queue_has_pending(store):
+                continue
             stale.append(item)
 
     checked = [item for item in checks if item["age_minutes"] is not None]
@@ -5512,14 +5527,7 @@ def _operations_health_report(
     # 비활성 기관(예: 강진)은 마지막 상태가 "실패"로 굳어 영원히 경고에 남는다.
     # 수집 대상이 아니므로 실패 목록에서 뺀다(2026-08-04). 필수 기관 목록에서
     # 빠진 것은 별도 "27/28 비활성" 경고가 이미 상기시킨다.
-    disabled_source_ids: set[str] = set()
-    if config_path is not None:
-        try:
-            disabled_source_ids = {
-                source.id for source in load_sources(config_path) if not source.enabled
-            }
-        except Exception as exc:  # noqa: BLE001 - 설정 오류가 운영 화면을 막으면 안 된다.
-            logger.warning("operations health could not read source config error=%s", exc)
+    disabled_source_ids = _disabled_source_ids(config_path)
     latest_rows = [row for row in latest_rows if str(row["source_id"]) not in disabled_source_ids]
 
     unresolved_rows = [
@@ -5806,7 +5814,18 @@ def _gemini_queue_resume_overdue_report(
     return {"overdue": True, "overdue_minutes": overdue_minutes}
 
 
-def _source_collection_health_payload(store: Store) -> dict[str, object]:
+def _disabled_source_ids(config_path: Path | None) -> set[str]:
+    """설정에서 비활성인 기관 id. 설정을 못 읽으면 빈 집합 — 아무것도 거르지 않는 쪽이 보수적이다."""
+    if config_path is None:
+        return set()
+    try:
+        return {source.id for source in load_sources(config_path) if not source.enabled}
+    except Exception as exc:  # noqa: BLE001 - 설정 오류가 진단 화면을 막으면 안 된다.
+        logger.warning("health check could not read source config error=%s", exc)
+        return set()
+
+
+def _source_collection_health_payload(store: Store, config_path: Path | None = None) -> dict[str, object]:
     since = (datetime.now(LOCAL_TZ) - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
     try:
         with store.connect() as conn:
@@ -5846,6 +5865,13 @@ def _source_collection_health_payload(store: Store) -> dict[str, object]:
             "source_collection_unresolved_sources": [],
             "source_collection_message": f"수집 상태 확인 실패: {type(exc).__name__}",
         }
+
+    # 서버가 수집하지 않는 비활성 기관(로컬 중계로 넘긴 곳)의 실패는 서버 수집 실패가 아니다.
+    # 거르지 않으면 서버가 마지막에 시도한 실패 행이 영구히 "일시 장애 재검증"으로 남는다
+    # (2026-11-19 실측: 영광·강진·남구·구례 4곳). 중계 생존은 heartbeat가 따로 점검한다.
+    disabled_source_ids = _disabled_source_ids(config_path)
+    recent_rows = [row for row in recent_rows if str(row["source_id"]) not in disabled_source_ids]
+    latest_rows = [row for row in latest_rows if str(row["source_id"]) not in disabled_source_ids]
 
     failure_rows = [row for row in recent_rows if str(row["status"]) == "failed"]
     latest_status_by_source = {str(row["source_id"]): str(row["status"]) for row in latest_rows}
@@ -7673,7 +7699,7 @@ def _operations_service_status_report(
                 "auto_collector_health_message": timing_health["message"],
             }
         )
-    payload.update(_source_collection_health_payload(store))
+    payload.update(_source_collection_health_payload(store, config_path))
     payload.update(_collection_check_coverage_health_payload(store, config_path))
     payload.update(_draft_conversion_coverage_health_payload(store))
     payload.update(_gemini_queue_health_payload(store))

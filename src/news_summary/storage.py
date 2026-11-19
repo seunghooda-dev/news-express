@@ -1381,6 +1381,24 @@ class Store:
             ).fetchone()
         return int(row["count"])
 
+    def has_pending_press_release(self) -> bool:
+        """초안이 없는 원문이 하나라도 있는가 — 헬스체크용 가벼운 존재 확인.
+
+        pending_press_release_summary는 날짜·기관별 집계까지 쿼리 5개를 돌려, 상세 헬스체크가
+        부를 때마다 쓰기엔 무겁다.
+        """
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 AS found
+                FROM press_releases pr
+                LEFT JOIN article_drafts ad ON ad.press_release_id = pr.id
+                WHERE ad.id IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+        return row is not None
+
     def pending_press_release_summary(self, limit: int = 5) -> dict[str, object]:
         published_date_expr = _published_date_expr("pr.published_at")
         with self.connect() as conn:

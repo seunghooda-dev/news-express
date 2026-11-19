@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from news_summary.models import PressRelease
+from news_summary.models import ArticleDraft, PressRelease
 from news_summary.storage import INDEX_STATEMENTS, POSTGRES_SCHEMA_INIT_LOCK_ID, Store
 
 
@@ -9,6 +9,41 @@ def _index_name(statement: str) -> str:
     marker = "CREATE INDEX IF NOT EXISTS "
     assert statement.startswith(marker)
     return statement.removeprefix(marker).split(" ", 1)[0]
+
+
+def test_has_pending_press_release_follows_draft_existence():
+    """헬스체크가 쓰는 가벼운 존재 확인 — 초안이 없는 원문이 있을 때만 True다."""
+    db_path = Path(f"data/.test_has_pending_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+
+    assert store.has_pending_press_release() is False
+
+    release_id = store.add_press_release(
+        PressRelease(
+            source_id="boseong",
+            source_name="보성군",
+            region="전남",
+            title="대기 원문",
+            url="https://example.com/pending-check",
+            content="초안이 아직 없는 원문입니다.",
+            published_at="2026-05-20",
+        )
+    )
+
+    assert store.has_pending_press_release() is True
+
+    store.add_article_draft(
+        ArticleDraft(
+            press_release_id=release_id,
+            title="대기 원문",
+            body="초안 본문입니다.",
+            review_note="",
+            model="gemini-3.5-flash",
+        )
+    )
+
+    assert store.has_pending_press_release() is False
 
 
 def test_add_press_release_is_idempotent_on_duplicate_url():
