@@ -2306,3 +2306,98 @@ def test_backup_verification_still_reports_a_failure_it_remembered(monkeypatch, 
 
     assert first and "확인 필요" in first
     assert second and "확인 필요" in second, "두 번째 주기에서 실패가 조용해졌다"
+
+
+def _staleness_release(source, published_at, number=0):
+    return PressRelease(
+        source_id=source.id,
+        source_name=source.name,
+        region=source.region,
+        title=f"정체 점검 원문 {number}",
+        url=f"https://example.com/latest-published-{source.id}-{number}",
+        content="최신 게시일 기록 시험용 본문입니다.",
+        published_at=published_at,
+    )
+
+
+def test_record_source_latest_published_keeps_the_newest_date_and_ignores_future_typos():
+    """기관 목록에서 가장 최근 게시일을 기관별 키에 남긴다. 미래 날짜(오타)는 무시해야 정체가 영영 안 잡히는 일이 없다."""
+    from news_summary.service import LOCAL_TZ, SOURCE_LATEST_PUBLISHED_PREFIX, record_source_latest_published
+
+    db_path = Path(f"data/.test_latest_published_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="sample", name="테스트 기관", region="전남", type="html_board")
+    today = datetime.now(LOCAL_TZ).date()
+    releases = [
+        _staleness_release(source, (today - timedelta(days=5)).isoformat(), 1),
+        _staleness_release(source, (today - timedelta(days=2)).isoformat() + " 10:30", 2),
+        _staleness_release(source, "2099-01-01", 3),
+        _staleness_release(source, "미정", 4),
+        _staleness_release(source, None, 5),
+    ]
+
+    result = record_source_latest_published(store, source, releases)
+
+    assert result == today - timedelta(days=2)
+    stored = json.loads(store.get_app_metadata(SOURCE_LATEST_PUBLISHED_PREFIX + "sample"))
+    assert stored["latest"] == (today - timedelta(days=2)).isoformat()
+    assert "checked_at" in stored
+
+
+def test_record_source_latest_published_keeps_the_previous_value_when_no_date_parses():
+    from news_summary.service import SOURCE_LATEST_PUBLISHED_PREFIX, record_source_latest_published
+
+    db_path = Path(f"data/.test_latest_published_keep_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    source = Source(id="sample", name="테스트 기관", region="전남", type="html_board")
+    key = SOURCE_LATEST_PUBLISHED_PREFIX + "sample"
+    store.set_app_metadata(key, json.dumps({"latest": "2026-10-22", "checked_at": "2026-11-23T00:00:00+00:00"}))
+
+    assert record_source_latest_published(store, source, []) is None
+    assert record_source_latest_published(store, source, [_staleness_release(source, "미정")]) is None
+
+    assert json.loads(store.get_app_metadata(key))["latest"] == "2026-10-22"
+
+
+def test_record_source_latest_published_never_raises_when_the_store_fails():
+    """기록은 부가 작업이다 — 저장이 실패해도 수집의 성공·실패 판정을 바꾸지 않는다."""
+    from news_summary.service import record_source_latest_published
+
+    class BrokenStore:
+        def set_app_metadata(self, key, value):
+            raise RuntimeError("DB 연결 끊김")
+
+    source = Source(id="sample", name="테스트 기관", region="전남", type="html_board")
+    releases = [_staleness_release(source, "2026-11-20")]
+
+    assert record_source_latest_published(BrokenStore(), source, releases) is None
+
+
+def test_collect_enabled_sources_records_the_latest_published_date_before_retention_filtering(monkeypatch):
+    """보관 필터가 지운 오래된 글만 있어도 목록 기준 최신 게시일은 남는다(정체 감지의 재료)."""
+    from news_summary.service import SOURCE_LATEST_PUBLISHED_PREFIX
+
+    db_path = Path(f"data/.test_latest_published_collect_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id="sample", name="테스트 기관", region="전남", type="html_board")]
+
+    def fake_collect(source, limit):
+        return [
+            _staleness_release(source, "2026-10-22", 1),
+            _staleness_release(source, "2026-10-20", 2),
+        ]
+
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", fake_collect)
+    monkeypatch.setattr("news_summary.service.collection_retention_cutoff_date", lambda: date(2026, 11, 17))
+    monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
+
+    collect_enabled_sources(store, Path("unused.yaml"), limit=3)
+
+    with store.connect() as conn:
+        stored_rows = conn.execute("SELECT COUNT(*) AS count FROM press_releases").fetchone()["count"]
+    assert stored_rows == 0  # 둘 다 보관 기간 밖이라 저장되지 않았다
+    assert json.loads(store.get_app_metadata(SOURCE_LATEST_PUBLISHED_PREFIX + "sample"))["latest"] == "2026-10-22"

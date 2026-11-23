@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
+import pytest
 
 from news_summary.models import ArticleDraft, PressRelease, PressReleaseAsset, Source
 from news_summary.scheduler import (
@@ -11183,3 +11184,203 @@ def test_every_endpoint_set_entry_names_a_real_endpoint():
     ghosts = {name: missing for name, missing in ghosts.items() if missing}
 
     assert not ghosts, f"실존하지 않는 엔드포인트 이름이 들어 있다: {ghosts}"
+
+
+STALENESS_CONFIG = """
+sources:
+  - id: stale-county
+    name: 정체군청 보도자료
+    region: 전남 정체
+    type: html_board
+  - id: fresh-county
+    name: 활발군청 보도자료
+    region: 전남 활발
+    type: html_board
+  - id: relayed-county
+    name: 중계군청 보도자료
+    region: 전남 중계
+    type: html_board
+    enabled: false
+  - id: old-check-county
+    name: 확인오래군청 보도자료
+    region: 전남 확인
+    type: html_board
+"""
+
+
+def _staleness_fixture(tmp_path, records):
+    """기관별 최신 게시일 기록을 심은 저장소와 설정 경로를 돌려준다. records: {id: (latest, checked_at)}."""
+    from news_summary.service import SOURCE_LATEST_PUBLISHED_PREFIX
+
+    db_path = Path(f"data/.test_staleness_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    for source_id, (latest, checked_at) in records.items():
+        store.set_app_metadata(
+            SOURCE_LATEST_PUBLISHED_PREFIX + source_id,
+            json.dumps({"latest": latest, "checked_at": checked_at}),
+        )
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(STALENESS_CONFIG, encoding="utf-8")
+    return store, config_path
+
+
+STALENESS_NOW = datetime(2026, 11, 23, 12, 0, tzinfo=LOCAL_TZ)  # 월요일
+STALENESS_FRESH_CHECK = "2026-11-23T02:00:00+00:00"
+
+
+def test_source_staleness_flags_sources_without_new_posts_for_five_business_days(tmp_path):
+    """구례처럼 중계는 정상인데 군청이 4주째 안 올리는 기관을 잡는다(2026-11-19 실측)."""
+    from news_summary.web import _source_staleness_health_payload
+
+    store, config_path = _staleness_fixture(
+        tmp_path,
+        {
+            "stale-county": ("2026-10-22", STALENESS_FRESH_CHECK),
+            "fresh-county": ("2026-11-20", STALENESS_FRESH_CHECK),  # 금요일 → 월요일, 1영업일
+            "relayed-county": ("2026-11-13", STALENESS_FRESH_CHECK),  # 비활성(중계) 기관도 점검한다 — 어제까지 5영업일
+            "old-check-county": ("2026-10-01", "2026-11-20T02:00:00+00:00"),  # 마지막 확인이 48시간보다 오래됨 → 건너뜀
+            "ghost-county": ("2026-01-01", STALENESS_FRESH_CHECK),  # 설정에 없는 기관 → 무시
+        },
+    )
+
+    payload = _source_staleness_health_payload(store, config_path, now=STALENESS_NOW)
+
+    assert payload["source_staleness_status"] == "warning"
+    assert payload["source_staleness_count"] == 2
+    assert [item["source_id"] for item in payload["source_staleness_sources"]] == ["stale-county", "relayed-county"]
+    assert payload["source_staleness_sources"][0]["latest_published"] == "2026-10-22"
+    assert payload["source_staleness_sources"][1]["business_days"] == 5
+    assert payload["source_staleness_threshold_business_days"] == 5
+    assert "정체군청" in payload["source_staleness_message"]
+    assert "5영업일" in payload["source_staleness_message"]
+
+
+@pytest.mark.parametrize(
+    ("latest", "now", "expected_status"),
+    [
+        # 금요일에 올리고 다음 월요일까지 한 주를 통째로 못 올림 = 어제까지 5영업일, 문턱 포함
+        ("2026-11-13", datetime(2026, 11, 23, 12, 0, tzinfo=LOCAL_TZ), "warning"),
+        # 같은 기관의 다음 금요일 — 오늘 아직 안 올린 것은 세지 않는다(어제까지 4영업일). 매주 같은 요일에 올리는
+        # 기관이 그 요일 자정에 오경보가 나지 않아야 한다.
+        ("2026-11-13", datetime(2026, 11, 20, 12, 0, tzinfo=LOCAL_TZ), "ok"),
+        ("2026-11-16", datetime(2026, 11, 23, 12, 0, tzinfo=LOCAL_TZ), "ok"),  # 월→다음 월, 어제까지 4영업일
+        ("2026-11-20", datetime(2026, 11, 23, 12, 0, tzinfo=LOCAL_TZ), "ok"),  # 금→월, 주말은 세지 않는다
+        ("2026-11-23", datetime(2026, 11, 23, 12, 0, tzinfo=LOCAL_TZ), "ok"),  # 오늘 올림
+        # 추석 연휴(2026-09-24~28)를 영업일에서 빼면 어제까지 3~4영업일이라 정상이다. 연휴를 평일로 세면 6이라 경고가 된다.
+        ("2026-09-22", datetime(2026, 10, 1, 12, 0, tzinfo=LOCAL_TZ), "ok"),
+    ],
+)
+def test_source_staleness_counts_business_days_not_calendar_days(tmp_path, latest, now, expected_status):
+    from news_summary.web import _source_staleness_health_payload
+
+    store, config_path = _staleness_fixture(
+        tmp_path, {"stale-county": (latest, now.astimezone(timezone.utc).isoformat())}
+    )
+
+    payload = _source_staleness_health_payload(store, config_path, now=now)
+
+    assert payload["source_staleness_status"] == expected_status
+
+
+def test_source_staleness_is_neutral_without_records_and_never_raises(tmp_path, monkeypatch):
+    """배포 직후 첫 회차 전에는 기록이 없다. 점검이 실패해도 상세 헬스체크를 500으로 만들면 안 된다."""
+    from news_summary.web import _source_staleness_health_payload
+
+    store, config_path = _staleness_fixture(tmp_path, {})
+
+    payload = _source_staleness_health_payload(store, config_path, now=STALENESS_NOW)
+
+    assert payload["source_staleness_status"] == "neutral"
+    assert payload["source_staleness_count"] == 0
+
+    def broken(prefix):
+        raise RuntimeError("DB 연결 끊김")
+
+    monkeypatch.setattr(store, "get_app_metadata_prefix", broken)
+
+    failed = _source_staleness_health_payload(store, config_path, now=STALENESS_NOW)
+
+    assert failed["source_staleness_status"] == "neutral"
+    assert "RuntimeError" in failed["source_staleness_message"]
+
+
+def test_source_staleness_skips_corrupted_records_instead_of_failing(tmp_path):
+    """DB를 손으로 고쳐 기록이 깨져도 상세 헬스체크가 500이 되면 안 된다(이 라우트에는 바깥 보호가 없다)."""
+    from news_summary.web import _source_staleness_health_payload
+
+    store, config_path = _staleness_fixture(
+        tmp_path,
+        {
+            "stale-county": ("2026-10-22", "2026-13-45 10:00"),  # 날짜 형식은 맞지만 값이 불가능한 확인 시각
+            "fresh-county": ("not-a-date", STALENESS_FRESH_CHECK),
+            "relayed-county": ("2026-10-22", STALENESS_FRESH_CHECK),  # 유일하게 정상인 기록
+        },
+    )
+    from news_summary.service import SOURCE_LATEST_PUBLISHED_PREFIX
+
+    store.set_app_metadata(SOURCE_LATEST_PUBLISHED_PREFIX + "old-check-county", json.dumps(["list", "not", "dict"]))
+
+    payload = _source_staleness_health_payload(store, config_path, now=STALENESS_NOW)
+
+    assert payload["source_staleness_status"] == "warning"
+    assert [item["source_id"] for item in payload["source_staleness_sources"]] == ["relayed-county"]
+
+
+def test_service_health_summary_includes_source_staleness_warning():
+    summary = _service_health_summary(
+        {
+            "ok": True,
+            "database": "ok",
+            "source_staleness_status": "warning",
+            "source_staleness_message": "새 글이 5영업일 이상 없는 기관 1곳 — 구례 22영업일",
+        }
+    )
+
+    assert summary["service_status_level"] == "warning"
+    assert summary["service_status_issues"][0]["component"] == "source_staleness"
+    assert summary["service_status_message"] == "새 글이 5영업일 이상 없는 기관 1곳 — 구례 22영업일"
+
+
+def test_healthz_details_exposes_source_staleness_but_the_plain_healthz_does_not(monkeypatch):
+    db_path = Path(f"data/.test_healthz_staleness_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+    details = client.get("/healthz/details").get_json()
+    plain = client.get("/healthz").get_json()
+
+    assert details["source_staleness_status"] == "neutral"  # 기록이 아직 없다
+    assert "source_staleness_status" not in plain
+
+
+def test_operations_service_status_lists_source_staleness_with_its_card_link(monkeypatch, tmp_path):
+    """운영 화면의 서비스 상태 요약에도 연결돼 있어야 한다(상세 헬스체크와 자동 동기화되지 않는다)."""
+    db_path = Path(f"data/.test_ops_staleness_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    from news_summary.service import SOURCE_LATEST_PUBLISHED_PREFIX
+
+    store.set_app_metadata(
+        SOURCE_LATEST_PUBLISHED_PREFIX + "stale-county",
+        json.dumps({"latest": "2026-10-22", "checked_at": datetime.now(timezone.utc).isoformat()}),
+    )
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(STALENESS_CONFIG, encoding="utf-8")
+
+    from news_summary.web import _operations_service_status_report, create_app
+
+    app = create_app()
+    with app.test_request_context():
+        report = _operations_service_status_report(store, config_path, None, {})
+
+    issues = [issue for issue in report["issues"] if issue["component"] == "source_staleness"]
+    assert len(issues) == 1
+    assert issues[0]["anchor_id"] == "ops-collection-coverage"

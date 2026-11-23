@@ -79,6 +79,7 @@ from .memory import release_free_heap
 from .models import Source
 from .service import (
     GEMINI_COOLDOWN_REASON_KEY,
+    SOURCE_LATEST_PUBLISHED_PREFIX,
     business_days_between,
     collection_retention_cutoff_date,
     collection_retention_days,
@@ -765,6 +766,7 @@ def create_app() -> Flask:
             payload.update(_backup_health_payload(backup_dir, backup_verify_report))
             payload.update(_operations_snapshot_freshness_payload(store))
             payload.update(_relay_heartbeat_health_payload(store, config_path))
+            payload.update(_source_staleness_health_payload(store, config_path))
             payload.update(_deployment_version_health_payload())
             readiness_report = _production_readiness_report(store, backup_dir, auto_status, config_path)
             payload.update(_production_readiness_health_payload(readiness_report))
@@ -2499,6 +2501,9 @@ def _service_health_summary(payload: dict[str, object]) -> dict[str, object]:
     relay_status = str(payload.get("relay_status") or "")
     if relay_status in {"warning", "error"}:
         add_issue(relay_status, "relay", payload.get("relay_message"))
+    source_staleness_status = str(payload.get("source_staleness_status") or "")
+    if source_staleness_status in {"warning", "error"}:
+        add_issue(source_staleness_status, "source_staleness", payload.get("source_staleness_message"))
 
     if any(issue["level"] == "error" for issue in issues):
         level = "error"
@@ -4920,6 +4925,93 @@ def _relay_heartbeat_health_payload(
         "relay_age_minutes": age_minutes,
         "relay_host": host,
         "relay_stale_after_minutes": RELAY_STALE_MINUTES,
+    }
+
+
+# 최신 게시일부터 오늘까지 영업일이 이만큼 지나도록 새 글이 없는 기관을 정체로 본다(일주일 내내 없음).
+SOURCE_STALE_BUSINESS_DAYS = 5
+# 기관별 최신 게시일 기록의 마지막 확인이 이보다 오래됐으면 정체가 아니라 수집·중계 자체가 멎은 것이다 —
+# 그건 source_collection·relay 경고의 몫이라 여기서는 건너뛴다.
+SOURCE_STALE_CHECK_FRESH_MINUTES = 48 * 60
+
+
+def _source_staleness_health_payload(
+    store: Store,
+    config_path: Path,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """수집은 성공하는데 기관이 며칠째 새 글을 안 올리는 정체를 잡는다.
+
+    수집 점검은 요청의 성공·실패만, 중계 점검은 프로세스의 생존만 본다. 구례처럼 중계가 정상으로 도는데
+    군청 게시판이 4주째 멈춘 경우(2026-11-19 확인)는 어느 쪽도 못 잡았다. 서비스가 수집 때마다 남기는
+    기관별 목록 기준 최신 게시일(service.record_source_latest_published)로 영업일 간격을 본다.
+    /healthz/details에는 바깥 보호가 없어 이 함수는 예외를 밖으로 내지 않는다.
+    """
+    result: dict[str, object] = {
+        "source_staleness_count": 0,
+        "source_staleness_sources": [],
+        "source_staleness_threshold_business_days": SOURCE_STALE_BUSINESS_DAYS,
+    }
+    try:
+        records = store.get_app_metadata_prefix(SOURCE_LATEST_PUBLISHED_PREFIX)
+        sources = load_sources(config_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("source staleness check failed error=%s", exc)
+        return {
+            **result,
+            "source_staleness_status": "neutral",
+            "source_staleness_message": f"기관별 새 글 정체 점검 실패: {type(exc).__name__}",
+        }
+
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    today = now_utc.astimezone(LOCAL_TZ).date()
+    holidays = retention_holidays({today.year - 1, today.year})
+    stale: list[dict[str, object]] = []
+    checked = 0
+    for source in sources:
+        raw = records.get(SOURCE_LATEST_PUBLISHED_PREFIX + source.id)
+        if not raw:
+            continue
+        try:
+            record = json.loads(raw)
+            latest = date.fromisoformat(str(record["latest"]))
+            checked_age = _age_minutes(record.get("checked_at"), now_utc)
+        except Exception:  # noqa: BLE001 - 손상된 기록 하나가 상세 헬스체크를 500으로 만들면 안 된다
+            continue
+        if checked_age is None or checked_age > SOURCE_STALE_CHECK_FRESH_MINUTES:
+            continue
+        checked += 1
+        # 오늘은 세지 않는다 — 오늘 아직 안 올린 것은 새벽부터 정체로 보면 매주 같은 요일에 올리는 기관이
+        # 그 전날 자정에 오경보가 된다. 어제까지 영업일 5일을 꽉 채워 못 올린 기관만 정체다.
+        business_days = business_days_between(latest, today - timedelta(days=1), holidays)
+        if business_days >= SOURCE_STALE_BUSINESS_DAYS:
+            stale.append(
+                {
+                    "source_id": source.id,
+                    "source_name": source_display_label(source.name),
+                    "latest_published": latest.isoformat(),
+                    "business_days": business_days,
+                }
+            )
+
+    stale.sort(key=lambda item: int(item["business_days"]), reverse=True)
+    if not checked:
+        status = "neutral"
+        message = "기관별 최신 게시일 기록이 없거나 48시간 넘게 갱신되지 않았습니다."
+    elif stale:
+        status = "warning"
+        shown = ", ".join(f"{item['source_name']} {item['business_days']}영업일" for item in stale[:3])
+        more = f" 외 {len(stale) - 3}곳" if len(stale) > 3 else ""
+        message = f"새 글이 {SOURCE_STALE_BUSINESS_DAYS}영업일 이상 없는 기관 {len(stale)}곳 — {shown}{more}"
+    else:
+        status = "ok"
+        message = f"점검한 {checked}개 기관 모두 최근 {SOURCE_STALE_BUSINESS_DAYS}영업일 안에 새 글이 있습니다."
+    return {
+        **result,
+        "source_staleness_status": status,
+        "source_staleness_message": message,
+        "source_staleness_count": len(stale),
+        "source_staleness_sources": stale,
     }
 
 
@@ -7673,6 +7765,7 @@ OPERATIONS_COMPONENT_CARD_MAP = {
     "gemini_queue": ("ops-gemini-retry-queue", "Gemini 재처리 대기열"),
     "operations_snapshot": ("ops-service-status", "운영 스냅샷"),
     "relay": ("ops-collection-coverage", "오늘 수집 점검 커버리지"),
+    "source_staleness": ("ops-collection-coverage", "오늘 수집 점검 커버리지"),
 }
 
 
@@ -7708,6 +7801,7 @@ def _operations_service_status_report(
         payload.update(backup_health_report)
     payload.update(_operations_snapshot_freshness_payload(store))
     payload.update(_relay_heartbeat_health_payload(store, config_path))
+    payload.update(_source_staleness_health_payload(store, config_path))
     deployment_report = reports.get("deployment_version")
     if isinstance(deployment_report, dict):
         payload.update(_deployment_version_health_payload_from_report(deployment_report))

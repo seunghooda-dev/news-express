@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+import json
 from json import JSONDecodeError
 import os
 from pathlib import Path
@@ -229,6 +230,8 @@ def collect_enabled_sources(
             )
             continue
 
+        # 보관 필터가 지우기 전에 목록 기준 최신 게시일을 남긴다(기관 정체 감지의 재료).
+        record_source_latest_published(store, source, releases)
         retained_releases, source_skipped = filter_releases_by_retention(releases, retention_cutoff)
         source_inserted = 0
         for release in retained_releases:
@@ -605,6 +608,38 @@ def filter_releases_by_retention(
 
 def prune_press_releases_outside_retention(store: Store, cutoff_date: date) -> dict[str, int]:
     return store.delete_press_releases_before(cutoff_date.isoformat())
+
+
+# 기관별 "목록 기준 최신 게시일" 기록 키 접두어. 원문은 3영업일만 보관해 DB의 press_releases로는 그보다 긴
+# 정체를 볼 수 없어 따로 남긴다. 기관별 키라서 서버와 로컬 중계가 서로의 기록을 덮어쓰지 않는다.
+SOURCE_LATEST_PUBLISHED_PREFIX = "source_latest_published:"
+
+
+def record_source_latest_published(store: Store, source: Source, releases: list[PressRelease]) -> date | None:
+    """기관 목록(보관 필터 이전)에서 가장 최근 게시일을 기관별 키에 남기고 그 날짜를 돌려준다.
+
+    부가 작업이라 실패해도 수집의 성공·실패 판정에 영향을 주지 않는다. 날짜가 하나도 해석되지 않으면
+    (빈 목록, "미정" 등) 쓰지 않아 직전 값을 보존한다. 내일 이후의 날짜(오타)는 무시한다 — 최댓값이
+    미래로 튀면 정체가 영영 안 잡힌다.
+    """
+    try:
+        today = datetime.now(LOCAL_TZ).date()
+        dates = [
+            published
+            for release in releases
+            if (published := press_release_published_date(release)) and published <= today + timedelta(days=1)
+        ]
+        if not dates:
+            return None
+        latest = max(dates)
+        store.set_app_metadata(
+            SOURCE_LATEST_PUBLISHED_PREFIX + source.id,
+            json.dumps({"latest": latest.isoformat(), "checked_at": datetime.now(timezone.utc).isoformat()}),
+        )
+        return latest
+    except Exception as exc:  # noqa: BLE001 - 기록 실패가 수집을 깨면 안 된다
+        logger.warning("source latest published record failed source=%s error=%s", source.id, exc)
+        return None
 
 
 def press_release_published_date(release: PressRelease) -> date | None:

@@ -815,6 +815,21 @@ class Store:
             row = conn.execute("SELECT value FROM app_metadata WHERE key = ?", (key,)).fetchone()
             return str(row["value"]) if row else None
 
+    def get_app_metadata_prefix(self, prefix: str) -> dict[str, str]:
+        """접두어로 시작하는 키를 한 번의 쿼리로 읽는다(기관별 키를 기관 수만큼 쿼리하지 않으려는 용도).
+
+        LIKE는 `_`를 와일드카드로 읽으므로 SUBSTR로 문자열 그대로 비교한다.
+        """
+        cache = getattr(self._local, "app_metadata_cache", None)
+        if cache is not None:
+            return {key: value for key, value in cache.items() if key.startswith(prefix)}
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM app_metadata WHERE SUBSTR(key, 1, ?) = ?",
+                (len(prefix), prefix),
+            ).fetchall()
+        return {str(row["key"]): str(row["value"]) for row in rows}
+
     def set_app_metadata(self, key: str, value: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as conn:

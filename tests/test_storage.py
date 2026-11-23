@@ -379,3 +379,45 @@ def test_every_ensure_column_branch_actually_restores_its_column():
         with store.connect() as check:
             after = {row["name"] for row in check.execute(f"PRAGMA table_info({table})").fetchall()}
         assert column in after, f"{table}.{column} 이주가 안 돌았다 — 기존 DB가 그 칸을 영영 못 받는다"
+
+
+def test_get_app_metadata_prefix_returns_only_keys_with_the_exact_prefix():
+    """기관별 키를 한 번의 쿼리로 읽는다. 밑줄이 LIKE 와일드카드라 접두어 비교는 문자열 그대로여야 한다."""
+    db_path = Path(f"data/.test_metadata_prefix_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata("source_latest_published:gangjin-county", "A")
+    store.set_app_metadata("source_latest_published:yeonggwang-county", "B")
+    store.set_app_metadata("sourceXlatestXpublished:other", "C")  # 밑줄을 와일드카드로 읽으면 걸리는 키
+    store.set_app_metadata("relay_heartbeat", "D")
+
+    found = store.get_app_metadata_prefix("source_latest_published:")
+
+    assert found == {
+        "source_latest_published:gangjin-county": "A",
+        "source_latest_published:yeonggwang-county": "B",
+    }
+    assert store.get_app_metadata_prefix("no_such_prefix:") == {}
+
+
+def test_get_app_metadata_prefix_reads_through_the_metadata_cache_scope():
+    """/operations는 app_metadata_cache_scope 안에서 돈다 — 직접 조회와 같은 결과여야 한다."""
+    db_path = Path(f"data/.test_metadata_prefix_cache_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    store.set_app_metadata("source_latest_published:a", "1")
+    store.set_app_metadata("relay_heartbeat", "2")
+
+    with store.app_metadata_cache_scope():
+        cached = store.get_app_metadata_prefix("source_latest_published:")
+
+    assert cached == {"source_latest_published:a": "1"}
+
+
+def test_get_app_metadata_prefix_query_converts_to_two_postgres_placeholders():
+    """프로덕션은 Postgres다 — 시험은 SQLite라 변환 결과만이라도 고정한다(`%`가 없어 이스케이프 문제도 없다)."""
+    from news_summary.storage import _postgres_sql
+
+    converted = _postgres_sql("SELECT key, value FROM app_metadata WHERE SUBSTR(key, 1, ?) = ?")
+
+    assert converted == "SELECT key, value FROM app_metadata WHERE SUBSTR(key, 1, %s) = %s"
