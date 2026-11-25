@@ -31,7 +31,7 @@
             <strong>{{ draft.title }}</strong>
             <span class="row-meta row-meta-main">
               <span>{{ source_display_label(draft.source_name) }}</span>
-              <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+              {% if show_model_badge(draft.model) %}<span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>{% endif %}
             </span>
             <span class="row-meta row-meta-secondary">
               <span title="초안 {{ draft.created_at|date_label }}">{{ draft.created_at|relative_label }}</span>
@@ -74,7 +74,7 @@
               {% endif %}
               {% if item.draft_id %}
                 <span class="badge {{ status_badge_class(item.draft_status) }}">{{ status_label(item.draft_status) }}</span>
-                <span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>
+                {% if show_model_badge(item.draft_model) %}<span class="badge {{ model_badge_class(item.draft_model) }}">{{ model_label(item.draft_model) }}</span>{% endif %}
               {% else %}
                 <span class="badge badge-neutral">초안 없음</span>
               {% endif %}

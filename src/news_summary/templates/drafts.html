@@ -94,7 +94,7 @@
           {% if draft.published_at %}
             <span title="게시 {{ draft.published_at|date_label }}">게시 {{ draft.published_at|relative_label }}</span>
           {% endif %}
-          <span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>
+          {% if show_model_badge(draft.model) %}<span class="badge {{ model_badge_class(draft.model) }}">{{ model_label(draft.model) }}</span>{% endif %}
         </span>
         {% set flags = review_flags(draft, duplicate_titles)[:4] %}
         {% if flags %}

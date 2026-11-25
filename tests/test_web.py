@@ -4088,8 +4088,10 @@ def test_source_detail_uses_current_config_name_for_existing_rows(monkeypatch):
     releases_html = client.get("/press-releases").data.decode("utf-8")
 
     assert "진도군청 보도자료" in html
-    assert "Gemini Lite" in html
-    assert "Gemini Lite" in releases_html
+    # 글마다 붙는 모델 배지는 숨긴다(2026-11-25 요청). 목록에는 글 자체가 보여야 한다.
+    assert "진도군 군정뉴스" in html and "진도군 군정뉴스" in releases_html
+    assert 'class="badge badge-gemini-lite"' not in html
+    assert 'class="badge badge-gemini-lite"' not in releases_html
     assert "진도군 농업기술센터 보도자료" not in releases_html
     assert 'href="/press-releases?draft=missing&amp;source=jindo-county"' in html
     assert 'href="/press-releases?draft=date_issue&amp;source=jindo-county"' in html
@@ -11384,3 +11386,102 @@ def test_operations_service_status_lists_source_staleness_with_its_card_link(mon
     issues = [issue for issue in report["issues"] if issue["component"] == "source_staleness"]
     assert len(issues) == 1
     assert issues[0]["anchor_id"] == "ops-collection-coverage"
+
+
+def test_show_model_badge_hides_the_label_of_normal_gemini_drafts_only():
+    """기사마다 같은 "Gemini Lite"·"Gemini Flash"가 붙어 소음이다(2026-11-25 요청).
+
+    Gemini가 정상으로 쓴 글(`…:gemini`, 다듬기 `…:gemini-refine`)의 배지는 숨기고, 규칙 기반·OpenAI·모델 미상·
+    Gemini 실패 뒤 대체 초안은 이상 신호라 남긴다.
+    """
+    from news_summary.web import show_model_badge
+
+    assert show_model_badge("gemini-3.1-flash-lite:gemini") is False
+    assert show_model_badge("gemini-3.5-flash:gemini") is False
+    assert show_model_badge("gemini-3.5-pro:gemini") is False
+    assert show_model_badge("gemini-3.5-flash:gemini-refine") is False
+    assert show_model_badge("gpt-4.1-mini:rule-based") is True  # 규칙 기반 = 모델이 못 써서 만든 대체 초안
+    assert show_model_badge("gemini-3.5-flash:gemini-error:ReadTimeout:rule-based") is True  # Gemini 실패 뒤 대체
+    assert show_model_badge("gpt-4.1-mini") is True
+    assert show_model_badge(None) is True  # "모델 미상"도 눈에 띄어야 한다
+
+
+def test_fallback_draft_after_a_gemini_failure_reads_as_rule_based_not_gemini_lite():
+    """Gemini가 실패해 만든 대체 초안은 모델 이름에 gemini가 들어 있어 "Gemini Lite" 배지로 보였다 — 이상 신호로 읽혀야 한다."""
+    model = "gemini-3.1-flash-lite:gemini-error:ReadTimeout:rule-based"
+
+    assert model_label(model) == "규칙 기반"
+    assert model_badge_class(model) == "badge-warning"
+    # 기존 표시는 그대로다.
+    assert model_label("gemini-3.1-flash-lite:gemini") == "Gemini Lite"
+    assert model_label("gpt-4.1-mini:rule-based") == "규칙 기반"
+
+
+def test_article_lists_and_details_do_not_show_the_gemini_lite_badge(monkeypatch):
+    db_path = Path(f"data/.test_model_badge_hidden_{uuid4().hex}.sqlite").resolve()
+    monkeypatch.setenv("NEWS_SUMMARY_DB", str(db_path))
+    store = Store(db_path)
+    store.init_db()
+    draft_ids = {}
+    release_ids = {}
+    for key, model in (
+        ("lite", "gemini-3.1-flash-lite:gemini"),
+        ("flash", "gemini-3.5-flash:gemini"),
+        ("rule", "gpt-4.1-mini:rule-based"),
+        # Gemini 실패 뒤 대체 초안 — 모델 이름에 gemini가 들어 있어도 정상 Gemini 글처럼 숨겨지거나 Lite로 보이면 안 된다.
+        ("fallback", "gemini-3.1-flash-lite:gemini-error:ReadTimeout:rule-based"),
+    ):
+        release_id = release_ids[key] = store.add_press_release(
+            PressRelease(
+                source_id="gwangju-seogu",  # 기관 상세 페이지는 설정에 있는 기관만 열린다
+                source_name="광주 서구청 보도자료",
+                region="광주 서구",
+                title=f"{key} 모델 원문",
+                url=f"https://example.com/model-badge-{key}",
+                content=f"{key} 모델 배지 시험용 원문입니다. " * 3,
+                published_at=datetime.now(LOCAL_TZ).date().isoformat(),
+            )
+        )
+        draft_ids[key] = store.add_article_draft(
+            ArticleDraft(
+                press_release_id=release_id,
+                title=f"{key} 모델 초안",
+                body="본문입니다.",
+                review_note="",
+                model=model,
+            )
+        )
+
+    from news_summary.web import create_app
+
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    lite_markup = 'class="badge badge-gemini-lite"'
+    flash_markup = 'class="badge badge-gemini-flash"'
+    rule_markup = "규칙 기반</span>"
+
+    # 초안 목록(대시보드·초안·기관 상세)과 원문 목록 — 새 글이 어느 화면에 먼저 뜨든 같은 규칙이어야 한다.
+    for path in ("/", "/drafts", "/sources/gwangju-seogu", "/press-releases"):
+        html = client.get(path).data.decode("utf-8")
+        assert "lite 모델" in html and "flash 모델" in html, f"{path}: 시험 데이터가 목록에 없다"
+        assert lite_markup not in html, f"{path}: Gemini Lite 배지가 남아 있다"
+        assert flash_markup not in html, f"{path}: Gemini Flash 배지가 남아 있다"
+    # 모델이 못 써서 만든 대체 초안의 배지는 이상 신호라 남는다.
+    assert rule_markup in client.get("/drafts").data.decode("utf-8")
+    assert rule_markup in client.get("/press-releases").data.decode("utf-8")
+
+    # 상세 화면
+    for key in ("lite", "flash"):
+        detail = client.get(f"/drafts/{draft_ids[key]}").data.decode("utf-8")
+        assert lite_markup not in detail and flash_markup not in detail
+        release_detail = client.get(f"/press-releases/{release_ids[key]}").data.decode("utf-8")
+        assert lite_markup not in release_detail and flash_markup not in release_detail
+    assert rule_markup in client.get(f"/drafts/{draft_ids['rule']}").data.decode("utf-8")
+    assert rule_markup in client.get(f"/press-releases/{release_ids['rule']}").data.decode("utf-8")
+    # 대체 초안은 원문 화면에서 "AI 확인" 같은 다른 신호가 없어 이 배지가 유일한 단서다.
+    for path in (f"/drafts/{draft_ids['fallback']}", f"/press-releases/{release_ids['fallback']}"):
+        detail = client.get(path).data.decode("utf-8")
+        assert rule_markup in detail, path
+        assert lite_markup not in detail, path

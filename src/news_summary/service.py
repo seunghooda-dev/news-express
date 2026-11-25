@@ -138,6 +138,8 @@ _LIBRARY_KOREA_HOLIDAYS_FAILED_KEYS: set[tuple[int, ...]] = set()
 
 
 DEFAULT_COLLECT_LIMIT = 30
+# 기관 하나가 끝날 때마다 즉시 변환하는 최대 건수(대기열 소진의 기본 한도와 같다).
+INLINE_DRAFT_LIMIT = 25
 DECORATIVE_ASSET_CLEANUP_LIMIT = 2000
 
 
@@ -147,7 +149,14 @@ def collect_enabled_sources(
     limit: int = DEFAULT_COLLECT_LIMIT,
     progress_callback: ProgressCallback | None = None,
     source_ids: list[str] | None = None,
+    after_source_inserted: Callable[[Source, int], list[str]] | None = None,
 ) -> list[str]:
+    """켜진 기관을 차례로 수집해 저장한다.
+
+    after_source_inserted(기관, 새로 저장한 글 수)는 새 글이 있는 기관의 저장·상태 기록이 끝난 직후에 불린다.
+    회차가 끝날 때까지 기다리지 않고 그 글을 바로 처리하려는 용도다(예: 초안 변환). 콜백의 예외는 잡아 로그만
+    남기고 다음 기관 수집을 계속한다.
+    """
     messages: list[str] = []
     sources = [source for source in load_sources(config_path) if source.enabled]
     if source_ids:
@@ -274,6 +283,19 @@ def collect_enabled_sources(
             source_name=source.name,
             message=f"{index}/{total} {source.name} 수집 완료",
         )
+        if after_source_inserted and source_inserted:
+            _report_progress(
+                progress_callback,
+                phase="collecting",
+                current=index,
+                total=total,
+                source_name=source.name,
+                message=f"{index}/{total} {source.name} 초안 변환 중",
+            )
+            try:
+                messages.extend(after_source_inserted(source, source_inserted))
+            except Exception:  # noqa: BLE001 - 변환 문제로 나머지 기관 수집이 중단되면 안 된다
+                logger.exception("after source hook failed source_id=%s source_name=%s", source.id, source.name)
 
     if transient_retry_sources:
         retry_inserted, retry_messages = retry_transient_collection_failures(
@@ -772,7 +794,23 @@ def collect_and_draft_cycle(
     require_gemini: bool = False,
     progress_callback: ProgressCallback | None = None,
 ) -> list[str]:
-    messages = collect_enabled_sources(store, config_path, collect_limit, progress_callback=progress_callback)
+    def draft_new_releases(source: Source, new_count: int) -> list[str]:
+        # 기관의 새 글을 그 기관 수집이 끝나는 즉시 변환한다. 전 기관을 다 수집한 뒤에야 변환하면 먼저
+        # 수집된 글이 회차 끝까지 최대 11분 미변환으로 남는다(2026-11-25 실측). 한도·오류로 못 한 글,
+        # 재검증으로 회복된 기관의 글은 아래의 회차 끝 일괄 변환이 맡는다.
+        if require_gemini and gemini_cooldown_until(store):
+            # 쿨다운 중에는 기관마다 같은 안내가 쌓여 상태 꼬리를 가린다 — 회차 끝 일괄 변환이 한 번만 알린다.
+            return []
+        logger.info("inline draft started source_id=%s new=%s", source.id, new_count)
+        return draft_pending_releases(store, INLINE_DRAFT_LIMIT, require_gemini=require_gemini)
+
+    messages = collect_enabled_sources(
+        store,
+        config_path,
+        collect_limit,
+        progress_callback=progress_callback,
+        after_source_inserted=draft_new_releases,
+    )
     _report_progress(progress_callback, phase="drafting", message="Gemini 기사화 중")
     logger.info("draft cycle started draft_limit=%s require_gemini=%s", draft_limit, require_gemini)
     messages.extend(draft_pending_releases(store, draft_limit, require_gemini=require_gemini))

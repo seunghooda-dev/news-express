@@ -2401,3 +2401,186 @@ def test_collect_enabled_sources_records_the_latest_published_date_before_retent
         stored_rows = conn.execute("SELECT COUNT(*) AS count FROM press_releases").fetchone()["count"]
     assert stored_rows == 0  # 둘 다 보관 기간 밖이라 저장되지 않았다
     assert json.loads(store.get_app_metadata(SOURCE_LATEST_PUBLISHED_PREFIX + "sample"))["latest"] == "2026-10-22"
+
+
+def _per_source_setup(monkeypatch, source_ids, events, preseeded_urls=()):
+    """기관 여러 곳을 가짜로 수집하는 환경. 수집·변환 호출 순서를 events에 남긴다."""
+    db_path = Path(f"data/.test_service_per_source_{uuid4().hex}.sqlite").resolve()
+    store = Store(db_path)
+    store.init_db()
+    sources = [Source(id=sid, name=f"기관 {sid}", region="전남", type="html_board") for sid in source_ids]
+
+    def fake_collect(source, limit):
+        events.append(f"collect:{source.id}")
+        return [
+            PressRelease(
+                source_id=source.id,
+                source_name=source.name,
+                region=source.region,
+                title=f"{source.id} 보도자료",
+                url=f"https://example.com/per-source/{source.id}",
+                content="기관별 즉시 변환 시험용 본문입니다. " * 3,
+                published_at="2026-11-25",
+            )
+        ]
+
+    for url in preseeded_urls:
+        store.add_press_release(
+            PressRelease(
+                source_id="pre",
+                source_name="기존",
+                region="전남",
+                title="이미 있는 원문",
+                url=url,
+                content="이미 저장된 원문입니다. " * 3,
+                published_at="2026-11-25",
+            )
+        )
+    monkeypatch.setattr("news_summary.service.load_sources", lambda config_path: sources)
+    monkeypatch.setattr("news_summary.service.collect_source", fake_collect)
+    monkeypatch.setattr("news_summary.service.collection_retention_cutoff_date", lambda: date(2026, 11, 1))
+    monkeypatch.setattr("news_summary.service.repair_missing_published_dates", lambda store, source, limit=20: 0)
+    return store
+
+
+def test_collect_enabled_sources_calls_after_source_inserted_only_for_sources_with_new_releases(monkeypatch):
+    events: list[str] = []
+    store = _per_source_setup(
+        monkeypatch, ["s1", "s2", "s3"], events, preseeded_urls=["https://example.com/per-source/s2"]
+    )
+
+    def after(source, new_count):
+        events.append(f"after:{source.id}:{new_count}")
+        return [f"변환 {source.id}"]
+
+    messages = collect_enabled_sources(store, Path("unused.yaml"), limit=3, after_source_inserted=after)
+
+    # s2는 이미 저장된 글이라 새 글이 0건 — 호출하지 않는다. 변환은 다음 기관 수집보다 먼저 끝난다.
+    assert events == ["collect:s1", "after:s1:1", "collect:s2", "collect:s3", "after:s3:1"]
+    assert "변환 s1" in messages and "변환 s3" in messages
+
+
+def test_collect_enabled_sources_keeps_collecting_when_the_after_source_hook_fails(monkeypatch):
+    """변환 쪽 문제로 나머지 기관의 수집이 중단되면 안 된다."""
+    events: list[str] = []
+    store = _per_source_setup(monkeypatch, ["s1", "s2", "s3"], events)
+
+    def after(source, new_count):
+        raise RuntimeError("초안 변환 중 예상 못한 오류")
+
+    collect_enabled_sources(store, Path("unused.yaml"), limit=3, after_source_inserted=after)
+
+    assert events == ["collect:s1", "collect:s2", "collect:s3"]
+    with store.connect() as conn:
+        stored = conn.execute("SELECT COUNT(*) AS count FROM press_releases").fetchone()["count"]
+    assert stored == 3
+
+
+def test_collect_and_draft_cycle_drafts_each_source_before_collecting_the_next(monkeypatch):
+    """2026-11-25 실측: 23개 기관을 다 수집한 뒤에야 변환해 먼저 수집된 글이 회차 끝까지 11분 미변환이었다."""
+    from news_summary.service import collect_and_draft_cycle
+
+    events: list[str] = []
+    store = _per_source_setup(monkeypatch, ["s1", "s2"], events)
+
+    def fake_generate(item_id, item, model=None, require_gemini=False):
+        events.append(f"draft:{item.source_id}")
+        return ArticleDraft(press_release_id=item_id, title=item.title, body="초안 본문", review_note="", model="test")
+
+    monkeypatch.setattr("news_summary.service.generate_draft", fake_generate)
+
+    messages = collect_and_draft_cycle(store, Path("unused.yaml"), collect_limit=3, draft_limit=50)
+
+    assert events == ["collect:s1", "draft:s1", "collect:s2", "draft:s2"]
+    assert len(store.drafts(limit=10)) == 2
+    assert store.pending_press_release_summary(limit=1)["total"] == 0
+    # 회차 끝의 일괄 변환은 안전망으로 남아 있고, 이미 다 변환했으니 할 일이 없다고 알린다.
+    assert "초안을 만들 새 원문이 없습니다." in messages
+
+
+def test_collect_and_draft_cycle_still_drafts_leftovers_at_the_end(monkeypatch):
+    """기관별 변환이 한도(25건)나 오류로 못 한 글은 회차 끝 일괄 변환이 맡는다."""
+    from news_summary.service import collect_and_draft_cycle
+
+    events: list[str] = []
+    store = _per_source_setup(monkeypatch, ["s1", "s2"], events)
+    calls = {"n": 0}
+
+    def flaky_generate(item_id, item, model=None, require_gemini=False):
+        calls["n"] += 1
+        if calls["n"] == 1:  # 기관 s1의 인라인 변환이 처음 한 번 실패한다
+            raise RuntimeError("일시 오류")
+        events.append(f"draft:{item.source_id}")
+        return ArticleDraft(press_release_id=item_id, title=item.title, body="초안 본문", review_note="", model="test")
+
+    monkeypatch.setattr("news_summary.service.generate_draft", flaky_generate)
+
+    collect_and_draft_cycle(store, Path("unused.yaml"), collect_limit=3, draft_limit=50)
+
+    # s1 인라인 변환은 실패했지만 s2 수집은 계속됐고, 두 글 모두 결국 변환됐다.
+    assert [e for e in events if e.startswith("collect")] == ["collect:s1", "collect:s2"]
+    assert len(store.drafts(limit=10)) == 2
+    assert store.pending_press_release_summary(limit=1)["total"] == 0
+
+
+def test_collect_and_draft_cycle_final_sweep_drafts_what_the_inline_call_could_not(monkeypatch):
+    """마지막 기관의 인라인 변환이 실패하면 그 글은 회차 끝 일괄 변환으로만 변환된다 — 안전망이 실제로 일한다."""
+    from news_summary.service import collect_and_draft_cycle
+
+    events: list[str] = []
+    store = _per_source_setup(monkeypatch, ["s1", "s2"], events)
+    calls = {"n": 0}
+
+    def fail_second(item_id, item, model=None, require_gemini=False):
+        calls["n"] += 1
+        if calls["n"] == 2:  # 기관 s2의 인라인 변환(전체 두 번째 호출)만 실패
+            raise RuntimeError("일시 오류")
+        events.append(f"draft:{item.source_id}")
+        return ArticleDraft(press_release_id=item_id, title=item.title, body="초안 본문", review_note="", model="test")
+
+    monkeypatch.setattr("news_summary.service.generate_draft", fail_second)
+
+    messages = collect_and_draft_cycle(store, Path("unused.yaml"), collect_limit=3, draft_limit=50)
+
+    assert events == ["collect:s1", "draft:s1", "collect:s2", "draft:s2"]
+    assert calls["n"] == 3  # s1 인라인, s2 인라인(실패), s2 회차 끝 일괄
+    assert "s2 보도자료" in messages[-1]  # 마지막 메시지는 회차 끝 일괄 변환이 만든 초안이다
+    assert store.pending_press_release_summary(limit=1)["total"] == 0
+
+
+def test_collect_and_draft_cycle_keeps_require_gemini_for_inline_and_final_drafting(monkeypatch):
+    """자동 수집은 Gemini 필수다 — 인라인 호출이 이 인자를 빼면 오류 때 규칙 기반 대체 초안이 영구 저장된다."""
+    from news_summary.service import collect_and_draft_cycle
+
+    events: list[str] = []
+    store = _per_source_setup(monkeypatch, ["s1", "s2"], events)
+    seen: list[bool] = []
+
+    def record(item_id, item, model=None, require_gemini=False):
+        seen.append(require_gemini)
+        return ArticleDraft(press_release_id=item_id, title=item.title, body="초안 본문", review_note="", model="test")
+
+    monkeypatch.setattr("news_summary.service.generate_draft", record)
+
+    collect_and_draft_cycle(store, Path("unused.yaml"), collect_limit=3, draft_limit=50, require_gemini=True)
+
+    assert seen == [True, True]
+
+
+def test_collect_and_draft_cycle_reports_the_gemini_cooldown_once_not_per_source(monkeypatch):
+    """쿨다운 중에는 기관마다 같은 안내가 쌓이면 상태 꼬리(최근 12줄)가 가려진다 — 회차 끝 일괄 변환이 한 번만 낸다."""
+    from news_summary.service import collect_and_draft_cycle, gemini_cooldown_message, mark_gemini_cooldown
+
+    events: list[str] = []
+    store = _per_source_setup(monkeypatch, ["s1", "s2", "s3"], events)
+    until = mark_gemini_cooldown(store, reason="시험용 쿨다운")
+
+    def never(item_id, item, model=None, require_gemini=False):
+        raise AssertionError("쿨다운 중에는 Gemini를 부르면 안 된다")
+
+    monkeypatch.setattr("news_summary.service.generate_draft", never)
+
+    messages = collect_and_draft_cycle(store, Path("unused.yaml"), collect_limit=3, draft_limit=50, require_gemini=True)
+
+    assert messages.count(gemini_cooldown_message(until)) == 1
+    assert events == ["collect:s1", "collect:s2", "collect:s3"]

@@ -16,7 +16,7 @@
   <span>게시 {{ release.published_at|date_label }}</span>
   {% if release.draft_id %}
     <span class="badge {{ status_badge_class(release.draft_status) }}">{{ status_label(release.draft_status) }}</span>
-    <span class="badge {{ model_badge_class(release.draft_model) }}">{{ model_label(release.draft_model) }}</span>
+    {% if show_model_badge(release.draft_model) %}<span class="badge {{ model_badge_class(release.draft_model) }}">{{ model_label(release.draft_model) }}</span>{% endif %}
   {% else %}
     <span class="badge badge-neutral">초안 없음</span>
   {% endif %}

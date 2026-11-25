@@ -407,6 +407,7 @@ def create_app() -> Flask:
     app.jinja_env.globals["status_badge_class"] = status_badge_class
     app.jinja_env.globals["model_label"] = model_label
     app.jinja_env.globals["model_badge_class"] = model_badge_class
+    app.jinja_env.globals["show_model_badge"] = show_model_badge
     app.jinja_env.globals["interval_label"] = interval_label
     app.jinja_env.globals["review_flags"] = review_flags
     app.jinja_env.globals["approval_checks"] = approval_checks
@@ -6872,6 +6873,10 @@ def _strip_integrated_city_prefix(value: str) -> str:
 def model_label(model: str | None) -> str:
     if not model:
         return "모델 미상"
+    # 규칙 기반 대체 초안이 먼저다 — Gemini 실패 뒤 대체 초안(`gemini-…:gemini-error:…:rule-based`)은 모델 이름에
+    # gemini가 들어 있어 순서가 뒤면 정상 "Gemini Lite"로 읽힌다.
+    if ":rule-based" in model:
+        return "규칙 기반"
     normalized = model.split(":", 1)[0].lower()
     if "gemini" in normalized:
         if "lite" in normalized:
@@ -6879,14 +6884,26 @@ def model_label(model: str | None) -> str:
         if "flash" in normalized:
             return "Gemini Flash"
         return "Gemini"
-    if ":rule-based" in model:
-        return "규칙 기반"
     if "gpt" in normalized:
         return "OpenAI"
     return model.split(":", 1)[0]
 
 
+def show_model_badge(model: str | None) -> bool:
+    """초안 목록·상세에 모델 배지를 보일지 정한다.
+
+    Gemini가 정상으로 쓴 글(`…:gemini`, 다듬기 `…:gemini-refine`)은 모든 글에 같은 "Gemini Lite"·"Gemini Flash"가
+    붙어 소음이라 숨긴다(2026-11-25 요청). 규칙 기반·OpenAI·모델 미상·Gemini 실패 뒤 대체 초안(`…:gemini-error…`)은
+    이상 신호라 계속 보인다.
+    """
+    if not model or ":" not in model:
+        return True
+    return model.split(":", 1)[1] not in {"gemini", "gemini-refine"}
+
+
 def model_badge_class(model: str | None) -> str:
+    if model and ":rule-based" in model:
+        return "badge-warning"
     normalized = (model or "").split(":", 1)[0].lower()
     if "gemini" in normalized and "lite" in normalized:
         return "badge-gemini-lite"
